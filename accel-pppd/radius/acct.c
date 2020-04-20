@@ -303,7 +303,8 @@ static void rad_acct_start_timeout(struct triton_timer_t *t)
 
 int rad_acct_start(struct radius_pd_t *rpd)
 {
-	struct rad_req_t *req = rad_req_alloc(rpd, CODE_ACCOUNTING_REQUEST, rpd->ses->username, 0);
+	struct ap_session *ses = rpd->ses;
+	struct rad_req_t *req = rad_req_alloc(rpd, CODE_ACCOUNTING_REQUEST, ses->username, 0);
 
 	if (!req)
 		return -1;
@@ -311,6 +312,14 @@ int rad_acct_start(struct radius_pd_t *rpd)
 	if (rad_req_acct_fill(req)) {
 		log_ppp_error("radius:acct: failed to fill accounting attributes\n");
 		goto out_err;
+	}
+
+	if (ses->ipv6_dp) {
+		struct ipv6db_addr_t *a;
+		list_for_each_entry(a, &ses->ipv6_dp->prefix_list, entry) {
+			rad_packet_add_ipv6prefix(req->pack, NULL, "Delegated-IPv6-Prefix", &a->addr, a->prefix_len);
+		}
+		rpd->ipv6_dp_sent = 1;
 	}
 
 	if (conf_acct_delay_time)
