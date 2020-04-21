@@ -227,6 +227,13 @@ int rad_req_acct_fill(struct rad_req_t *req)
 			if (rad_packet_add_ipv6prefix(req->pack, NULL, "Framed-IPv6-Prefix", &a->addr, a->prefix_len))
 				return -1;
 		}
+		if (req->rpd->ses->ipv6_dp) {
+			list_for_each_entry(a, &req->rpd->ses->ipv6_dp->prefix_list, entry) {
+			    if (rad_packet_add_ipv6prefix(req->pack, NULL, "Delegated-IPv6-Prefix", &a->addr, a->prefix_len))
+				return -1;
+			}
+			req->rpd->ipv6_dp_sent = 1;
+		}
 	}
 
 	return 0;
