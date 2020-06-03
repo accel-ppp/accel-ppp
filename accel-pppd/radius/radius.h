@@ -116,6 +116,12 @@ struct rad_plugin_t
 	int (*send_accounting_request)(struct rad_plugin_t *, struct rad_packet_t *pack);
 };
 
+struct multi_lines
+{
+    char ** data;
+    int size;
+};
+
 void rad_register_plugin(struct ap_session *, struct rad_plugin_t *);
 
 struct rad_dict_attr_t *rad_dict_find_attr(const char *name);
@@ -138,5 +144,7 @@ int rad_packet_add_ipaddr(struct rad_packet_t *pack, const char *vendor, const c
 int rad_packet_add_ifid(struct rad_packet_t *pack, const char *vendor, const char *name, uint64_t ifid);
 int rad_packet_add_ipv6prefix(struct rad_packet_t *pack, const char *vendor, const char *name, struct in6_addr *prefix, int len);
 
+void load_multiline(struct conf_sect_t *sect, char * seek_string, struct multi_lines * data);
+void check_username_domain_pass (char * username, char ret []);
 #endif
 

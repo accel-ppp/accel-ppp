@@ -61,6 +61,8 @@ static struct ipdb_t ipdb;
 static mempool_t rpd_pool;
 static mempool_t auth_ctx_pool;
 
+struct multi_lines conf_domain_filter;
+
 static void parse_framed_route(struct radius_pd_t *rpd, const char *attr)
 {
 	char str[32];
@@ -411,18 +413,25 @@ static int rad_pwdb_check(struct pwdb_t *pwdb, struct ap_session *ses, pwdb_call
 	struct radius_pd_t *rpd = find_pd(ses);
 	char username1[256];
 
-	if (conf_default_realm && !strchr(username, '@')) {
-		int len = strlen(username);
+        char short_name[256];
+        check_username_domain_pass(username, short_name);
+
+	if (conf_default_realm && !strchr(short_name, '@')) {
+		int len = strlen(short_name);
 		if (len + conf_default_realm_len >= 256 - 2) {
 			log_ppp_error("radius: username is too large to append realm\n");
 			return PWDB_DENIED;
 		}
 
-		memcpy(username1, username, len);
+		memcpy(username1, short_name, len);
 		username1[len] = '@';
 		memcpy(username1 + len + 1, conf_default_realm, conf_default_realm_len);
 		username1[len + 1 + conf_default_realm_len] = 0;
 		username = username1;
+	}
+	else
+	{
+		username = short_name;
 	}
 
 	rpd->auth_ctx = mempool_alloc(auth_ctx_pool);
@@ -718,6 +727,8 @@ static void ses_finished(struct ap_session *ses)
 		fr = next;
 	}
 
+	_free(conf_domain_filter.data);
+
 	list_del(&rpd->pd.entry);
 
 	release_pd(rpd);
@@ -914,11 +925,12 @@ static int parse_server(const char *opt, in_addr_t *addr, int *port, char **secr
 static int load_config(void)
 {
 	char *opt;
+	struct conf_sect_t *s = conf_get_section("radius");
 
 	opt = conf_get_opt("radius", "max-try");
 	if (opt && atoi(opt) > 0)
 		conf_max_try = atoi(opt);
-
+	
 	opt = conf_get_opt("radius", "timeout");
 	if (opt && atoi(opt) > 0)
 		conf_timeout = atoi(opt);
@@ -929,7 +941,11 @@ static int load_config(void)
 
 	opt = conf_get_opt("radius", "verbose");
 	if (opt && atoi(opt) >= 0)
+	{
 		conf_verbose = atoi(opt) > 0;
+	}
+
+	load_multiline(s, "stripe-domain", &conf_domain_filter);
 
 	opt = conf_get_opt("radius", "interim-verbose");
 	if (opt && atoi(opt) >= 0)
@@ -1026,6 +1042,51 @@ static void radius_init(void)
 	triton_event_register_handler(EV_SES_FINISHED, (triton_event_func)ses_finished);
 	triton_event_register_handler(EV_FORCE_INTERIM_UPDATE, (triton_event_func)force_interim_update);
 	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+}
+
+void load_multiline(struct conf_sect_t *sect, char * seek_string, struct multi_lines * data)
+{
+	struct conf_option_t *opt;
+
+        data->data = NULL;
+	int count  = 0;
+	list_for_each_entry(opt, &sect->items, entry) {
+		if (strcmp(opt->name, seek_string))
+			continue;
+		if (!opt->val)
+			continue;
+		if (!count)
+		{
+				data->data = (char **)_malloc(sizeof(char *) * (++count));
+				*data->data = opt->val;
+		}
+		else
+		{
+				data->data = (char **)_realloc(data->data, sizeof(char *) * (++count));
+				*(data->data + count - 1) = opt->val;
+		}
+	}
+       data->size = count;
+}
+
+void check_username_domain_pass (char * username, char ret [])
+{
+    strcpy(ret, username);
+    for (int i = 0; i < conf_domain_filter.size; ++i)
+    {
+        char * check = *(conf_domain_filter.data + i);
+        char * pch = strstr(username, check);
+        if (pch)
+        {
+            int dif = strlen(username) - (pch  - username  + strlen(check));
+            if (dif)
+            {
+                break;
+            }
+            ret[pch - username] = 0;
+            break;
+        }
+    }
 }
 
 DEFINE_INIT(51, radius_init);
