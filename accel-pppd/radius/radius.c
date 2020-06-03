@@ -414,7 +414,7 @@ static int rad_pwdb_check(struct pwdb_t *pwdb, struct ap_session *ses, pwdb_call
 	char username1[256];
 
         char short_name[256];
-        check_username_domain_pass(username, short_name);
+        check_username_domain_pass(username, short_name, sizeof(short_name));
 
 	if (conf_default_realm && !strchr(short_name, '@')) {
 		int len = strlen(short_name);
@@ -727,7 +727,7 @@ static void ses_finished(struct ap_session *ses)
 		fr = next;
 	}
 
-	_free(conf_domain_filter.data);
+	//_free(conf_domain_filter.data);
 
 	list_del(&rpd->pd.entry);
 
@@ -1058,34 +1058,47 @@ void load_multiline(struct conf_sect_t *sect, char * seek_string, struct multi_l
 		if (!count)
 		{
 				data->data = (char **)_malloc(sizeof(char *) * (++count));
-				*data->data = opt->val;
+				if (data->data)
+				{
+					*data->data = opt->val;
+					break;
+				}
 		}
 		else
 		{
 				data->data = (char **)_realloc(data->data, sizeof(char *) * (++count));
-				*(data->data + count - 1) = opt->val;
+				if (data->data)
+				{
+					*(data->data + count - 1) = opt->val;
+					break;
+				}
+
+				
 		}
 	}
        data->size = count;
 }
 
-void check_username_domain_pass (char * username, char ret [])
+void check_username_domain_pass (char * username, char ret [], int ar_size)
 {
-    strcpy(ret, username);
+    strncpy(ret, username, ar_size);
     for (int i = 0; i < conf_domain_filter.size; ++i)
     {
-        char * check = *(conf_domain_filter.data + i);
-        char * pch = strstr(username, check);
-        if (pch)
-        {
-            int dif = strlen(username) - (pch  - username  + strlen(check));
-            if (dif)
-            {
-                break;
-            }
-            ret[pch - username] = 0;
-            break;
-        }
+	if (conf_domain_filter.data + i)
+	{
+		char * check = *(conf_domain_filter.data + i);
+		char * pch = strstr(username, check);
+		if (pch)
+		{
+		    int dif = strlen(username) - (pch  - username  + strlen(check));
+		    if (dif)
+		    {
+		        break;
+		    }
+		    ret[pch - username] = 0;
+		    break;
+		}
+	}
     }
 }
 
