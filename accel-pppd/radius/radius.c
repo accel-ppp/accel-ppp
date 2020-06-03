@@ -1061,6 +1061,9 @@ void load_multiline(struct conf_sect_t *sect, char * seek_string, struct multi_l
 				if (data->data)
 				{
 					*data->data = opt->val;
+				}
+				else
+				{
 					break;
 				}
 		}
@@ -1070,6 +1073,9 @@ void load_multiline(struct conf_sect_t *sect, char * seek_string, struct multi_l
 				if (data->data)
 				{
 					*(data->data + count - 1) = opt->val;
+				}
+				else
+				{
 					break;
 				}
 
@@ -1081,25 +1087,25 @@ void load_multiline(struct conf_sect_t *sect, char * seek_string, struct multi_l
 
 void check_username_domain_pass (char * username, char ret [], int ar_size)
 {
-    strncpy(ret, username, ar_size);
-    for (int i = 0; i < conf_domain_filter.size; ++i)
-    {
-	if (conf_domain_filter.data + i)
+	strncpy(ret, username, ar_size);
+	if (conf_domain_filter.data)
 	{
-		char * check = *(conf_domain_filter.data + i);
-		char * pch = strstr(username, check);
-		if (pch)
-		{
-		    int dif = strlen(username) - (pch  - username  + strlen(check));
-		    if (dif)
-		    {
-		        break;
-		    }
-		    ret[pch - username] = 0;
-		    break;
-		}
+    		for (int i = 0; i < conf_domain_filter.size; ++i)
+    		{
+			char * check = *(conf_domain_filter.data + i);
+			char * pch = strstr(username, check);
+			if (pch)
+			{
+			    int dif = strlen(username) - (pch  - username  + strlen(check));
+			    if (dif)
+			    {
+				break;
+			    }
+			    ret[pch - username] = 0;
+			    break;
+			}
+    		}
 	}
-    }
 }
 
 DEFINE_INIT(51, radius_init);
