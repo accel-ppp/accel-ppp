@@ -1085,27 +1085,39 @@ void load_multiline(struct conf_sect_t *sect, char * seek_string, struct multi_l
        data->size = count;
 }
 
-void check_username_domain_pass (char * username, char ret [], int ar_size)
+void check_username_domain_pass (char * username, char ret [], int arr_size)
 {
-	strncpy(ret, username, ar_size);
-	if (conf_domain_filter.data)
-	{
-    		for (int i = 0; i < conf_domain_filter.size; ++i)
-    		{
-			char * check = *(conf_domain_filter.data + i);
-			char * pch = strstr(username, check);
-			if (pch)
-			{
-			    int dif = strlen(username) - (pch  - username  + strlen(check));
-			    if (dif)
-			    {
-				break;
-			    }
-			    ret[pch - username] = 0;
-			    break;
-			}
-    		}
-	}
+    strncpy(ret, username, arr_size);
+    bool pass = false;
+    for (int i = 0; i < conf_domain_filter.size; ++i)
+    {
+        char * check = *(conf_domain_filter.data + i);
+        char * pch = strstr(username, check);
+        if (pch)
+        {
+            int dif = strlen(username) - (pch  - username  + strlen(check));
+            if (dif)
+            {
+                break;
+            }
+            ret[pch - username] = 0;
+            char * pos_dog = strchr(ret, '@');
+            if (pos_dog && (pos_dog == strlen(ret) + ret - 1))
+            {
+                ret[strlen(ret) - 1] = 0;
+            }
+            pass = true;
+            break;
+        }
+    }
+    if (!pass)
+    {
+        char * pos_dog = strchr(ret, '@');
+        if (pos_dog && (pos_dog == strlen(ret) + ret - 1))
+        {
+            ret[strlen(ret) - 1] = 0;
+        }
+    }
 }
 
 DEFINE_INIT(51, radius_init);
