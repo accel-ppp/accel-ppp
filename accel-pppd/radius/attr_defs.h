@@ -297,4 +297,5 @@
 #define Route_IPv6_Information 170
 #define Delegated_IPv6_Prefix_Pool 171
 #define Stateful_IPv6_Address_Pool 172
-#define NAS_Filter_Rule 92
+#define Vendor_Accel_PPP 55999
+#define Accel_VRF_Name 1

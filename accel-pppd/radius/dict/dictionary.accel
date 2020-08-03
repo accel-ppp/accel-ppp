@@ -1,0 +1,7 @@
+VENDOR          Accel-PPP               55999
+
+BEGIN-VENDOR    Accel-PPP
+
+ATTRIBUTE Accel-VRF-Name                  1      string
+
+END-VENDOR	Accel-PPP

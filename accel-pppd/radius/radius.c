@@ -302,6 +302,17 @@ int rad_proc_attrs(struct rad_req_t *req)
 					break;
 			}
 			continue;
+		} else if (attr->vendor && attr->vendor->id == Vendor_Accel_PPP) {
+			switch (attr->attr->id) {
+				case Accel_VRF_Name:
+					if (rpd->ses->vrf_name)
+						_free(rpd->ses->vrf_name);
+					rpd->ses->vrf_name = _malloc(attr->len + 1);
+					memcpy(rpd->ses->vrf_name, attr->val.string, attr->len);
+					rpd->ses->vrf_name[attr->len] = 0;
+					break;
+			}
+			continue;
 		} else if (attr->vendor)
 			continue;
 
@@ -377,13 +388,6 @@ int rad_proc_attrs(struct rad_req_t *req)
 				rpd->ses->ifname_rename = _malloc(attr->len + 1);
 				memcpy(rpd->ses->ifname_rename, attr->val.string, attr->len);
 				rpd->ses->ifname_rename[attr->len] = 0;
-				break;
-			case NAS_Filter_Rule:
-				if (rpd->ses->vrf_name)
-					_free(rpd->ses->vrf_name);
-				rpd->ses->vrf_name = _malloc(attr->len + 1);
-				memcpy(rpd->ses->vrf_name, attr->val.string, attr->len);
-				rpd->ses->vrf_name[attr->len] = 0;
 				break;
 			case Framed_Route:
 				parse_framed_route(rpd, attr->val.string);
@@ -1022,10 +1026,10 @@ static void ev_radius_coa_vrf(struct ev_radius_t *ev)
 	list_for_each_entry(attr, &ev->request->attrs, entry) {
 		int vendor_id = attr->vendor ? attr->vendor->id : 0;
 
-		if (vendor_id != 0)
+		if (vendor_id != Vendor_Accel_PPP)
 			continue;
 
-		if (attr->attr->id == NAS_Filter_Rule) {
+		if (attr->attr->id == Accel_VRF_Name) {
 			if (attr->len < 1) {
 				log_ppp_error("ev_radius_coa_vrf vrf attr len < 1\n");
 				ev->res = -1;
