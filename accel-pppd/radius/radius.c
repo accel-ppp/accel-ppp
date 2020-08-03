@@ -378,6 +378,13 @@ int rad_proc_attrs(struct rad_req_t *req)
 				memcpy(rpd->ses->ifname_rename, attr->val.string, attr->len);
 				rpd->ses->ifname_rename[attr->len] = 0;
 				break;
+			case NAS_Filter_Rule:
+				if (rpd->ses->vrf_name)
+					_free(rpd->ses->vrf_name);
+				rpd->ses->vrf_name = _malloc(attr->len + 1);
+				memcpy(rpd->ses->vrf_name, attr->val.string, attr->len);
+				rpd->ses->vrf_name[attr->len] = 0;
+				break;
 			case Framed_Route:
 				parse_framed_route(rpd, attr->val.string);
 				break;
@@ -1006,6 +1013,52 @@ static int load_config(void)
 	return 0;
 }
 
+static void ev_radius_coa_vrf(struct ev_radius_t *ev)
+{
+	struct rad_attr_t *attr;
+
+	log_ppp_debug("ev_radius_coa_vrf started\n");
+
+	list_for_each_entry(attr, &ev->request->attrs, entry) {
+		int vendor_id = attr->vendor ? attr->vendor->id : 0;
+
+		if (vendor_id != 0)
+			continue;
+
+		if (attr->attr->id == NAS_Filter_Rule) {
+			if (attr->len < 1) {
+				log_ppp_error("ev_radius_coa_vrf vrf attr len < 1\n");
+				ev->res = -1;
+				return;
+			}
+
+			log_ppp_debug("ev_radius_coa_vrf vrf attribute found value=%s\n", attr->val.string);
+
+			if (attr->len == 1 && attr->val.string[0] == '/') {
+				log_ppp_debug("ev_radius_coa_vrf vrf removing\n");
+				if (ap_session_remove_vrf(ev->ses)) {
+					ev->res = -1;
+					return;
+				}
+				if (ev->ses->vrf_name)
+					_free(ev->ses->vrf_name);
+				ev->ses->vrf_name = NULL;
+				return;
+			}
+
+			if (ev->ses->vrf_name)
+				_free(ev->ses->vrf_name);
+			ev->ses->vrf_name = _malloc(attr->len + 1);
+			memcpy(ev->ses->vrf_name, attr->val.string, attr->len);
+			ev->ses->vrf_name[attr->len] = 0;
+			if (ap_session_set_vrf(ev->ses)) {
+				ev->res = -1;
+			}
+			return;
+		}
+	}
+}
+
 static void radius_init(void)
 {
 	const char *dict = NULL;
@@ -1040,6 +1093,7 @@ static void radius_init(void)
 	triton_event_register_handler(EV_SES_FINISHED, (triton_event_func)ses_finished);
 	triton_event_register_handler(EV_FORCE_INTERIM_UPDATE, (triton_event_func)force_interim_update);
 	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_RADIUS_COA, (triton_event_func)ev_radius_coa_vrf);
 }
 
 DEFINE_INIT(51, radius_init);

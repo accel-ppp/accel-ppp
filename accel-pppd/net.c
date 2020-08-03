@@ -216,6 +216,87 @@ static int def_move_link(struct ap_net *new_net, int ifindex)
 #endif
 }
 
+static int def_set_vrf(int ifindex, int vrf_ifindex)
+{
+	struct iplink_req {
+		struct nlmsghdr n;
+		struct ifinfomsg i;
+		char buf[1024];
+	} req;
+
+	log_debug("def_set_vrf started ifindex=%d, vrf_ifindex=%d\n", ifindex, vrf_ifindex);
+
+	struct rtnl_handle *rth = net->rtnl_get();
+
+	int r = 0;
+
+	if (!rth) {
+		log_ppp_error("def_set_vrf rtnl_get() failed\n");
+		return -1;
+	}
+
+	memset(&req, 0, sizeof(req) - 1024);
+
+	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+	req.n.nlmsg_flags = NLM_F_REQUEST;
+	req.n.nlmsg_type = RTM_NEWLINK;
+	req.i.ifi_family = AF_UNSPEC;
+	req.i.ifi_index = ifindex;
+
+	addattr_l(&req.n, sizeof(req), IFLA_MASTER, &vrf_ifindex, sizeof(vrf_ifindex));
+
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0) {
+		log_ppp_error("def_set_vrf rtnl_talk failed\n");
+		r = -1;
+	}
+
+	net->rtnl_put(rth);
+
+	return r;
+}
+
+static int def_remove_vrf(int ifindex)
+{
+	struct iplink_req {
+		struct nlmsghdr n;
+		struct ifinfomsg i;
+		char buf[1024];
+	} req;
+	int vrf_ifindex;
+
+	log_debug("def_remove_vrf started ifindex=%d\n", ifindex);
+
+	struct rtnl_handle *rth = net->rtnl_get();
+
+	int r = 0;
+
+	if (!rth) {
+		log_ppp_error("def_remove_vrf rtnl_get() failed\n");
+		return -1;
+	}
+
+	memset(&req, 0, sizeof(req) - 1024);
+
+	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+	req.n.nlmsg_flags = NLM_F_REQUEST;
+	req.n.nlmsg_type = RTM_NEWLINK;
+	req.i.ifi_family = AF_UNSPEC;
+	req.i.ifi_index = ifindex;
+
+	vrf_ifindex = 0;
+	addattr_l(&req.n, sizeof(req), IFLA_MASTER, &vrf_ifindex, sizeof(vrf_ifindex));
+
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0) {
+		log_ppp_error("def_remove_vrf rtnl_talk failed\n");
+		r = -1;
+	}
+
+	net->rtnl_put(rth);
+
+	return r;
+}
+
+
 static int def_get_ifindex(const char *ifname)
 {
 	struct kern_net *n = container_of(net, typeof(*n), net);
@@ -317,6 +398,8 @@ static struct ap_net *alloc_net(const char *name)
 	net->rtnl_open = def_rtnl_open;
 	net->move_link = def_move_link;
 	net->get_ifindex = def_get_ifindex;
+	net->set_vrf = def_set_vrf;
+	net->remove_vrf = def_remove_vrf;
 	net->release = def_release;
 
 	n->sock = socket(AF_INET, SOCK_DGRAM, 0);

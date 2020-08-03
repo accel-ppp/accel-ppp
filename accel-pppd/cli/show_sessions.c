@@ -389,6 +389,14 @@ static void print_ifname(struct ap_session *ses, char *buf)
 	snprintf(buf, CELL_SIZE, "%s", ses->ifname);
 }
 
+static void print_vrf(struct ap_session *ses, char *buf)
+{
+	if (ses->vrf_name)
+		snprintf(buf, CELL_SIZE, "%s", ses->vrf_name);
+	else
+		*buf = 0;
+}
+
 static void print_username(struct ap_session *ses, char *buf)
 {
 	if (ses->username)
@@ -639,6 +647,7 @@ static void init(void)
 	cli_register_simple_cmd2(show_ses_exec, show_ses_help, 2, "show", "sessions");
 
 	cli_show_ses_register("netns", "network namespace name", print_netns);
+	cli_show_ses_register("vrf", "vrf name", print_vrf);
 	cli_show_ses_register("ifname", "interface name", print_ifname);
 	cli_show_ses_register("username", "user name", print_username);
 	cli_show_ses_register("ip", "IP address", print_ip);

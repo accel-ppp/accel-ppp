@@ -47,6 +47,7 @@ static void devconf(struct ap_session *ses, const char *attr, const char *val)
 
 void ap_session_ifup(struct ap_session *ses)
 {
+	log_ppp_debug("ap_session_ifup started\n");
 	if (ses->ifname_rename) {
 		if (ap_session_rename(ses, ses->ifname_rename, -1)) {
 			ap_session_terminate(ses, TERM_NAS_ERROR, 0);
@@ -54,6 +55,13 @@ void ap_session_ifup(struct ap_session *ses)
 		}
 		_free(ses->ifname_rename);
 		ses->ifname_rename = NULL;
+	}
+
+	if (ses->vrf_name) {
+		if (ap_session_set_vrf(ses)) {
+			ap_session_terminate(ses, TERM_NAS_ERROR, 0);
+			return;
+		}
 	}
 
 	triton_event_fire(EV_SES_ACCT_START, ses);
@@ -334,3 +342,51 @@ int __export ap_session_rename(struct ap_session *ses, const char *ifname, int l
 	return 0;
 }
 
+int __export ap_session_set_vrf(struct ap_session *ses)
+{
+	int vrf_ifindex;
+
+	log_ppp_debug("ap_session_set_vrf started\n");
+
+	if(ses->ifindex < 0) {
+		log_ppp_error("ap_session_set_vrf invalid session ifindex: %d\n", ses->ifindex);
+		return -1;
+	}
+
+	if(!ses->vrf_name) {
+		log_ppp_error("ap_session_set_vrf no vrf_name\n");
+		return -1;
+	}
+
+	vrf_ifindex = ses->net->get_ifindex(ses->vrf_name);
+	if (vrf_ifindex < 0) {
+		log_ppp_error("ap_session_set_vrf vrf '%s' not found\n", ses->vrf_name);
+		return -1;
+	}
+
+	if (ses->net->set_vrf(ses->ifindex, vrf_ifindex)) {
+		log_ppp_error("ap_session_set_vrf set_vrf failed ifindex=%d, vrf_ifindex=%d\n", ses->ifindex, vrf_ifindex);
+		return -1;
+	} else
+		log_ppp_debug("ap_session_set_vrf set_vrf done ifindex=%d, vrf_ifindex=%d\n", ses->ifindex, vrf_ifindex);
+
+	return 0;
+}
+
+int __export ap_session_remove_vrf(struct ap_session *ses)
+{
+	log_ppp_debug("ap_session_remove_vrf started\n");
+
+	if(ses->ifindex < 0) {
+		log_ppp_error("ap_session_remove_vrf invalid session ifindex: %d\n", ses->ifindex);
+		return -1;
+	}
+
+	if (ses->net->remove_vrf(ses->ifindex)) {
+		log_ppp_error("ap_session_remove_vrf remove_vrf failed ifindex=%d\n", ses->ifindex);
+		return -1;
+	} else
+		log_ppp_debug("ap_session_remove_vrf remove_vrf done ifindex=%d\n", ses->ifindex);
+
+	return 0;
+}

@@ -240,6 +240,11 @@ void __export ap_session_finished(struct ap_session *ses)
 		ses->ifname_rename = NULL;
 	}
 
+	if (ses->vrf_name) {
+		_free(ses->vrf_name);
+		ses->vrf_name = NULL;
+	}
+
 	if (ses->net)
 		ses->net->release(ses->net);
 
