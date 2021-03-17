@@ -905,14 +905,14 @@ static uint64_t parse_serverid(const char *opt)
 		uint16_t u16[4];
 	} __packed u;
 
-	int n[4];
+	unsigned int n[4];
 	int i;
 
 	if (sscanf(opt, "%x:%x:%x:%x", &n[0], &n[1], &n[2], &n[3]) != 4)
 		goto err;
 
 	for (i = 0; i < 4; i++) {
-		if (n[i] < 0 || n[i] > 0xffff)
+		if (n[i] > 0xffff)
 			goto err;
 		u.u16[i] = htons(n[i]);
 	}

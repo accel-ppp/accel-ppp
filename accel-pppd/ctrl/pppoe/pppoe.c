@@ -735,7 +735,8 @@ static int add_tag(uint8_t *pack, size_t pack_size, int type, const void *data, 
 
 	tag->tag_type = htons(type);
 	tag->tag_len = htons(len);
-	memcpy(tag->tag_data, data, len);
+	if (data && len)
+		memcpy(tag->tag_data, data, len);
 
 	hdr->length = htons(ntohs(hdr->length) + sizeof(*tag) + len);
 	return 0;

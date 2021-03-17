@@ -163,7 +163,8 @@ static uint64_t generate_intf_id(struct ppp_t *ppp)
 static uint64_t generate_peer_intf_id(struct ppp_t *ppp)
 {
 	char str[4];
-	int i, n;
+	int i;
+	unsigned int n;
 	union {
 		uint64_t intf_id;
 		uint16_t addr16[4];
@@ -292,14 +293,14 @@ static uint64_t parse_intfid(const char *opt)
 		uint16_t u16[4];
 	} u;
 
-	int n[4];
+	unsigned int n[4];
 	int i;
 
 	if (sscanf(opt, "%x:%x:%x:%x", &n[0], &n[1], &n[2], &n[3]) != 4)
 		goto err;
 
 	for (i = 0; i < 4; i++) {
-		if (n[i] < 0 || n[i] > 0xffff)
+		if (n[i] > 0xffff)
 			goto err;
 		u.u16[i] = htons(n[i]);
 	}

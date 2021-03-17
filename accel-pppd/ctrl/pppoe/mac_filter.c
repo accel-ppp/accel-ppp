@@ -52,7 +52,7 @@ static int mac_filter_load(const char *opt)
 	char *c;
 	char *name = _strdup(opt);
 	char *buf = _malloc(1024);
-	int n[ETH_ALEN];
+	unsigned int n[ETH_ALEN];
 	int i, line = 0;
 
 	c = strstr(name, ",");
@@ -122,7 +122,7 @@ err:
 
 static void mac_filter_add(const char *addr, void *client)
 {
-	int n[ETH_ALEN];
+	unsigned int n[ETH_ALEN];
 	struct mac_t *mac;
 	int i;
 
@@ -149,7 +149,7 @@ static void mac_filter_add(const char *addr, void *client)
 
 static void mac_filter_del(const char *addr, void *client)
 {
-	int n[ETH_ALEN];
+	unsigned int n[ETH_ALEN];
 	uint8_t a[ETH_ALEN];
 	struct mac_t *mac;
 	int i;

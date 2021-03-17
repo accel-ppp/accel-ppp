@@ -231,7 +231,7 @@ static int arp_read(struct triton_md_handler_t *h)
 void *arpd_start(struct ipoe_serv *ipoe)
 {
 	struct rb_node **p, *parent = NULL;
-	struct arp_node *n;
+	struct arp_node *n = NULL;
 	struct arp_tree *t;
 	int fd, ifindex = ipoe->ifindex, i;
 	char fname[1024];
