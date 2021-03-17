@@ -39,6 +39,7 @@ int __export genl_resolve_mcg(const char *family, const char *name, int *fam_id)
 		return -1;
 	}
 
+	memset(&req, 0, sizeof(req));
 	nlh = &req.n;
 	nlh->nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
 	nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;

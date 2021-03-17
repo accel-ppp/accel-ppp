@@ -793,6 +793,7 @@ static void init(void)
 
 	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 
+	free(host);
 	return;
 err_fmt:
 	log_emerg("cli: telnet: invalid format\n");
