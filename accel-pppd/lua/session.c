@@ -12,6 +12,8 @@
 #include "utils.h"
 #include "luasupp.h"
 
+#include "log.h"
+
 static int mod_cnt;
 static const struct lua_session_module **mods;
 
@@ -268,7 +270,7 @@ static int session_module(lua_State *L)
 
 void __export lua_session_module_register(const struct lua_session_module *mod)
 {
-	char *mods_new;
+	void *mods_new;
 	if (!mods)
 		mods_new = malloc(sizeof(void *));
 	else
