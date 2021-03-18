@@ -113,8 +113,10 @@ void __export *mempool_alloc(mempool_t *pool)
 	if (p->mmap) {
 		spin_lock(&mmap_lock);
 		if (mmap_ptr + size >= mmap_endptr) {
-			if (mmap_grow())
+			if (mmap_grow()) {
+				spin_unlock(&mmap_lock);
 				return NULL;
+			}
 		}
 		it = (struct _item_t *)mmap_ptr;
 		mmap_ptr += size;
