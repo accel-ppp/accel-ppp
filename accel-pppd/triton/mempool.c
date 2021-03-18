@@ -32,7 +32,7 @@ struct _mempool_t
 	uint64_t magic;
 #endif
 	spinlock_t lock;
-	int mmap:1;
+	unsigned int mmap:1;
 	int objects;
 };
 

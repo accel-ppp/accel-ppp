@@ -84,8 +84,8 @@ struct ppp_ccp_t
 	int ropt_len;
 
 	int conf_req_len;
-	int starting:1;
-	int started:1;
+	unsigned int starting:1;
+	unsigned int started:1;
 };
 
 int ccp_option_register(struct ccp_option_handler_t *h);

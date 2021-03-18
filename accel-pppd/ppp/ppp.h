@@ -70,11 +70,11 @@ struct ppp_layer_data_t
 	struct list_head entry;
 	struct ppp_layer_t *layer;
 	struct layer_node_t *node;
-	int passive:1;
-	int optional:1;
-	int starting:1;
-	int started:1;
-	int finished:1;
+	unsigned int passive:1;
+	unsigned int optional:1;
+	unsigned int starting:1;
+	unsigned int started:1;
+	unsigned int finished:1;
 };
 
 struct ppp_layer_t

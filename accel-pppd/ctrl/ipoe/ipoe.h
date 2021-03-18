@@ -59,17 +59,17 @@ struct ipoe_serv {
 	char *opt_lua_username_func;
 #endif
 	int opt_weight;
-	int opt_shared:1;
-	int opt_dhcpv4:1;
-	int opt_up:1;
-	int opt_auto:1;
-	int opt_ifcfg:1;
-	int opt_nat:1;
-	int opt_ipv6:1;
-	int opt_ip_unnumbered:1;
-	int need_close:1;
-	int active:1;
-	int vlan_mon:1;
+	unsigned int opt_shared:1;
+	unsigned int opt_dhcpv4:1;
+	unsigned int opt_up:1;
+	unsigned int opt_auto:1;
+	unsigned int opt_ifcfg:1;
+	unsigned int opt_nat:1;
+	unsigned int opt_ipv6:1;
+	unsigned int opt_ip_unnumbered:1;
+	unsigned int need_close:1;
+	unsigned int active:1;
+	unsigned int vlan_mon:1;
 };
 
 struct ipoe_session {
@@ -110,15 +110,15 @@ struct ipoe_session {
 #ifdef RADIUS
 	struct rad_plugin_t radius;
 #endif
-	int started:1;
-	int terminating:1;
-	int dhcp_addr:1;
-	int relay_addr:1;
-	int l4_redirect:1;
-	int l4_redirect_set:1;
-	int terminate:1;
-	int UP:1;
-	int wait_start:1;
+	unsigned int started:1;
+	unsigned int terminating:1;
+	unsigned int dhcp_addr:1;
+	unsigned int relay_addr:1;
+	unsigned int l4_redirect:1;
+	unsigned int l4_redirect_set:1;
+	unsigned int terminate:1;
+	unsigned int UP:1;
+	unsigned int wait_start:1;
 };
 
 struct ipoe_session_info {

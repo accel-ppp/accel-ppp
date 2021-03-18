@@ -40,7 +40,7 @@ struct backup_data
 	struct ap_session *ses;
 	struct backup_storage *storage;
 	struct list_head mod_list;
-	int internal:1;
+	unsigned int internal:1;
 };
 
 struct backup_module

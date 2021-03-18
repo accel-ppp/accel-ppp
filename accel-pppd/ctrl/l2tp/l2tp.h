@@ -55,8 +55,8 @@ struct l2tp_attr_t
 {
 	struct list_head entry;
 	struct l2tp_dict_attr_t *attr;
-	int M:1;
-	int H:1;
+	unsigned int M:1;
+	unsigned int H:1;
 	int length;
 	l2tp_value_t val;
 };

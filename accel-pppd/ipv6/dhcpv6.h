@@ -182,7 +182,7 @@ struct dhcpv6_packet {
 
 	struct list_head relay_list;
 
-	int rapid_commit:1;
+	unsigned int rapid_commit:1;
 
 	struct list_head opt_list;
 	void *endptr;

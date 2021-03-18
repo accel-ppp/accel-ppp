@@ -38,7 +38,7 @@ struct auth_option_t
 	struct lcp_option_t opt;
 	struct list_head auth_list;
 	struct auth_data_t *auth;
-	int started:1;
+	unsigned int started:1;
 };
 
 struct auth_layer_data_t

@@ -92,7 +92,7 @@ struct lcp_option_t
 	int id;
 	int len;
 	int state;
-	int print:1;
+	unsigned int print:1;
 	struct lcp_option_handler_t *h;
 };
 
@@ -129,7 +129,7 @@ struct ppp_lcp_t
 	int ropt_len;
 
 	int conf_req_len;
-	int started:1;
+	unsigned int started:1;
 };
 
 int lcp_option_register(struct lcp_option_handler_t *h);

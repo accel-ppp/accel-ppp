@@ -51,8 +51,8 @@ struct ap_ctrl {
 	int mppe;
 	char *calling_station_id;
 	char *called_station_id;
-	int dont_ifcfg:1;
-	int ppp:1;
+	unsigned int dont_ifcfg:1;
+	unsigned int ppp:1;
 	int ppp_npmode:2;
 	void (*started)(struct ap_session*);
 	void (*finished)(struct ap_session *);
@@ -98,9 +98,9 @@ struct ap_session
 
 	struct triton_context_t *wakeup;
 
-	int terminating:1;
-	int terminated:1;
-	int down:1;
+	unsigned int terminating:1;
+	unsigned int terminated:1;
+	unsigned int down:1;
 	int terminate_cause;
 
 	struct list_head pd_list;

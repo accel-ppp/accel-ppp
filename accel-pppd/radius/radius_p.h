@@ -47,10 +47,10 @@ struct radius_pd_t {
 	struct ap_session *ses;
 	pthread_mutex_t lock;
 	int refs:8;
-	int authenticated:1;
-	int acct_started:1;
-	int ipv6_dp_assigned:1;
-	int ipv6_dp_sent:1;
+	unsigned int authenticated:1;
+	unsigned int acct_started:1;
+	unsigned int ipv6_dp_assigned:1;
+	unsigned int ipv6_dp_sent:1;
 
 	struct rad_packet_t *auth_reply;
 
@@ -101,8 +101,8 @@ struct rad_req_t {
 	int prio;
 	int try;
 
-	int active:1;
-	int async:1;
+	unsigned int active:1;
+	unsigned int async:1;
 
 	time_t ts;
 

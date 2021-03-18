@@ -33,7 +33,7 @@ struct log_pd_t
 	struct ap_session *ses;
 	struct list_head msgs;
 	struct log_msg_t *msg;
-	int authorized:1;
+	unsigned int authorized:1;
 };
 
 struct _log_msg_t

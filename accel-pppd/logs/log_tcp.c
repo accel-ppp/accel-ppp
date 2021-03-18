@@ -30,8 +30,8 @@ struct tcp_target_t
 	spinlock_t lock;
 	struct list_head queue;
 	int queue_len;
-	int connected:1;
-	int wait:1;
+	unsigned int connected:1;
+	unsigned int wait:1;
 };
 
 static int conf_connect_interval = 5;

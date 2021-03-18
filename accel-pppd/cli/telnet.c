@@ -47,11 +47,11 @@ struct telnet_client_t {
 	int cmdline_pos;
 	int cmdline_pos2;
 	int cmdline_len;
-	int auth:1;
-	int echo:1;
-	int telcmd:1;
-	int esc:1;
-	int disconnect:1;
+	unsigned int auth:1;
+	unsigned int echo:1;
+	unsigned int telcmd:1;
+	unsigned int esc:1;
+	unsigned int disconnect:1;
 };
 
 struct buffer_t {

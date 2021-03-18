@@ -53,7 +53,7 @@ struct dhcpv6_pd {
 	struct dhcpv6_opt_clientid *clientid;
 	uint32_t addr_iaid;
 	uint32_t dp_iaid;
-	int dp_active:1;
+	unsigned int dp_active:1;
 };
 
 static void *pd_key;

@@ -42,7 +42,7 @@ static void put_ipv6_item(struct ap_session *ses, struct ipv6db_item_t *ip6);
 struct ipaddr_option_t
 {
 	struct ipv6cp_option_t opt;
-	int started:1;
+	unsigned int started:1;
 	struct ppp_t *ppp;
 };
 

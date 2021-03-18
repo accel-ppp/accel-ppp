@@ -46,7 +46,7 @@ struct pppoe_conn_t {
 	struct pppoe_serv_t *serv;
 	uint16_t sid;
 	uint8_t addr[ETH_ALEN];
-	int ppp_started:1;
+	unsigned int ppp_started:1;
 
 	struct pppoe_tag *relay_sid;
 	struct pppoe_tag *host_uniq;

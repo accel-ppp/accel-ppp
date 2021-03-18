@@ -66,7 +66,7 @@ struct ipv6cp_option_t
 	int id;
 	int len;
 	int state;
-	int print:1;
+	unsigned int print:1;
 	struct ipv6cp_option_handler_t *h;
 };
 
@@ -99,9 +99,9 @@ struct ppp_ipv6cp_t
 	int ropt_len;
 
 	int conf_req_len;
-	int starting:1;
-	int started:1;
-	int delay_ack:1;
+	unsigned int starting:1;
+	unsigned int started:1;
+	unsigned int delay_ack:1;
 };
 
 int ipv6cp_option_register(struct ipv6cp_option_handler_t *h);

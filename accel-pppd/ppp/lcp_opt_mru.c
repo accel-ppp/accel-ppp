@@ -35,8 +35,8 @@ struct mru_option_t
 	struct lcp_option_t opt;
 	int mru;
 	int mtu;
-	int naked:1;
-	int rejected:1;
+	unsigned int naked:1;
+	unsigned int rejected:1;
 };
 
 static struct lcp_option_handler_t mru_opt_hnd=

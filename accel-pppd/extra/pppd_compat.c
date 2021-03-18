@@ -56,9 +56,9 @@ struct pppd_compat_pd
 	struct sigchld_handler_t ip_up_hnd;
 #ifdef RADIUS
 	char *tmp_fname;
-	int radattr_saved:1;
+	unsigned int radattr_saved:1;
 #endif
-	int started:1;
+	unsigned int started:1;
 	int res;
 	in_addr_t ipv4_addr;
 	in_addr_t ipv4_peer_addr;

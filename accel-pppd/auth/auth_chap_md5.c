@@ -73,7 +73,7 @@ struct chap_auth_data {
 	int failure;
 	char *name;
 	char *mschap_error;
-	int started:1;
+	unsigned int started:1;
 };
 
 static void chap_send_challenge(struct chap_auth_data *ad, int new);

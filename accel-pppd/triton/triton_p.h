@@ -61,9 +61,9 @@ struct _triton_md_handler_t
 	struct epoll_event epoll_event;
 	uint32_t trig_epoll_events;
 	int pending;
-	int trig_level:1;
-	int armed:1;
-	int mod:1;
+	unsigned int trig_level:1;
+	unsigned int armed:1;
+	unsigned int mod:1;
 	struct triton_md_handler_t *ud;
 };
 
@@ -74,7 +74,7 @@ struct _triton_timer_t
 	struct epoll_event epoll_event;
 	struct _triton_context_t *ctx;
 	int fd;
-	int pending:1;
+	unsigned int pending:1;
 	struct triton_timer_t *ud;
 };
 

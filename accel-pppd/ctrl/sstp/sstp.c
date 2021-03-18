@@ -128,7 +128,7 @@ struct sstp_conn_t {
 	int hello_sent;
 	int hello_interval;
 
-//	int bypass_auth:1;
+//	unsigned int bypass_auth:1;
 //	char *http_cookie;
 	uint8_t *nonce;
 	uint8_t *hlak_key;

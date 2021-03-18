@@ -42,7 +42,7 @@ struct pap_auth_data {
 	struct triton_timer_t timeout;
 	char *peer_id;
 	int req_id;
-	int started:1;
+	unsigned int started:1;
 };
 
 struct pap_hdr {

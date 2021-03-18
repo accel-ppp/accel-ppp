@@ -30,8 +30,8 @@ struct tcp_client_t {
 	uint8_t *cmdline;
 	int xmit_pos;
 	int recv_pos;
-	int auth:1;
-	int disconnect:1;
+	unsigned int auth:1;
+	unsigned int disconnect:1;
 };
 
 struct buffer_t {

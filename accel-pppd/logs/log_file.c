@@ -31,8 +31,8 @@ struct log_file_t {
 	struct list_head entry;
 	struct list_head msgs;
 	spinlock_t lock;
-	int need_free:1;
-	int queued:1;
+	unsigned int need_free:1;
+	unsigned int queued:1;
 	struct log_file_pd_t *lpd;
 
 	int fd;

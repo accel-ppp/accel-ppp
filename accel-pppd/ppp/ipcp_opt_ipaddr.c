@@ -31,7 +31,7 @@ struct ipaddr_option_t
 {
 	struct ipcp_option_t opt;
 	struct ppp_t *ppp;
-	int started:1;
+	unsigned int started:1;
 };
 
 static struct ipcp_option_handler_t ipaddr_opt_hnd = {
