@@ -616,15 +616,19 @@ static int parse_server_old(const char *opt, in_addr_t *addr, int *port, char **
 		*p1 = 0;
 	if (p2)
 		*p2 = 0;
-	else
+	else {
+		_free(str);
 		return -1;
+	}
 
 	*addr = inet_addr(str);
 
 	if (p1) {
 		*port = atoi(p1 + 1);
-		if (*port <=0 )
+		if (*port <=0 ) {
+			_free(str);
 			return -1;
+		}
 	}
 
 	*secret = _strdup(p2 + 1);

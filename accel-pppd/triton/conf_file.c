@@ -56,14 +56,14 @@ static int __conf_load(struct conf_ctx *ctx, const char *fname)
 
 static int load_file(struct conf_ctx *ctx)
 {
-	char *str2, *raw;
+	char *str2;
 	char buf[1024] = {0};
 
 	static struct conf_sect_t *cur_sect = NULL;
 
 	while(1) {
 		int len;
-		char *str;
+		char *str, *raw;
 
 		if (!fgets(buf, 1024, ctx->file))
 			break;
@@ -139,6 +139,7 @@ static int load_file(struct conf_ctx *ctx)
 				opt = find_item(cur_sect, str2);
 				if (!opt) {
 					fprintf(stderr, "conf_file:%s:%i: parent option not found\n", ctx->fname, ctx->line);
+					_free(raw);
 					return -1;
 				}
 				str2 = opt->val;
