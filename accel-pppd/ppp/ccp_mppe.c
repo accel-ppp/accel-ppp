@@ -278,12 +278,12 @@ static void mppe_print(void (*print)(const char *fmt,...),struct ccp_option_t *o
 			bits = 0;
 
 	print("<mppe %sH %sM %sS %sL %sD %sC>",
-		bits & MPPE_H ? "+" : "-",
-		bits & MPPE_M ? "+" : "-",
-		bits & MPPE_S ? "+" : "-",
-		bits & MPPE_L ? "+" : "-",
-		bits & MPPE_D ? "+" : "-",
-		bits & MPPE_C ? "+" : "-"
+		(bits & MPPE_H) ? "+" : "-",
+		(bits & MPPE_M) ? "+" : "-",
+		(bits & MPPE_S) ? "+" : "-",
+		(bits & MPPE_L) ? "+" : "-",
+		(bits & MPPE_D) ? "+" : "-",
+		(bits & MPPE_C) ? "+" : "-"
 	);
 }
 

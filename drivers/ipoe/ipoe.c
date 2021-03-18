@@ -304,7 +304,7 @@ static int ipoe_do_nat(struct sk_buff *skb, __be32 new_addr, int to_peer)
 
 	ihl = iph->ihl * 4;
 
-	switch (iph->frag_off & htons(IP_OFFSET) ? 0 : iph->protocol) {
+	switch ((iph->frag_off & htons(IP_OFFSET)) ? 0 : iph->protocol) {
 	case IPPROTO_TCP:
 	{
 		struct tcphdr *tcph;
