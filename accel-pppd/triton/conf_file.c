@@ -109,13 +109,13 @@ static int load_file(struct conf_ctx *ctx)
 			continue;
 		}
 
-		if (*str == '}' && ctx->items != &cur_sect->items)
-			return 0;
-
 		if (!cur_sect) {
 			fprintf(stderr, "conf_file:%s:%i: no section opened\n", ctx->fname, ctx->line);
 			return -1;
 		}
+
+		if (*str == '}' && ctx->items != &cur_sect->items)
+			return 0;
 
 		raw = _strdup(str);
 		str2 = skip_word(str);
