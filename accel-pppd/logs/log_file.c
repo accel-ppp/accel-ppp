@@ -669,6 +669,7 @@ static void init(void)
 		memset(log_file, 0, sizeof(*log_file));
 		log_file_init(log_file);
 		if (log_file_open(log_file, opt)) {
+			log_emerg("log_file:init:log_file_open: failed\n");
 			free(log_file);
 			_exit(EXIT_FAILURE);
 		}
@@ -680,6 +681,7 @@ static void init(void)
 		memset(fail_log_file, 0, sizeof(*fail_log_file));
 		log_file_init(fail_log_file);
 		if (log_file_open(fail_log_file, opt)) {
+			log_emerg("log_file:init:log_file_open: failed\n");
 			free(fail_log_file);
 			_exit(EXIT_FAILURE);
 		}

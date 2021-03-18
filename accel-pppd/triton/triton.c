@@ -742,8 +742,10 @@ void __export triton_run()
 
 	for(i = 0; i < thread_count; i++) {
 		t = create_thread();
-		if (!t)
+		if (!t) {
+			triton_log_error("triton_run:create_thread: %s", strerror(errno));
 			_exit(-1);
+		}
 
 		list_add_tail(&t->entry, &threads);
 		pthread_mutex_unlock(&t->sleep_lock);

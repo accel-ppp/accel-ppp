@@ -201,16 +201,20 @@ static void sigsegv(int num)
 		printf("starting gdb...\n");
 		sprintf(dump, "dump-%u", t);
 		fd = open(dump, O_CREAT|O_TRUNC|O_WRONLY,0600);
-		if (fd == -1)
+		if (fd == -1) {
+			log_emerg("main: sigsegv: open failed: %s\n", strerror(errno));
 			_exit(0);
+		}
 
 		dup2(fd, STDOUT_FILENO);
 		dup2(fd, STDERR_FILENO);
 		close(fd);
 
 		f = fopen(cmd, "w");
-		if (!f)
+		if (!f) {
+			log_emerg("main: sigsegv: open failed: %s\n", strerror(errno));
 			_exit(0);
+		}
 		fprintf(f, "info shared\nthread apply all bt full\ngenerate-core-file core-%u\ndetach\nquit\n", t);
 		fclose(f);
 
@@ -296,8 +300,10 @@ int main(int _argc, char **_argv)
 
 	srandom(time(NULL));
 
-	if (triton_init(conf_file))
+	if (triton_init(conf_file)) {
+		log_emerg("main: triton_init: conf_file failed\n");
 		_exit(EXIT_FAILURE);
+	}
 
 	if (goto_daemon && pid != getpid()) {
 		/*pid_t pid = fork();
@@ -336,8 +342,10 @@ int main(int _argc, char **_argv)
 
 	triton_register_init(0, log_version);
 
-	if (triton_load_modules("modules"))
+	if (triton_load_modules("modules")) {
+		log_emerg("main: triton_load_modules: failed\n");
 		return EXIT_FAILURE;
+	}
 
 	triton_run();
 

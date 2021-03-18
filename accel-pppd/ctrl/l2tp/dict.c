@@ -266,8 +266,10 @@ static void dict_init(void)
 	if (!opt)
 		opt = DICTIONARY;
 
-	if (l2tp_dict_load(opt))
+	if (l2tp_dict_load(opt)) {
+		log_emerg("l2tp:dict_init:l2tp_dict_load: failed\n");
 		_exit(EXIT_FAILURE);
+	}
 }
 
 DEFINE_INIT(20, dict_init);
