@@ -76,7 +76,7 @@ static int dict_load(const char *fname)
 	struct rad_dict_value_t *val;
 	struct rad_dict_vendor_t *vendor;
 	struct list_head *items;
-	struct list_head *parent_items;
+	struct list_head *parent_items = NULL;
 
 	f = fopen(fname, "r");
 	if (!f) {

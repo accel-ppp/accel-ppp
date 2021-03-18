@@ -206,7 +206,7 @@ static void generate_pool_p2p(struct ippool_t *p)
 	struct ippool_item_t *it;
 	struct ipaddr_t *addr = NULL;
 	struct ipaddr_t *peer_addr;
-	struct list_head *pos, *pos1 = p->tunnel_list.next, *pos2 = p->tunnel_list.prev;
+	struct list_head *pos = NULL, *pos1 = p->tunnel_list.next, *pos2 = p->tunnel_list.prev;
 	uint8_t r, t = 0;
 
 	while (1) {

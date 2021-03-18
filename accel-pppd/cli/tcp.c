@@ -357,10 +357,6 @@ static void start_server(const char *host, int port)
     return;
 	}
 
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(port);
-	addr.sin_addr.s_addr = inet_addr(host);
-
 	triton_context_register(&serv_ctx, NULL);
 	triton_context_set_priority(&serv_ctx, 0);
 	triton_md_register_handler(&serv_ctx, &serv_hnd);
