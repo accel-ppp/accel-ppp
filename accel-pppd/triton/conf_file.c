@@ -70,7 +70,7 @@ static int load_file(struct conf_ctx *ctx)
 		ctx->line++;
 
 		len = strlen(buf);
-		if (buf[len - 1] == '\n')
+		if (len && buf[len - 1] == '\n')
 			buf[--len] = 0;
 
 		while (len && (buf[len - 1] == ' ' || buf[len - 1] == '\t'))
