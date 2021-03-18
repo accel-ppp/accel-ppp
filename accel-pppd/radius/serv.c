@@ -197,11 +197,6 @@ int rad_server_req_enter(struct rad_req_t *req)
 
 	pthread_mutex_lock(&req->serv->lock);
 
-	if (ts.tv_sec < req->serv->fail_time) {
-		pthread_mutex_unlock(&req->serv->lock);
-		return -1;
-	}
-
 	if (req->serv->req_cnt >= req->serv->req_limit) {
 		if (req->send) {
 			list_add_tail(&req->entry, &req->serv->req_queue[req->prio]);
