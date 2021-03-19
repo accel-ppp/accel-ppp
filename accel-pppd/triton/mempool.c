@@ -55,8 +55,8 @@ struct _item_t
 static LIST_HEAD(pools);
 static spinlock_t pools_lock;
 static spinlock_t mmap_lock;
-static void *mmap_ptr;
-static void *mmap_endptr;
+static uint8_t *mmap_ptr;
+static uint8_t *mmap_endptr;
 
 static int mmap_grow(void);
 static void mempool_clean(void);
@@ -258,7 +258,7 @@ static void sigclean(int num)
 static int mmap_grow(void)
 {
 	int size = sysconf(_SC_PAGE_SIZE) * (1 << PAGE_ORDER);
-	void *ptr;
+	uint8_t *ptr;
 
 	if (mmap_endptr) {
 		ptr = mmap(mmap_endptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);

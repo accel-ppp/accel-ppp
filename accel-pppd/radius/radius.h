@@ -106,7 +106,7 @@ struct rad_packet_t
 	int len;
 	struct timespec tv;
 	struct list_head attrs;
-	void *buf;
+	uint8_t *buf;
 };
 
 struct rad_plugin_t

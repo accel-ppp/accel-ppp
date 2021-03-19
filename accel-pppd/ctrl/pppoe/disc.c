@@ -202,7 +202,7 @@ void pppoe_disc_stop(struct pppoe_serv_t *serv)
 		free_net(n);
 }
 
-static int forward(struct disc_net *net, int ifindex, void *pkt, int len)
+static int forward(struct disc_net *net, int ifindex, uint8_t *pkt, int len)
 {
 	struct pppoe_serv_t *n;
 	struct tree *t = &net->tree[ifindex & HASH_BITS];
