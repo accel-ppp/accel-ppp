@@ -607,7 +607,7 @@ int encode_attr(const struct l2tp_packet_t *pack, struct l2tp_attr_t *attr,
 		goto err;
 	}
 	/* Use at least 16 bytes of padding */
-	pad_len = (pad_len & 0x007F) + 16;
+	pad_len = (pad_len & 0x007F) + MD5_DIGEST_LENGTH;
 
 	/* Generate Hidden AVP Subformat:
 	 *   -original AVP size (2 bytes, network byte order)
@@ -650,11 +650,6 @@ int encode_attr(const struct l2tp_packet_t *pack, struct l2tp_attr_t *attr,
 	MD5_Update(&md5_ctx, pack->secret, pack->secret_len);
 	MD5_Update(&md5_ctx, pack->last_RV->val.octets, pack->last_RV->length);
 	MD5_Final(md5, &md5_ctx);
-
-	if (attr->length <= MD5_DIGEST_LENGTH) {
-		memxor(attr->val.octets, md5, attr->length);
-		return 0;
-	}
 
 	memxor(attr->val.octets, md5, MD5_DIGEST_LENGTH);
 
