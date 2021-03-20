@@ -2045,8 +2045,17 @@ static void ipoe_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 static struct ipoe_session *ipoe_session_create_up(struct ipoe_serv *serv, struct ethhdr *eth, struct iphdr *iph, struct _arphdr *arph)
 {
 	struct ipoe_session *ses;
-	uint8_t *hwaddr = arph ? arph->ar_sha : eth->h_source;
-	in_addr_t saddr = arph ? arph->ar_spa : iph->saddr;
+	uint8_t *hwaddr;
+	in_addr_t saddr;
+
+	if (arph) {
+		hwaddr = arph->ar_sha;
+		saddr = arph->ar_spa;
+	} else if (eth && iph) {
+		hwaddr = eth->h_source;
+		saddr = iph->saddr;
+	} else
+		return NULL;
 
 	if (ap_shutdown)
 		return NULL;

@@ -3,6 +3,7 @@
  *        : mib2c.scalar.conf 11805 2005-01-07 09:37:18Z dts12 $
  */
 
+#include <unistd.h>
 #include <time.h>
 
 #include <net-snmp/net-snmp-config.h>
@@ -111,7 +112,7 @@ handle_statCoreMemRss(netsnmp_mib_handler *handler,
 	char statm_fname[128];
 	FILE *f;
 	unsigned long vmsize = 0, vmrss = 0;
-	unsigned long page_size = sysconf(_SC_PAGE_SIZE);
+	unsigned long page_size = sysconf(_SC_PAGESIZE);
 
 	sprintf(statm_fname, "/proc/%i/statm", getpid());
 	f = fopen(statm_fname, "r");

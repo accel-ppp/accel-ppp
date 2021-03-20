@@ -826,6 +826,9 @@ static void add_dnssl(const char *val)
 	const char *ptr;
 	uint8_t *buf;
 
+	if (!val)
+		return;
+
 	if (val[n - 1] == '.')
 		n++;
 	else

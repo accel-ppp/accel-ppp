@@ -263,7 +263,7 @@ static int hex2bin(const char *src, uint8_t *dst, size_t size)
 	return n;
 }
 
-#define vstrsep(buf, sep, args...) _vstrsep(buf, sep, args, (void*)-1)
+#define vstrsep(buf, sep, args...) _vstrsep(buf, sep, args, NULL)
 static int _vstrsep(char *buf, const char *sep, ...)
 {
 	va_list ap;
@@ -271,13 +271,12 @@ static int _vstrsep(char *buf, const char *sep, ...)
 	int n = 0;
 
 	va_start(ap, sep);
-	while ((arg = va_arg(ap, char **)) != (void *)-1) {
+	while ((arg = va_arg(ap, char **)) != NULL) {
 		val = strtok_r(buf, sep, &ptr);
-		buf = NULL;
 		if (!val)
 			break;
-		if (arg)
-			*arg = val;
+		buf = NULL;
+		*arg = val;
 		n++;
 	}
 	va_end(ap);
@@ -592,7 +591,7 @@ static int proxy_parse(struct buffer_t *buf, struct sockaddr_t *peer, struct soc
 {
 	static const uint8_t proxy_sig[] = PROXY_SIG;
 	struct proxy_hdr *hdr;
-	char *ptr, *src_addr, *dst_addr, *src_port, *dst_port;
+	char *ptr, *proto, *src_addr, *dst_addr, *src_port, *dst_port;
 	int n, count;
 
 	if (buf->len < PROXY_MINLEN || memcmp(buf->head, proxy_sig, sizeof(proxy_sig)) != 0)
@@ -613,11 +612,11 @@ static int proxy_parse(struct buffer_t *buf, struct sockaddr_t *peer, struct soc
 	if (conf_verbose)
 		log_ppp_info2("recv [PROXY <%s>]\n", hdr->line);
 
-	count = vstrsep(hdr->line, " ", NULL, &ptr, &src_addr, &dst_addr, &src_port, &dst_port);
+	count = vstrsep(hdr->line, " ", &ptr, &proto, &src_addr, &dst_addr, &src_port, &dst_port);
 	if (count < 2)
 		goto error;
 
-	if (strcasecmp(ptr, PROXY_TCP4) == 0) {
+	if (strcasecmp(proto, PROXY_TCP4) == 0) {
 		if (count < 6 ||
 		    inet_pton(AF_INET, src_addr, &peer->u.sin.sin_addr) <= 0 ||
 		    inet_pton(AF_INET, dst_addr, &addr->u.sin.sin_addr) <= 0) {
@@ -627,7 +626,7 @@ static int proxy_parse(struct buffer_t *buf, struct sockaddr_t *peer, struct soc
 		peer->u.sin.sin_family = addr->u.sin.sin_family = AF_INET;
 		peer->u.sin.sin_port = htons(atoi(src_port));
 		addr->u.sin.sin_port = htons(atoi(dst_port));
-	} else if (strcasecmp(ptr, PROXY_TCP6) == 0) {
+	} else if (strcasecmp(proto, PROXY_TCP6) == 0) {
 		if (count < 6 ||
 		    inet_pton(AF_INET6, src_addr, &peer->u.sin6.sin6_addr) <= 0 ||
 		    inet_pton(AF_INET6, dst_addr, &addr->u.sin6.sin6_addr) <= 0) {
@@ -637,7 +636,7 @@ static int proxy_parse(struct buffer_t *buf, struct sockaddr_t *peer, struct soc
 		peer->u.sin6.sin6_family = addr->u.sin6.sin6_family = AF_INET6;
 		peer->u.sin6.sin6_port = htons(atoi(src_port));
 		addr->u.sin6.sin6_port = htons(atoi(dst_port));
-	} else if (strcasecmp(ptr, PROXY_UNKNOWN) != 0)
+	} else if (strcasecmp(proto, PROXY_UNKNOWN) != 0)
 		goto error;
 
 	return n;

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <getopt.h>
 #include <time.h>
 #include <limits.h>
 #include <malloc.h>
@@ -247,51 +248,107 @@ static void log_version()
 	log_msg("accel-ppp version %s\n", ACCEL_PPP_VERSION);
 }
 
+enum {
+	OPT_DUMP = CHAR_MAX + 1,
+	OPT_INTERNAL,
+	OPT_NO_SIGSEGV,
+	OPT_NO_SIGINT,
+};
+
+static const struct option long_opts[] = {
+	{ "config",     required_argument, NULL, 'c'            },
+	{ "pid",        required_argument, NULL, 'p'            },
+	{ "daemon",     no_argument,       NULL, 'd'            },
+	{ "dump",       required_argument, NULL, OPT_DUMP       },
+	{ "internal",   no_argument,       NULL, OPT_INTERNAL   },
+	{ "no-sigsegv", no_argument,       NULL, OPT_NO_SIGSEGV },
+	{ "no-sigint",  no_argument,       NULL, OPT_NO_SIGINT  },
+	{ "version",    no_argument,       NULL, 'V'            },
+	{ "help",       no_argument,       NULL, 'h'            },
+	{ NULL,         0,                 NULL, 0              }
+};
+
+static void print_version(FILE *stream)
+{
+	fprintf(stream, "accel-ppp %s\n", ACCEL_PPP_VERSION);
+}
+
+static void print_usage(FILE *stream)
+{
+	fprintf(stream, "Usage:\t%s -c CONFIG [-p PID] [-d]\n", "accel-pppd");
+}
+
+static void print_help(FILE *stream)
+{
+	print_usage(stream);
+	fprintf(stream, "\n"
+		"\t-с, --config\t- Read config from CONFIG file \n"
+		"\t-p, --pid\t- Write pid to PID file\n"
+		"\t-d, --daemon\t- Daemon mode\n"
+		"\t-V, --version\t- Show version and exit\n"
+		"\t-h, --help\t- Show help and exit\n");
+}
+
 int main(int _argc, char **_argv)
 {
 	sigset_t set;
-	int i, sig, goto_daemon = 0, len;
+	int c, sig, goto_daemon = 0, len;
 	pid_t pid = 0;
 	struct sigaction sa;
-	int pagesize = sysconf(_SC_PAGE_SIZE);
+	int pagesize = sysconf(_SC_PAGESIZE);
+	char *dump = NULL;
 	int internal = 0;
 	int no_sigint = 0;
 	int no_sigsegv = 0;
 
 	argc = _argc;
 	argv = _argv;
-
 	if (argc < 2)
 		goto usage;
 
-	for(i = 1; i < argc; i++) {
-		if (!strcmp(argv[i], "-d"))
+	while ((c = getopt_long(argc, argv, "c:p:dVh", long_opts, NULL)) != -1) {
+		switch (c) {
+		case 'c':
+			conf_file = optarg;
+			break;
+		case 'p':
+			pid_file = optarg;
+			break;
+		case 'd':
 			goto_daemon = 1;
-		else if (!strcmp(argv[i], "-p")) {
-			if (i == argc - 1)
-				goto usage;
-			pid_file = argv[++i];
-		} else if (!strcmp(argv[i], "-c")) {
-			if (i == argc - 1)
-				goto usage;
-			conf_file = argv[++i];
-		} else if (!strcmp(argv[i], "--dump")) {
-			if (i == argc - 1)
-				goto usage;
-			len = (strlen(argv[i + 1]) / pagesize + 1) * pagesize;
-			conf_dump = memalign(pagesize, len);
-			strcpy(conf_dump, argv[++i]);
-			mprotect(conf_dump, len, PROT_READ);
-		} else if (!strcmp(argv[i], "--internal"))
+			break;
+		case OPT_DUMP:
+			dump = optarg;
+			break;
+		case OPT_INTERNAL:
 			internal = 1;
-		else if (!strcmp(argv[i], "--no-sigsegv"))
+			break;
+		case OPT_NO_SIGSEGV:
 			no_sigsegv = 1;
-		else if (!strcmp(argv[i], "--no-sigint"))
+			break;
+		case OPT_NO_SIGINT:
 			no_sigint = 1;
+			break;
+		case 'V':
+			print_version(stdout);
+			return EXIT_SUCCESS;
+		case 'h':
+			print_help(stdout);
+			return EXIT_SUCCESS;
+		default:
+			goto usage;
+		}
 	}
 
 	if (!conf_file)
 		goto usage;
+
+	if (dump) {
+		len = (strlen(dump) / pagesize + 1) * pagesize;
+		conf_dump = memalign(pagesize, len);
+		strcpy(conf_dump, dump);
+		mprotect(conf_dump, len, PROT_READ);
+	}
 
 	if (internal) {
 		while (getppid() != 1)
@@ -408,11 +465,6 @@ int main(int _argc, char **_argv)
 	return EXIT_SUCCESS;
 
 usage:
-	printf("usage: accel-pppd [-d] [-p <file>] -c <file>\n\
-	where:\n\
-		-d - daemon mode\n\
-		-p - write pid to <file>\n\
-		-c - config file\n");
+	print_help(stderr);
 	_exit(EXIT_FAILURE);
 }
-

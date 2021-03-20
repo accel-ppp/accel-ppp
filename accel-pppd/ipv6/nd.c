@@ -414,6 +414,9 @@ static void add_dnssl(const char *val)
 	const char *ptr;
 	uint8_t *buf;
 
+	if (!val)
+		return;
+
 	if (val[n - 1] == '.')
 		n++;
 	else
@@ -474,7 +477,8 @@ static void load_dns(void)
 		}
 
 		if (!strcmp(opt->name, "lifetime")) {
-			conf_rdnss_lifetime = atoi(opt->val);
+			if (opt->val)
+				conf_rdnss_lifetime = atoi(opt->val);
 			continue;
 		}
 

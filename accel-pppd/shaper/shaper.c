@@ -903,6 +903,9 @@ static struct time_range_t *parse_range(time_t t, const char *val)
 	struct tm begin_tm, end_tm;
 	struct time_range_t *r;
 
+	if (!val)
+		return NULL;
+
 	id = strtol(val, &endptr, 10);
 	if (*endptr != ',')
 		return NULL;

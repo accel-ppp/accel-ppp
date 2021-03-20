@@ -25,7 +25,7 @@ static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt,
 	char statm_fname[128];
 	FILE *f;
 	unsigned long vmsize = 0, vmrss = 0;
-	unsigned long page_size_kb = sysconf(_SC_PAGE_SIZE) / 1024;
+	unsigned long page_size_kb = sysconf(_SC_PAGESIZE) / 1024;
 #ifdef MEMDEBUG
 	struct mallinfo mi = mallinfo();
 #endif

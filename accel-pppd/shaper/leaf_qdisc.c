@@ -105,151 +105,113 @@ static int parse_u32(const char *str, int *r)
 
 static int parse_sfq(char *str)
 {
-	char *ptr1, *ptr2;
+	char *key, *value, *ptr;
 
-	if (!*str)
+	if (!str)
 		goto out;
 
-	while (1) {
-		for (ptr1 = str + 1; *ptr1 && *ptr1 != ' '; ptr1++);
-
-		if (!*ptr1)
+	for (key = strtok_r(str, " ", &ptr); key; key = strtok_r(NULL, " ", &ptr)) {
+		value = strtok_r(NULL, " ", &ptr);
+		if (!value)
 			return -1;
 
-		*ptr1 = 0;
-
-		for (ptr1++; *ptr1 && *ptr1 == ' '; ptr1++);
-
-		if (!*ptr1)
-			return -1;
-
-		for (ptr2 = ptr1 + 1; *ptr2 && *ptr2 != ' '; ptr2++);
-
-		if (*ptr2) {
-			*ptr2 = 0;
-			for (ptr2++; *ptr2 && *ptr2 == ' '; ptr2++);
-		}
-
-		if (strcmp(str, "quantum") == 0) {
-			if (parse_size(ptr1, &conf_lq_arg1))
+		if (strcmp(key, "quantum") == 0) {
+			if (parse_size(value, &conf_lq_arg1))
 				return -1;
-		} else if (strcmp(str, "perturb") == 0) {
-			if (parse_int(ptr1, &conf_lq_arg2))
+		} else if (strcmp(key, "perturb") == 0) {
+			if (parse_int(value, &conf_lq_arg2))
 				return -1;
-		} else if (strcmp(str, "limit") == 0) {
-			if (parse_u32(ptr1, &conf_lq_arg3))
+		} else if (strcmp(key, "limit") == 0) {
+			if (parse_u32(value, &conf_lq_arg3))
 				return -1;
 		} else
 			return -1;
-
-		if (*ptr2 == 0)
-			break;
-
-		str = ptr2;
 	}
 
 out:
 	conf_leaf_qdisc = LEAF_QDISC_SFQ;
-
 	return 0;
 }
 
 #ifdef TCA_FQ_CODEL_MAX
 static int parse_fq_codel(char *str)
 {
-	char *ptr1, *ptr2;
+	char *key, *value, *ptr;
 
 	conf_lq_arg6 = -1;
 
-	if (!*str)
+	if (!str)
 		goto out;
 
-	while (1) {
-		for (ptr1 = str + 1; *ptr1 && *ptr1 != ' '; ptr1++);
-
-		if (!*ptr1) {
-			if (strcmp(str, "ecn") == 0)
-				conf_lq_arg6 = 1;
-			else if (strcmp(str, "noecn") == 0)
-				conf_lq_arg6 = 0;
-			else
-				return -1;
-			break;
+	for (key = strtok_r(str, " ", &ptr); key; key = strtok_r(NULL, " ", &ptr)) {
+		if (strcmp(key, "ecn") == 0) {
+			conf_lq_arg6 = 1;
+			continue;
+		} else if (strcmp(str, "noecn") == 0) {
+			conf_lq_arg6 = 0;
+			continue;
 		}
 
-		*ptr1 = 0;
-
-		for (ptr1++; *ptr1 && *ptr1 == ' '; ptr1++);
-
-		if (!*ptr1)
+		value = strtok_r(str, " ", &ptr);
+		if (!value)
 			return -1;
 
-		for (ptr2 = ptr1 + 1; *ptr2 && *ptr2 != ' '; ptr2++);
-
-		if (*ptr2) {
-			*ptr2 = 0;
-			for (ptr2++; *ptr2 && *ptr2 == ' '; ptr2++);
-		}
-
-		if (strcmp(str, "limit") == 0) {
-			if (parse_u32(ptr1, &conf_lq_arg1))
+		if (strcmp(key, "limit") == 0) {
+			if (parse_u32(value, &conf_lq_arg1))
 				return -1;
-		} else if (strcmp(str, "flows") == 0) {
-			if (parse_u32(ptr1, &conf_lq_arg2))
+		} else if (strcmp(key, "flows") == 0) {
+			if (parse_u32(value, &conf_lq_arg2))
 				return -1;
-		} else if (strcmp(str, "quantum") == 0) {
-			if (parse_u32(ptr1, &conf_lq_arg3))
+		} else if (strcmp(key, "quantum") == 0) {
+			if (parse_u32(value, &conf_lq_arg3))
 				return -1;
-		} else if (strcmp(str, "target") == 0) {
-			if (parse_time(ptr1, &conf_lq_arg4))
+		} else if (strcmp(key, "target") == 0) {
+			if (parse_time(value, &conf_lq_arg4))
 				return -1;
-		} else if (strcmp(str, "interval") == 0) {
-			if (parse_time(ptr1, &conf_lq_arg5))
+		} else if (strcmp(key, "interval") == 0) {
+			if (parse_time(value, &conf_lq_arg5))
 				return -1;
 		} else
 			return -1;
-
-		if (*ptr2 == 0)
-			break;
-
-		str = ptr2;
 	}
 
 out:
 	conf_leaf_qdisc = LEAF_QDISC_FQ_CODEL;
-
 	return 0;
 }
 #endif
 
 void leaf_qdisc_parse(const char *opt)
 {
-	char *ptr1;
-	char *str = strdup(opt);
+	char *str, *qdisc, *params, *ptr;
 
-	for (ptr1 = str; *ptr1 && *ptr1 != ' '; ptr1++);
-
-	if (*ptr1) {
-		*ptr1 = 0;
-		for (ptr1++; *ptr1 && *ptr1 == ' '; ptr1++);
+	str = strdup(opt);
+	if (!str) {
+		log_emerg("shaper: out of memory\n");
+		return;
 	}
 
-	if (strcmp(str, "sfq") == 0) {
-		if (parse_sfq(ptr1))
-			goto out_err;
+	qdisc = strtok_r(str, " ", &ptr);
+	if (qdisc) {
+		params = strtok_r(NULL, " ", &ptr);
+		if (strcmp(qdisc, "sfq") == 0) {
+			if (parse_sfq(params))
+				goto out_err;
 #ifdef TCA_FQ_CODEL_MAX
-	} else if (strcmp(str, "fq_codel") == 0) {
-		if (parse_fq_codel(ptr1))
-			goto out_err;
+		} else if (strcmp(qdisc, "fq_codel") == 0) {
+			if (parse_fq_codel(params))
+				goto out_err;
 #endif
-	} else
-		log_emerg("shaper: unknown leaf-qdisc '%s'\n", str);
+		} else
+			log_emerg("shaper: unknown leaf-qdisc '%s'\n", qdisc);
+	}
 
 	free(str);
-
 	return;
+
 out_err:
 	log_emerg("shaper: failed to parse '%s'\n", opt);
+	free(str);
 }
 
 static int qdisc_sfq(struct qdisc_opt *qopt, struct nlmsghdr *n)
