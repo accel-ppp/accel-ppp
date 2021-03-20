@@ -939,7 +939,7 @@ static int parse_server(const char *opt, in_addr_t *addr, int *port, char **secr
 
 	if (p1) {
 		*port = atoi(p1 + 1);
-		if (*port <=0 ) {
+		if (*port <=0) {
 			_free(str);
 			return -1;
 		}

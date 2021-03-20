@@ -468,12 +468,12 @@ static void load_dns(void)
 	conf_dnssl_size = 0;
 
 	list_for_each_entry(opt, &s->items, entry) {
-		if (!strcmp(opt->name, "dnssl") && opt->val) {
+		if (!strcmp(opt->name, "dnssl")) {
 			add_dnssl(opt->val);
 			continue;
 		}
 
-		if (!strcmp(opt->name, "lifetime") && opt->val) {
+		if (!strcmp(opt->name, "lifetime")) {
 			conf_rdnss_lifetime = atoi(opt->val);
 			continue;
 		}

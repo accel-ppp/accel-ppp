@@ -273,8 +273,6 @@ static void ev_ses_pre_up(struct ap_session *ses)
 		execve(conf_ip_pre_up, argv, env);
 		net->exit_ns();
 
-		sigchld_unlock();
-
 		log_emerg("pppd_compat: exec '%s': %s\n", conf_ip_pre_up, strerror(errno));
 		_exit(EXIT_FAILURE);
 	} else {
@@ -328,8 +326,6 @@ static void ev_ses_started(struct ap_session *ses)
 		net->enter_ns();
 		execve(conf_ip_up, argv, env);
 		net->exit_ns();
-
-		sigchld_unlock();
 
 		log_emerg("pppd_compat: exec '%s': %s\n", conf_ip_up, strerror(errno));
 		_exit(EXIT_FAILURE);
@@ -393,8 +389,6 @@ static void ev_ses_finished(struct ap_session *ses)
 			net->enter_ns();
 			execve(conf_ip_down, argv, env);
 			net->exit_ns();
-
-			sigchld_unlock();
 
 			log_emerg("pppd_compat: exec '%s': %s\n", conf_ip_down, strerror(errno));
 			_exit(EXIT_FAILURE);
@@ -487,8 +481,6 @@ static void ev_radius_coa(struct ev_radius_t *ev)
 			net->enter_ns();
 			execve(conf_ip_change, argv, env);
 			net->exit_ns();
-
-			sigchld_unlock();
 
 			log_emerg("pppd_compat: exec '%s': %s\n", conf_ip_change, strerror(errno));
 			_exit(EXIT_FAILURE);

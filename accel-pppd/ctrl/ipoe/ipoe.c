@@ -2045,10 +2045,6 @@ static void ipoe_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 static struct ipoe_session *ipoe_session_create_up(struct ipoe_serv *serv, struct ethhdr *eth, struct iphdr *iph, struct _arphdr *arph)
 {
 	struct ipoe_session *ses;
-
-	if ((!arph && !eth) || (!arph && !iph))
-		return NULL;
-
 	uint8_t *hwaddr = arph ? arph->ar_sha : eth->h_source;
 	in_addr_t saddr = arph ? arph->ar_spa : iph->saddr;
 
