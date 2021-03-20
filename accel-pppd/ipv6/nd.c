@@ -28,7 +28,7 @@ static int conf_init_ra_interval = 3;
 static int conf_rdnss_lifetime;
 static struct in6_addr conf_dns[MAX_DNS_COUNT];
 static int conf_dns_count;
-static void *conf_dnssl;
+static uint8_t *conf_dnssl;
 static int conf_dnssl_size;
 
 static int conf_MaxRtrAdvInterval = 600;
@@ -196,7 +196,7 @@ static void ipv6_nd_send_ra(struct ipv6_nd_handler_t *h, struct sockaddr_in6 *ds
 		dnsslinfo->nd_opt_dnssli_lifetime = htonl(conf_rdnss_lifetime);
 		memcpy(dnsslinfo->nd_opt_dnssli, conf_dnssl, conf_dnssl_size);
 		memset(dnsslinfo->nd_opt_dnssli + conf_dnssl_size, 0, (dnsslinfo->nd_opt_dnssli_len - 1) * 8 - conf_dnssl_size);
-		endptr = (void *)dnsslinfo + dnsslinfo->nd_opt_dnssli_len * 8;
+		endptr = (uint8_t *)dnsslinfo + dnsslinfo->nd_opt_dnssli_len * 8;
 	} else
 		endptr = rdnss_addr;
 

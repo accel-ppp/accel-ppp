@@ -43,7 +43,7 @@ static int conf_route_via_gw = 1;
 
 static struct in6_addr conf_dns[MAX_DNS_COUNT];
 static int conf_dns_count;
-static void *conf_dnssl;
+static uint8_t *conf_dnssl;
 static int conf_dnssl_size;
 
 struct dhcpv6_pd {
