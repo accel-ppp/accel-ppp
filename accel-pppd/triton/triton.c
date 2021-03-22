@@ -160,12 +160,15 @@ static void* triton_thread(struct _triton_thread_t *thread)
 			} else
 				spin_unlock(&threads_lock);
 
+			spin_lock(&ctx_list_lock);
 			if (terminate) {
+				spin_unlock(&ctx_list_lock);
 				spin_lock(&threads_lock);
 				list_del(&thread->entry);
 				spin_unlock(&threads_lock);
 				return NULL;
 			}
+			spin_unlock(&ctx_list_lock);
 
 			//printf("thread %p: enter sigwait\n", thread);
 			sigwait(&set, &sig);
