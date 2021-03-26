@@ -787,6 +787,13 @@ static void load_config(void)
 #endif
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void init(void)
 {
 	load_config();
@@ -796,7 +803,7 @@ static void init(void)
 
 	triton_event_register_handler(EV_SES_FINISHED, (triton_event_func)ev_ses_finished);
 	triton_event_register_handler(EV_SES_PRE_UP, (triton_event_func)ev_ses_pre_up);
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 }
 
 DEFINE_INIT(51, init);

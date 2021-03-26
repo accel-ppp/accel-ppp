@@ -355,6 +355,13 @@ static void load_config(void)
 		conf_noauth = 0;
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void ppp_auth_init()
 {
 	load_config();
@@ -362,7 +369,7 @@ static void ppp_auth_init()
 	ppp_register_layer("auth", &auth_layer);
 	lcp_option_register(&auth_opt_hnd);
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 }
 
 DEFINE_INIT(3, ppp_auth_init);

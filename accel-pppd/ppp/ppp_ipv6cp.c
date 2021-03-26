@@ -821,6 +821,13 @@ static void load_config(void)
 	}
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void ipv6cp_init(void)
 {
 	if (sock6_fd < 0)
@@ -828,7 +835,7 @@ static void ipv6cp_init(void)
 
 	load_config();
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 
 	ppp_register_layer("ipv6cp", &ipv6cp_layer);
 }

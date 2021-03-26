@@ -352,6 +352,13 @@ static void load_config(void)
 		conf_accept_peer_intf_id = atoi(opt);
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void init()
 {
 	if (sock6_fd < 0)
@@ -359,7 +366,7 @@ static void init()
 
 	ipv6cp_option_register(&ipaddr_opt_hnd);
 	load_config();
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 }
 
 DEFINE_INIT(5, init);

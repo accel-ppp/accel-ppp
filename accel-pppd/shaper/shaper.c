@@ -1189,6 +1189,13 @@ static void load_config(void)
 	triton_context_call(&shaper_ctx, (triton_event_func)load_time_ranges, NULL);
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void init(void)
 {
 	const char *opt;
@@ -1218,7 +1225,7 @@ static void init(void)
 	triton_event_register_handler(EV_SES_FINISHING, (triton_event_func)ev_ppp_finishing);
 	//triton_event_register_handler(EV_CTRL_FINISHED, (triton_event_func)ev_ctrl_finished);
 	triton_event_register_handler(EV_SHAPER, (triton_event_func)ev_shaper);
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 
 	cli_register_simple_cmd2(shaper_change_exec, shaper_change_help, 2, "shaper", "change");
 	cli_register_simple_cmd2(shaper_restore_exec, shaper_restore_help, 2, "shaper", "restore");

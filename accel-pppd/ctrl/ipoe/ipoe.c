@@ -4076,6 +4076,13 @@ static void load_config(void)
 	load_local_nets(s);
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static struct triton_context_t l4_redirect_ctx = {
 	.close = l4_redirect_ctx_close,
 };
@@ -4103,7 +4110,7 @@ static void ipoe_init(void)
 	cli_register_simple_cmd2(show_stat_exec, NULL, 2, "show", "stat");
 	cli_show_ses_register("ipoe-type", "IPoE session type", print_session_type);
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 
 #ifdef RADIUS
 	if (triton_module_loaded("radius")) {

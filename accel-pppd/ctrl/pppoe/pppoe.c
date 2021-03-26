@@ -2065,6 +2065,13 @@ static void load_config(void)
 	load_vlan_mon(s);
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void load_interfaces()
 {
 	struct conf_sect_t *s = conf_get_section("pppoe");
@@ -2110,7 +2117,7 @@ static void pppoe_init(void)
 
 	connlimit_loaded = triton_module_loaded("connlimit");
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 }
 
 DEFINE_INIT(21, pppoe_init);

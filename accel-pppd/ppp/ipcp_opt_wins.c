@@ -173,13 +173,20 @@ static void load_config(void)
 		conf_wins2 = inet_addr(opt);
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void wins_opt_init()
 {
 	ipcp_option_register(&wins1_opt_hnd);
 	ipcp_option_register(&wins2_opt_hnd);
 
 	load_config();
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 
 	triton_event_register_handler(EV_WINS, (triton_event_func)ev_wins);
 }

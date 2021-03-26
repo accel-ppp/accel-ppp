@@ -344,13 +344,20 @@ static void load_config(void)
 		conf_mppe = MPPE_ALLOW;
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void mppe_opt_init()
 {
 	ccp_option_register(&mppe_opt_hnd);
 	triton_event_register_handler(EV_MPPE_KEYS, (triton_event_func)ev_mppe_keys);
 
 	load_config();
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 }
 
 DEFINE_INIT(4, mppe_opt_init);

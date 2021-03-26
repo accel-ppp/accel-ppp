@@ -695,6 +695,13 @@ static void load_config(void)
 		conf_max_failure = atoi(opt);
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void auth_mschap_v2_init()
 {
 	load_config();
@@ -702,7 +709,7 @@ static void auth_mschap_v2_init()
 	if (ppp_auth_register_handler(&chap))
 		log_emerg("mschap-v2: failed to register handler\n");
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 }
 
 DEFINE_INIT(4, auth_mschap_v2_init);

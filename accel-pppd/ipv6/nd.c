@@ -570,13 +570,20 @@ static void load_config(void)
 	load_dns();
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void init(void)
 {
 	buf_pool = mempool_create(BUF_SIZE);
 
 	load_config();
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 	triton_event_register_handler(EV_SES_STARTED, (triton_event_func)ev_ses_started);
 	triton_event_register_handler(EV_SES_FINISHING, (triton_event_func)ev_ses_finishing);
 }

@@ -173,13 +173,20 @@ static void load_config(void)
 		conf_dns2 = inet_addr(opt);
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void dns_opt_init()
 {
 	ipcp_option_register(&dns1_opt_hnd);
 	ipcp_option_register(&dns2_opt_hnd);
 
 	load_config();
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 
 	triton_event_register_handler(EV_DNS, (triton_event_func)ev_dns);
 }

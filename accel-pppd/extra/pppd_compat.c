@@ -765,6 +765,13 @@ static void load_config()
 		conf_fork_limit = sysconf(_SC_NPROCESSORS_ONLN)*2;
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void init(void)
 {
 	load_config();
@@ -773,7 +780,7 @@ static void init(void)
 	triton_event_register_handler(EV_SES_PRE_UP, (triton_event_func)ev_ses_pre_up);
 	triton_event_register_handler(EV_SES_STARTED, (triton_event_func)ev_ses_started);
 	triton_event_register_handler(EV_SES_PRE_FINISHED, (triton_event_func)ev_ses_finished);
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 #ifdef RADIUS
 	if (triton_module_loaded("radius")) {
 		triton_event_register_handler(EV_RADIUS_ACCESS_ACCEPT, (triton_event_func)ev_radius_access_accept);

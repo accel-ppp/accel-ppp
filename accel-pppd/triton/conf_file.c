@@ -33,6 +33,8 @@ static int sect_add_item(struct conf_ctx *ctx, const char *name, char *val, char
 static struct conf_option_t *find_item(struct conf_sect_t *, const char *name);
 static int load_file(struct conf_ctx *ctx);
 
+static pthread_rwlock_t conf_rdwr_lock = PTHREAD_RWLOCK_INITIALIZER;
+
 static int __conf_load(struct conf_ctx *ctx, const char *fname)
 {
 	struct conf_ctx ctx1;
@@ -176,7 +178,7 @@ static void print_conf()
 	}
 }*/
 
-int conf_load(const char *fname)
+static int _conf_load(const char *fname)
 {
 	int r;
 	struct conf_ctx ctx;
@@ -191,6 +193,14 @@ int conf_load(const char *fname)
 	ctx.items = NULL;
 	r = __conf_load(&ctx, fname);
 
+	return r;
+}
+
+int conf_load(const char *fname) {
+	int r;
+	pthread_rwlock_wrlock(&conf_rdwr_lock);
+	r = _conf_load(fname);
+	pthread_rwlock_unlock(&conf_rdwr_lock);
 	return r;
 }
 
@@ -216,9 +226,11 @@ int conf_reload(const char *fname)
 	int r;
 	LIST_HEAD(sections_bak);
 
+	pthread_rwlock_wrlock(&conf_rdwr_lock);
+
 	list_splice_init(&sections, &sections_bak);
 
-	r = conf_load(fname);
+	r = _conf_load(fname);
 
 	if (r)
 		list_splice(&sections_bak, &sections);
@@ -232,6 +244,7 @@ int conf_reload(const char *fname)
 			_free(sect);
 		}
 	}
+	pthread_rwlock_unlock(&conf_rdwr_lock);
 
 	return r;
 }
@@ -334,3 +347,12 @@ __export char * conf_get_opt(const char *sect, const char *name)
 	return opt->val;
 }
 
+__export void config_lock()
+{
+	pthread_rwlock_rdlock(&conf_rdwr_lock);
+}
+
+__export void config_unlock()
+{
+	pthread_rwlock_unlock(&conf_rdwr_lock);
+}

@@ -611,7 +611,7 @@ static void print_tx_pkts(struct ap_session *ses, char *buf)
 	sprintf(buf, "%u", stats.tx_packets);
 }
 
-static void load_config(void *data)
+static void load_config(void)
 {
 	const char *opt = NULL;
 	char *ptr = NULL;
@@ -632,9 +632,16 @@ static void load_config(void *data)
 	}
 }
 
+static void reload_config(void)
+{
+	config_lock();
+	load_config();
+	config_unlock();
+}
+
 static void init(void)
 {
-	load_config(NULL);
+	load_config();
 
 	cli_register_simple_cmd2(show_ses_exec, show_ses_help, 2, "show", "sessions");
 
@@ -659,7 +666,7 @@ static void init(void)
 	cli_show_ses_register("rx-pkts", "received packets", print_rx_pkts);
 	cli_show_ses_register("tx-pkts", "transmitted packets", print_tx_pkts);
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, reload_config);
 }
 
 DEFINE_INIT(12, init);

@@ -150,12 +150,19 @@ static void load_config(void)
 	}
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void pcomp_opt_init()
 {
 	lcp_option_register(&pcomp_opt_hnd);
 
 	load_config();
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 }
 
 DEFINE_INIT(4, pcomp_opt_init);

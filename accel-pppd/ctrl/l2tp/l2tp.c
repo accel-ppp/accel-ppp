@@ -4986,6 +4986,13 @@ static void load_config(void)
 	}
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void l2tp_init(void)
 {
 	int fd;
@@ -5015,7 +5022,7 @@ static void l2tp_init(void)
 				 "l2tp", "create", "session");
 
 	if (triton_event_register_handler(EV_CONFIG_RELOAD,
-					  (triton_event_func)load_config) < 0)
+					  (triton_event_func)reload_config) < 0)
 		log_warn("l2tp: registration of CONFIG_RELOAD event failed,"
 			 " configuration reloading deactivated\n");
 }

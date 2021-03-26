@@ -902,13 +902,20 @@ static void load_config(void)
 		conf_echo_timeout = 0;
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void lcp_init(void)
 {
 	load_config();
 
 	ppp_register_layer("lcp", &lcp_layer);
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 }
 
 DEFINE_INIT(3, lcp_init);

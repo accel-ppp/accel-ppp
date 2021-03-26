@@ -375,6 +375,13 @@ static void load_config(void)
 		conf_verbose = 1;
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void init(void)
 {
 	const char *opt;
@@ -401,7 +408,7 @@ static void init(void)
 
 	start_server(host, port);
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 
 	free(host);
 	return;

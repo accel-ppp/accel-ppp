@@ -179,11 +179,18 @@ static void load_config(void)
 		conf_check_exists = atoi(opt) > 0;
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static void ipaddr_opt_init()
 {
 	ipcp_option_register(&ipaddr_opt_hnd);
 	load_config();
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 }
 
 DEFINE_INIT(4, ipaddr_opt_init);

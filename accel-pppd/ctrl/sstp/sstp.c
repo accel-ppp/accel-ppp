@@ -2860,6 +2860,13 @@ static void load_config(void)
 	}
 }
 
+static void reload_config(void)
+{
+        config_lock();
+        load_config();
+        config_unlock();
+}
+
 static struct sstp_serv_t serv = {
 	.hnd.read = sstp_connect,
 	.ctx.close = sstp_serv_close,
@@ -2962,7 +2969,7 @@ static void sstp_init(void)
 
 	triton_event_register_handler(EV_MPPE_KEYS, (triton_event_func)ev_mppe_keys);
 	triton_event_register_handler(EV_SES_AUTHORIZED, (triton_event_func)ev_ses_authorized);
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
 	return;
 
 error_unlink:
