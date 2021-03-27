@@ -147,9 +147,10 @@ static void rad_auth_finalize(struct radius_pd_t *rpd, int r)
 {
 	hold_pd(rpd);
 
-	if (rpd->auth_ctx) {
+	if (rpd->auth_ctx)
 		rpd->auth_ctx->cb(rpd->auth_ctx->cb_arg, r);
 
+	if (rpd->auth_ctx) {
 		if (r == PWDB_SUCCESS) {
 			rpd->auth_reply = rpd->auth_ctx->req->reply;
 			rpd->auth_ctx->req->reply = NULL;
