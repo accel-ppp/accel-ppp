@@ -43,6 +43,8 @@ static struct ipcp_option_handler_t ipaddr_opt_hnd = {
 	.print         = ipaddr_print,
 };
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static struct ipcp_option_t *ipaddr_init(struct ppp_ipcp_t *ipcp)
 {
 	struct ipaddr_option_t *ipaddr_opt = _malloc(sizeof(*ipaddr_opt));
@@ -172,17 +174,16 @@ static void load_config(void)
 {
 	const char *opt;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
+
 	opt = conf_get_opt("ppp", "check-ip");
 	if (!opt)
 		opt = conf_get_opt("common", "check-ip");
 	if (opt && atoi(opt) >= 0)
 		conf_check_exists = atoi(opt) > 0;
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -190,7 +191,7 @@ static void ipaddr_opt_init()
 {
 	ipcp_option_register(&ipaddr_opt_hnd);
 	load_config();
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
 
 DEFINE_INIT(4, ipaddr_opt_init);

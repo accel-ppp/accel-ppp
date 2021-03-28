@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <pthread.h>
 
 #include "triton.h"
 #include "events.h"
@@ -47,6 +48,8 @@ static struct triton_md_handler_t serv_hnd;
 static LIST_HEAD(clients);
 
 static uint8_t *temp_buf;
+
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
 
 static void disconnect(struct tcp_client_t *cln)
 {
@@ -368,17 +371,14 @@ static void load_config(void)
 {
 	const char *opt;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
 	opt = conf_get_opt("cli", "verbose");
 	if (opt)
 		conf_verbose = atoi(opt);
 	else
 		conf_verbose = 1;
-}
-
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -408,7 +408,7 @@ static void init(void)
 
 	start_server(host, port);
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 
 	free(host);
 	return;

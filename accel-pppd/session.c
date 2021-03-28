@@ -59,6 +59,8 @@ static void (*shutdown_cb)(void);
 static void generate_sessionid(struct ap_session *ses);
 static void save_seq(void);
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 void __export ap_session_init(struct ap_session *ses)
 {
 	memset(ses, 0, sizeof(*ses));
@@ -490,6 +492,9 @@ static void load_config(void)
 {
 	const char *opt;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
+
 	opt = conf_get_opt("common", "sid-case");
 	if (opt) {
 		if (!strcmp(opt, "upper"))
@@ -539,12 +544,8 @@ static void load_config(void)
 		conf_max_starting = atoi(opt);
 	else
 		conf_max_starting = 0;
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -588,7 +589,7 @@ static void init(void)
 	} else
 		read(urandom_fd, &seq, sizeof(seq));
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 
 	atexit(save_seq);
 }

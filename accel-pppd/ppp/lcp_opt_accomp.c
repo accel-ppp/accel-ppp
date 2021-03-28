@@ -53,6 +53,8 @@ static struct lcp_option_t *accomp_init(struct ppp_lcp_t *lcp)
 	return &accomp_opt->opt;
 }
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static void accomp_free(struct ppp_lcp_t *lcp, struct lcp_option_t *opt)
 {
 	struct accomp_option_t *accomp_opt = container_of(opt, typeof(*accomp_opt), opt);
@@ -139,6 +141,9 @@ static void load_config(void)
 {
 	char *opt;
 
+        config_lock();
+        pthread_rwlock_wrlock(&config_modify);
+
 	opt = conf_get_opt("ppp", "accomp");
 	if (opt) {
 		if (!strcmp(opt, "deny"))
@@ -148,12 +153,8 @@ static void load_config(void)
 		else
 			conf_accomp = atoi(opt);
 	}
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -162,7 +163,7 @@ static void accomp_opt_init()
 	lcp_option_register(&accomp_opt_hnd);
 
 	load_config();
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
 
 DEFINE_INIT(4, accomp_opt_init);

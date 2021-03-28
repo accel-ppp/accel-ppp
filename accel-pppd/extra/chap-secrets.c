@@ -50,6 +50,8 @@ struct cs_pd_t
 static LIST_HEAD(hash_chain);
 #endif
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static char *skip_word(char *ptr)
 {
 	char quote = 0;
@@ -757,6 +759,9 @@ static void load_config(void)
 {
 	const char *opt;
 
+        config_lock();
+        pthread_rwlock_wrlock(&config_modify);
+
 	if (conf_chap_secrets && conf_chap_secrets != def_chap_secrets)
 		_free(conf_chap_secrets);
 	opt = conf_get_opt("chap-secrets", "chap-secrets");
@@ -785,12 +790,7 @@ static void load_config(void)
 	if (opt)
 		parse_hash_chain(opt);
 #endif
-}
-
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -803,7 +803,7 @@ static void init(void)
 
 	triton_event_register_handler(EV_SES_FINISHED, (triton_event_func)ev_ses_finished);
 	triton_event_register_handler(EV_SES_PRE_UP, (triton_event_func)ev_ses_pre_up);
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
 
 DEFINE_INIT(51, init);

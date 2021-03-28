@@ -50,6 +50,8 @@ static const struct luaL_Reg packet4_lib [] = {
 	{NULL, NULL}
 };
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static int luaopen_packet4(lua_State *L)
 {
   luaL_newmetatable(L, IPOE_PACKET4);
@@ -368,15 +370,14 @@ out:
 
 static void load_config()
 {
+        config_lock();
+        pthread_rwlock_wrlock(&config_modify);
+
 	conf_filename = conf_get_opt("ipoe", "lua-file");
 
 	serial++;
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -386,7 +387,7 @@ static void init()
 
 	pthread_key_create(&__key, (void (*)(void *))lua_close);
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
 
 DEFINE_INIT(100, init);

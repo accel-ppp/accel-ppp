@@ -226,6 +226,8 @@ static struct ipoe_session *ipoe_session_create_up(struct ipoe_serv *serv, struc
 static void __terminate(struct ap_session *ses);
 static void ipoe_ipv6_disable(struct ipoe_serv *serv);
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static void ipoe_ctx_switch(struct triton_context_t *ctx, void *arg)
 {
 	if (arg) {
@@ -3781,6 +3783,9 @@ static void load_local_nets(struct conf_sect_t *sect)
 static void load_config(void)
 {
 	const char *opt;
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
+
 	struct conf_sect_t *s = conf_get_section("ipoe");
 	struct conf_option_t *opt1;
 
@@ -4074,12 +4079,8 @@ static void load_config(void)
 	load_vlan_mon(s);
 	load_gw_addr(s);
 	load_local_nets(s);
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -4110,7 +4111,7 @@ static void ipoe_init(void)
 	cli_register_simple_cmd2(show_stat_exec, NULL, 2, "show", "stat");
 	cli_show_ses_register("ipoe-type", "IPoE session type", print_session_type);
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 
 #ifdef RADIUS
 	if (triton_module_loaded("radius")) {

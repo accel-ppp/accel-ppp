@@ -3,6 +3,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "triton.h"
 
@@ -28,6 +29,8 @@ char *conf_cli_prompt;
 
 static LIST_HEAD(simple_cmd_list);
 static LIST_HEAD(regexp_cmd_list);
+
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
 
 void __export cli_register_simple_cmd(struct cli_simple_cmd_t *cmd)
 {
@@ -320,6 +323,8 @@ static void load_config(void)
 {
 	const char *opt;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
 	if (conf_cli_passwd)
 		_free(conf_cli_passwd);
 	opt = conf_get_opt("cli", "password");
@@ -335,12 +340,7 @@ static void load_config(void)
 		conf_cli_prompt = _strdup(opt);
 	else
 		conf_cli_prompt = (char *)def_cli_prompt;
-}
-
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -348,7 +348,7 @@ static void init(void)
 {
 	load_config();
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
 
 DEFINE_INIT(10, init);

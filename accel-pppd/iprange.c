@@ -220,8 +220,9 @@ int __export iprange_tunnel_check(in_addr_t ipaddr)
 	return res;
 }
 
-static void iprange_load_config(void *data)
+static void iprange_load_config()
 {
+	config_lock();
 	LIST_HEAD(new_ranges);
 	LIST_HEAD(old_ranges);
 	bool disable;
@@ -235,11 +236,12 @@ static void iprange_load_config(void *data)
 	pthread_mutex_unlock(&iprange_lock);
 
 	free_ranges(&old_ranges);
+	config_unlock();
 }
 
 static void iprange_init(void)
 {
-	iprange_load_config(NULL);
+	iprange_load_config();
 	if (triton_event_register_handler(EV_CONFIG_RELOAD,
 					  iprange_load_config) < 0)
 		log_error("iprange: registration of CONFIG_RELOAD event failed,"

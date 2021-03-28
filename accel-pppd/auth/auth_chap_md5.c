@@ -81,6 +81,8 @@ static void chap_recv(struct ppp_handler_t *h);
 static void chap_timeout_timer(struct triton_timer_t *t);
 static void chap_restart_timer(struct triton_timer_t *t);
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static void print_buf(const uint8_t *buf, int size)
 {
 	int i;
@@ -461,6 +463,8 @@ static void load_config(void)
 {
 	const char *opt;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
 	opt = conf_get_opt("auth", "timeout");
 	if (opt && atoi(opt) > 0)
 		conf_timeout = atoi(opt);
@@ -476,12 +480,7 @@ static void load_config(void)
 	opt = conf_get_opt("auth", "any-login");
 	if (opt)
 		conf_any_login = atoi(opt);
-}
-
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -492,7 +491,7 @@ static void auth_chap_md5_init()
 	if (ppp_auth_register_handler(&chap))
 		log_emerg("chap-md5: failed to register handler\n");
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
 
 DEFINE_INIT(4, auth_chap_md5_init);

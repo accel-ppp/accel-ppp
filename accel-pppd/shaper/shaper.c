@@ -117,6 +117,8 @@ static struct triton_context_t shaper_ctx = {
 	.before_switch = log_switch,
 };
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static int alloc_idx(int init)
 {
 	int i, p = 0;
@@ -1057,6 +1059,9 @@ static void load_config(void)
 {
 	const char *opt;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
+
 #ifdef RADIUS
 	if (triton_module_loaded("radius")) {
 		opt = conf_get_opt("shaper", "vendor");
@@ -1079,7 +1084,7 @@ static void load_config(void)
 
 		if (conf_attr_up <= 0 || conf_attr_down <= 0) {
 			log_emerg("shaper: incorrect attribute(s), tbf disabled...\n");
-			return;
+			goto exit;
 		}
 	}
 #endif
@@ -1187,12 +1192,9 @@ static void load_config(void)
 		parse_dflt_shaper(opt, &dflt_down_speed, &dflt_up_speed);
 
 	triton_context_call(&shaper_ctx, (triton_event_func)load_time_ranges, NULL);
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	exit:
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -1225,7 +1227,7 @@ static void init(void)
 	triton_event_register_handler(EV_SES_FINISHING, (triton_event_func)ev_ppp_finishing);
 	//triton_event_register_handler(EV_CTRL_FINISHED, (triton_event_func)ev_ctrl_finished);
 	triton_event_register_handler(EV_SHAPER, (triton_event_func)ev_shaper);
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 
 	cli_register_simple_cmd2(shaper_change_exec, shaper_change_help, 2, "shaper", "change");
 	cli_register_simple_cmd2(shaper_restore_exec, shaper_restore_help, 2, "shaper", "restore");

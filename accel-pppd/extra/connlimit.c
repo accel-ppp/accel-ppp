@@ -26,6 +26,8 @@ static int conf_limit_timeout = 5000;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static LIST_HEAD(items);
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 int __export connlimit_check(uint64_t key)
 {
 	struct item *it;
@@ -146,6 +148,9 @@ static void load_config()
 	const char *opt;
 	int n,t;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
+
 	opt = conf_get_opt("connlimit", "limit");
 	if (opt) {
 		if (parse_limit(opt, &n, &t))
@@ -160,20 +165,17 @@ static void load_config()
 	opt = conf_get_opt("connlimit", "timeout");
 	if (opt)
 		conf_burst_timeout = atoi(opt) * 1000;
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
+
 
 static void init()
 {
 	load_config();
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
 
 DEFINE_INIT(200, init);

@@ -39,6 +39,8 @@ struct mru_option_t
 	unsigned int rejected:1;
 };
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static struct lcp_option_handler_t mru_opt_hnd=
 {
 	.init = mru_init,
@@ -163,6 +165,9 @@ static void load_config(void)
 {
 	char *opt;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
+
 	opt = conf_get_opt("ppp", "mtu");
 	if (opt && atoi(opt) > 0)
 		conf_mtu = atoi(opt);
@@ -183,12 +188,8 @@ static void load_config(void)
 		log_emerg("min-mtu cann't be greater then mtu/mru\n");
 		conf_min_mtu = conf_mru;
 	}
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -196,7 +197,7 @@ static void mru_opt_init()
 {
 	load_config();
 	lcp_option_register(&mru_opt_hnd);
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
 
 DEFINE_INIT(4, mru_opt_init);

@@ -62,6 +62,8 @@ static struct ipdb_t ipdb;
 static mempool_t rpd_pool;
 static mempool_t auth_ctx_pool;
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static void parse_framed_route(struct radius_pd_t *rpd, const char *attr)
 {
 	char str[32];
@@ -959,6 +961,10 @@ static int parse_server(const char *opt, in_addr_t *addr, int *port, char **secr
 static int load_config(void)
 {
 	char *opt;
+	int r = 0;
+
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
 
 	opt = conf_get_opt("radius", "max-try");
 	if (opt && atoi(opt) > 0)
@@ -1005,7 +1011,8 @@ static int load_config(void)
 	opt = conf_get_opt("radius", "dae-server");
 	if (opt && parse_server(opt, &conf_dm_coa_server, &conf_dm_coa_port, &conf_dm_coa_secret)) {
 		log_emerg("radius: failed to parse dae-server\n");
-		return -1;
+		r = -1;
+		goto exit;
 	}
 
 	opt = conf_get_opt("radius", "sid-in-auth");
@@ -1038,14 +1045,10 @@ static int load_config(void)
 	if (opt && atoi(opt) >= 0)
 		conf_strip_realm = atoi(opt) > 0;
 
-	return 0;
-}
-
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	exit:
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
+	return r;
 }
 
 static void radius_init(void)
@@ -1092,7 +1095,7 @@ static void radius_init(void)
 	triton_event_register_handler(EV_SES_FINISHING, (triton_event_func)ses_finishing);
 	triton_event_register_handler(EV_SES_FINISHED, (triton_event_func)ses_finished);
 	triton_event_register_handler(EV_FORCE_INTERIM_UPDATE, (triton_event_func)force_interim_update);
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
 
 DEFINE_INIT(51, radius_init);

@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <arpa/inet.h>
 #include <linux/if_link.h>
+#include <pthread.h>
 
 #include "triton.h"
 #include "events.h"
@@ -54,6 +55,8 @@ static char *conf_def_columns = NULL;
 
 static __thread struct rtnl_link_stats stats;
 static __thread int stats_set;
+
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
 
 void __export cli_show_ses_register(const char *name, const char *desc, void (*print)(struct ap_session *ses, char *buf))
 {
@@ -616,6 +619,8 @@ static void load_config(void)
 	const char *opt = NULL;
 	char *ptr = NULL;
 
+	config_lock();
+	pthread_rwlock_wrlock(&config_modify);
 	opt = conf_get_opt("cli", "sessions-columns");
 	if (opt && strlen(opt) > 0) {
 		ptr = _realloc(conf_def_columns, strlen(opt) + 1);
@@ -630,12 +635,7 @@ static void load_config(void)
 		_free(conf_def_columns);
 		conf_def_columns = NULL;
 	}
-}
-
-static void reload_config(void)
-{
-	config_lock();
-	load_config();
+	pthread_rwlock_unlock(&config_modify);
 	config_unlock();
 }
 
@@ -666,7 +666,7 @@ static void init(void)
 	cli_show_ses_register("rx-pkts", "received packets", print_rx_pkts);
 	cli_show_ses_register("tx-pkts", "transmitted packets", print_tx_pkts);
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, load_config);
 }
 
 DEFINE_INIT(12, init);

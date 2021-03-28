@@ -13,6 +13,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <pthread.h>
 
 #include "triton.h"
 #include "events.h"
@@ -77,6 +78,9 @@ static int history_len;
 static pthread_mutex_t history_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void save_history_file(void);
+
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static void disconnect(struct telnet_client_t *cln)
 {
 	struct buffer_t *b, *b2;
@@ -745,17 +749,14 @@ static void load_config(void)
 {
 	const char *opt;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
 	opt = conf_get_opt("cli", "verbose");
 	if (opt)
 		conf_verbose = atoi(opt);
 	else
 		conf_verbose = 1;
-}
-
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -794,7 +795,7 @@ static void init(void)
 
 	atexit(save_history_file);
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 
 	free(host);
 	return;

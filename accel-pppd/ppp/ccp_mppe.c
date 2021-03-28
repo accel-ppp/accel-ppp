@@ -34,6 +34,8 @@ static void mppe_print(void (*print)(const char *fmt,...),struct ccp_option_t*, 
 
 static int conf_mppe = MPPE_ALLOW;
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 struct mppe_option_t
 {
 	struct ccp_option_t opt;
@@ -332,6 +334,9 @@ static void load_config(void)
 {
 	const char *opt;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
+
 	opt = conf_get_opt("ppp", "mppe");
 	if (opt) {
 		if (!strcmp(opt,"require"))
@@ -342,12 +347,8 @@ static void load_config(void)
 			conf_mppe = MPPE_DENY;
 	} else
 		conf_mppe = MPPE_ALLOW;
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -357,7 +358,7 @@ static void mppe_opt_init()
 	triton_event_register_handler(EV_MPPE_KEYS, (triton_event_func)ev_mppe_keys);
 
 	load_config();
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
 
 DEFINE_INIT(4, mppe_opt_init);

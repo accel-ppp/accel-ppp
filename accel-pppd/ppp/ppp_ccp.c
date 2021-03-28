@@ -43,6 +43,8 @@ static void send_term_ack(struct ppp_fsm_t *fsm);
 static void ccp_recv(struct ppp_handler_t*);
 static void ccp_recv_proto_rej(struct ppp_handler_t*);
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static void ccp_options_init(struct ppp_ccp_t *ccp)
 {
 	struct ccp_option_t *lopt;
@@ -792,6 +794,9 @@ static void load_config(void)
 {
 	const char *opt;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
+
 	opt = conf_get_opt("ppp", "ccp");
 	if (opt && atoi(opt) >= 0)
 		conf_ccp = atoi(opt);
@@ -799,12 +804,8 @@ static void load_config(void)
 	opt = conf_get_opt("ppp", "ccp-max-configure");
 	if (opt && atoi(opt) > 0)
 		conf_ccp_max_configure = atoi(opt);
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -813,7 +814,7 @@ static void ccp_init(void)
 	ppp_register_layer("ccp", &ccp_layer);
 
 	load_config();
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
 
 DEFINE_INIT(3, ccp_init);

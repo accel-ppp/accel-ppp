@@ -60,6 +60,8 @@ static void *pd_key;
 
 static int dhcpv6_read(struct triton_md_handler_t *h);
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static void ev_ses_started(struct ap_session *ses)
 {
 	struct ipv6_mreq mreq;
@@ -932,6 +934,9 @@ static void load_config(void)
 	const char *opt;
 	uint64_t id;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
+
 	opt = conf_get_opt("ipv6-dhcp", "verbose");
 	if (opt)
 		conf_verbose = atoi(opt);
@@ -962,12 +967,8 @@ static void load_config(void)
 	memcpy(conf_serverid->duid.u.ll.addr, &id, sizeof(id));
 
 	load_dns();
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -978,7 +979,7 @@ static void init(void)
 
 	load_config();
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 	triton_event_register_handler(EV_SES_STARTED, (triton_event_func)ev_ses_started);
 	triton_event_register_handler(EV_SES_FINISHED, (triton_event_func)ev_ses_finished);
 }

@@ -64,6 +64,8 @@ static void _free_layers(struct ppp_t *);
 static void start_first_layer(struct ppp_t *);
 static int setup_ppp_mru(struct ppp_t *ppp);
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 void __export ppp_init(struct ppp_t *ppp)
 {
 	memset(ppp, 0, sizeof(*ppp));
@@ -740,6 +742,9 @@ static void load_config(void)
 {
 	const char *opt;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
+
 	opt = conf_get_opt("ppp", "verbose");
 	if (opt && atoi(opt) >= 0)
 		conf_ppp_verbose = atoi(opt) > 0;
@@ -755,12 +760,8 @@ static void load_config(void)
 		conf_unit_preallocate = atoi(opt);
 	else
 		conf_unit_preallocate = 0;
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -770,7 +771,7 @@ static void init(void)
 	uc_pool = mempool_create(sizeof(struct pppunit_cache));
 
 	load_config();
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 
 	pthread_create(&uc_thr, NULL, uc_thread, NULL);
 }

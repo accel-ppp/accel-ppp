@@ -34,6 +34,8 @@ static LIST_HEAD(serv_list);
 static void __free_server(struct rad_server_t *);
 static void serv_ctx_close(struct triton_context_t *);
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static struct rad_server_t *__rad_server_get(int type, struct rad_server_t *exclude, in_addr_t addr, int port)
 {
 	struct rad_server_t *s, *s0 = NULL, *s1 = NULL;
@@ -870,6 +872,9 @@ add:
 
 static void load_config(void)
 {
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
+
 	struct conf_sect_t *sect = conf_get_section("radius");
 	struct conf_option_t *opt;
 	struct rad_server_t *s;
@@ -954,12 +959,8 @@ static void load_config(void)
 				s->starting = 0;
 		}
 	}
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -967,7 +968,7 @@ static void init(void)
 {
 	load_config();
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 
 	cli_register_simple_cmd2(show_stat_exec, NULL, 2, "show", "stat");
 }

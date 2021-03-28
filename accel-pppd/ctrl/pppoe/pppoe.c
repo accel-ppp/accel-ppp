@@ -141,6 +141,8 @@ static void __pppoe_server_start(const char *ifname, const char *opt, void *cli,
 static void pppoe_serv_timeout(struct triton_timer_t *t);
 static void set_vlan_timeout(struct pppoe_serv_t *serv);
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static void pppoe_serv_start_timer(struct pppoe_serv_t *serv)
 {
 	pthread_mutex_lock(&serv->lock);
@@ -1939,6 +1941,10 @@ static void load_vlan_mon(struct conf_sect_t *sect)
 static void load_config(void)
 {
 	char *opt;
+
+        config_lock();
+        pthread_rwlock_wrlock(&config_modify);
+
 	struct conf_sect_t *s = conf_get_section("pppoe");
 
 	opt = conf_get_opt("pppoe", "verbose");
@@ -2063,12 +2069,8 @@ static void load_config(void)
 		conf_vlan_timeout = 60;
 
 	load_vlan_mon(s);
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);	
         config_unlock();
 }
 
@@ -2117,7 +2119,7 @@ static void pppoe_init(void)
 
 	connlimit_loaded = triton_module_loaded("connlimit");
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
 
 DEFINE_INIT(21, pppoe_init);

@@ -72,6 +72,8 @@ static void remove_radattr(struct pppd_compat_pd *);
 static void write_radattr(struct pppd_compat_pd *, struct rad_packet_t *pack);
 #endif
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static void fork_queue_wakeup()
 {
 	struct pppd_compat_pd *pd;
@@ -726,6 +728,9 @@ static void load_config()
 {
 	const char *opt;
 
+        config_lock();
+        pthread_rwlock_wrlock(&config_modify);
+
 	conf_ip_pre_up = conf_get_opt("pppd-compat", "ip-pre-up");
 	if (conf_ip_pre_up && access(conf_ip_pre_up, R_OK | X_OK)) {
 		log_error("pppd_compat: %s: %s\n", conf_ip_pre_up, strerror(errno));
@@ -763,12 +768,8 @@ static void load_config()
 		conf_fork_limit = atoi(opt);
 	else
 		conf_fork_limit = sysconf(_SC_NPROCESSORS_ONLN)*2;
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -780,7 +781,7 @@ static void init(void)
 	triton_event_register_handler(EV_SES_PRE_UP, (triton_event_func)ev_ses_pre_up);
 	triton_event_register_handler(EV_SES_STARTED, (triton_event_func)ev_ses_started);
 	triton_event_register_handler(EV_SES_PRE_FINISHED, (triton_event_func)ev_ses_finished);
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 #ifdef RADIUS
 	if (triton_module_loaded("radius")) {
 		triton_event_register_handler(EV_RADIUS_ACCESS_ACCEPT, (triton_event_func)ev_radius_access_accept);

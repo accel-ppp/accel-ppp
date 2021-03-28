@@ -69,6 +69,8 @@ static struct ppp_layer_t auth_layer =
 	.free = auth_layer_free,
 };
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static struct lcp_option_t *auth_init(struct ppp_lcp_t *lcp)
 {
 	struct ppp_auth_handler_t *h;
@@ -348,17 +350,16 @@ static void load_config(void)
 {
 	const char *opt;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
+
 	opt = conf_get_opt("auth", "noauth");
 	if (opt)
 		conf_noauth = atoi(opt);
 	else
 		conf_noauth = 0;
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -369,7 +370,7 @@ static void ppp_auth_init()
 	ppp_register_layer("auth", &auth_layer);
 	lcp_option_register(&auth_opt_hnd);
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
 
 DEFINE_INIT(3, ppp_auth_init);

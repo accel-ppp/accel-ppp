@@ -192,6 +192,8 @@ static void sstp_disconnect(struct sstp_conn_t *conn);
 static int sstp_handler(struct sstp_conn_t *conn, struct buffer_t *buf);
 static int http_handler(struct sstp_conn_t *conn, struct buffer_t *buf);
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 /*
  * FCS lookup table as calculated by genfcstab.
  */
@@ -2762,6 +2764,8 @@ static void load_config(void)
 	int ipmode;
 	char *opt;
 
+        config_lock();
+        pthread_rwlock_wrlock(&config_modify);
 	opt = conf_get_opt("sstp", "verbose");
 	if (opt && atoi(opt) >= 0)
 		conf_verbose = atoi(opt) > 0;
@@ -2858,12 +2862,7 @@ static void load_config(void)
 		/* Makes compiler happy */
 		break;
 	}
-}
-
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -2969,7 +2968,7 @@ static void sstp_init(void)
 
 	triton_event_register_handler(EV_MPPE_KEYS, (triton_event_func)ev_mppe_keys);
 	triton_event_register_handler(EV_SES_AUTHORIZED, (triton_event_func)ev_ses_authorized);
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 	return;
 
 error_unlink:

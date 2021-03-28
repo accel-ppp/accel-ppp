@@ -31,6 +31,8 @@ static int need_close;
 static char *ident;
 static int prio_map[] = {LOG_INFO, LOG_ERR, LOG_WARNING, LOG_INFO, LOG_INFO, LOG_DEBUG};
 
+static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
+
 static void unpack_msg(struct log_msg_t *msg)
 {
 	struct log_chunk_t *chunk;
@@ -166,6 +168,9 @@ static void load_config()
 	const char *opt;
 	int facility = LOG_DAEMON;
 
+        config_lock();
+	pthread_rwlock_wrlock(&config_modify);
+
 	if (ident) {
 		closelog();
 		_free(ident);
@@ -178,12 +183,8 @@ static void load_config()
 		ident = _strdup("accel-pppd");
 
 	openlog(ident, 0, facility);
-}
 
-static void reload_config(void)
-{
-        config_lock();
-        load_config();
+	pthread_rwlock_unlock(&config_modify);
         config_unlock();
 }
 
@@ -200,7 +201,7 @@ static void init(void)
 
 	log_register_target(&target);
 
-	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)reload_config);
+	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
 
 DEFINE_INIT(1, init);
