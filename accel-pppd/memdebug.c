@@ -80,13 +80,13 @@ void __export md_free(void *ptr, const char *fname, int line)
 	mem = container_of(ptr, typeof(*mem), data);
 
 	if (mem->magic1 != MAGIC1) {
-		printf("md_free: memory corruption:\nfree at %s:%i\n", fname, line);
+		printf("%s: memory corruption:\nfree at %s:%i\n", __func__, fname, line);
 		abort();
 	}
 
 	if (mem->magic2 != *(uint64_t*)(mem->data + mem->size)) {
-		printf("md_free: memory corruption:\nmalloc(%zu) at %s:%i\nfree at %s:%i\n",
-		       mem->size, mem->fname, mem->line, fname, line);
+		printf("%s: memory corruption:\nmalloc(%zu) at %s:%i\nfree at %s:%i\n",
+		       __func__, mem->size, mem->fname, mem->line, fname, line);
 		abort();
 	}
 
@@ -108,14 +108,14 @@ void __export *md_realloc(void *ptr, size_t size, const char *fname, int line)
 
 	if (mem) {
 		if (mem->magic1 != MAGIC1) {
-			printf("md_realloc: memory corruption:\nfree at %s:%i\n",
-			       fname, line);
+			printf("%s: memory corruption:\nfree at %s:%i\n",
+			       __func__, fname, line);
 			abort();
 		}
 
 		if (mem->magic2 != *(uint64_t*)(mem->data + mem->size)) {
-			printf("md_realloc: memory corruption:\nmalloc(%zu) at %s:%i\nfree at %s:%i\n",
-			       mem->size, mem->fname, mem->line, fname, line);
+			printf("%s: memory corruption:\nmalloc(%zu) at %s:%i\nfree at %s:%i\n",
+			       __func__, mem->size, mem->fname, mem->line, fname, line);
 			abort();
 		}
 

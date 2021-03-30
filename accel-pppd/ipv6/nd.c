@@ -412,12 +412,13 @@ static void ev_ses_finishing(struct ap_session *ses)
 
 static void add_dnssl(const char *val)
 {
-	if (!val)
-		return;
-
-	int n = strlen(val);
+	int n;
 	const char *ptr;
 	uint8_t *buf;
+
+	if (!val)
+		return;
+	n = strlen(val);
 
 	if (val[n - 1] == '.')
 		n++;
