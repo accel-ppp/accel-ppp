@@ -614,7 +614,7 @@ static void print_tx_pkts(struct ap_session *ses, char *buf)
 	sprintf(buf, "%u", stats.tx_packets);
 }
 
-static void load_config(void)
+static void load_config()
 {
 	const char *opt = NULL;
 	char *ptr = NULL;
