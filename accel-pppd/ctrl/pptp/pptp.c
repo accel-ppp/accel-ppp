@@ -77,8 +77,6 @@ static void pptp_timeout(struct triton_timer_t *);
 static void ppp_started(struct ap_session *);
 static void ppp_finished(struct ap_session *);
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static void pptp_ctx_switch(struct triton_context_t *ctx, void *arg)
 {
 	if (arg) {
@@ -769,9 +767,6 @@ static void load_config(void)
 {
 	char *opt;
 
-        config_lock();
-        pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("pptp", "timeout");
 	if (opt && atoi(opt) > 0)
 		conf_timeout = atoi(opt);
@@ -824,8 +819,6 @@ static void load_config(void)
 		/* Makes compiler happy */
 		break;
 	}
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void pptp_init(void)

@@ -56,8 +56,6 @@ static int raw_sock = -1;
 static int dhcpv4_read(struct triton_md_handler_t *h);
 int dhcpv4_packet_add_opt(struct dhcpv4_packet *pack, int type, const void *data, int len);
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static void open_raw_sock(void)
 {
 	raw_sock = socket(AF_PACKET, SOCK_RAW, 0);
@@ -1283,9 +1281,6 @@ static void load_config()
 {
 	const char *opt;
 
-        config_lock();
-        pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("ipoe", "verbose");
 	if (opt)
 		conf_verbose = atoi(opt);
@@ -1305,8 +1300,6 @@ static void load_config()
 	opt = conf_get_opt("wins", "wins2");
 	if (opt)
 		conf_wins2 = inet_addr(opt);
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void init()

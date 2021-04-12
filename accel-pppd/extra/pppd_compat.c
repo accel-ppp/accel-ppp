@@ -72,8 +72,6 @@ static void remove_radattr(struct pppd_compat_pd *);
 static void write_radattr(struct pppd_compat_pd *, struct rad_packet_t *pack);
 #endif
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static void fork_queue_wakeup()
 {
 	struct pppd_compat_pd *pd;
@@ -728,9 +726,6 @@ static void load_config()
 {
 	const char *opt;
 
-        config_lock();
-        pthread_rwlock_wrlock(&config_modify);
-
 	conf_ip_pre_up = conf_get_opt("pppd-compat", "ip-pre-up");
 	if (conf_ip_pre_up && access(conf_ip_pre_up, R_OK | X_OK)) {
 		log_error("pppd_compat: %s: %s\n", conf_ip_pre_up, strerror(errno));
@@ -769,8 +764,6 @@ static void load_config()
 	else
 		conf_fork_limit = sysconf(_SC_NPROCESSORS_ONLN)*2;
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void init(void)

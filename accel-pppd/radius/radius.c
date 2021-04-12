@@ -62,8 +62,6 @@ static struct ipdb_t ipdb;
 static mempool_t rpd_pool;
 static mempool_t auth_ctx_pool;
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static void parse_framed_route(struct radius_pd_t *rpd, const char *attr)
 {
 	char str[32];
@@ -963,9 +961,6 @@ static int load_config(void)
 	char *opt;
 	int r = 0;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("radius", "max-try");
 	if (opt && atoi(opt) > 0)
 		conf_max_try = atoi(opt);
@@ -1046,8 +1041,6 @@ static int load_config(void)
 		conf_strip_realm = atoi(opt) > 0;
 
 	exit:
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 	return r;
 }
 

@@ -46,8 +46,6 @@ static void send_term_req(struct ppp_fsm_t *fsm);
 static void send_term_ack(struct ppp_fsm_t *fsm);
 static void lcp_recv(struct ppp_handler_t*);
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static void lcp_options_init(struct ppp_lcp_t *lcp)
 {
 	struct lcp_option_t *lopt;
@@ -885,9 +883,6 @@ static void load_config(void)
 {
 	char *opt;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("ppp", "lcp-echo-interval");
 	if (opt)
 		conf_echo_interval = atoi(opt);
@@ -906,8 +901,6 @@ static void load_config(void)
 	else
 		conf_echo_timeout = 0;
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void lcp_init(void)

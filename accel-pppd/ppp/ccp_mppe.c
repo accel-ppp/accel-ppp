@@ -34,8 +34,6 @@ static void mppe_print(void (*print)(const char *fmt,...),struct ccp_option_t*, 
 
 static int conf_mppe = MPPE_ALLOW;
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 struct mppe_option_t
 {
 	struct ccp_option_t opt;
@@ -334,9 +332,6 @@ static void load_config(void)
 {
 	const char *opt;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("ppp", "mppe");
 	if (opt) {
 		if (!strcmp(opt,"require"))
@@ -348,8 +343,6 @@ static void load_config(void)
 	} else
 		conf_mppe = MPPE_ALLOW;
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void mppe_opt_init()

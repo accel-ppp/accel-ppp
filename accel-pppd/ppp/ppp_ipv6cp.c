@@ -48,8 +48,6 @@ static void ipv6cp_recv_proto_rej(struct ppp_handler_t*);
 static void send_term_req(struct ppp_fsm_t *fsm);
 static void send_term_ack(struct ppp_fsm_t *fsm);
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static void ipv6cp_options_init(struct ppp_ipv6cp_t *ipv6cp)
 {
 	struct ipv6cp_option_t *lopt;
@@ -808,9 +806,6 @@ static void load_config(void)
 {
 	const char *opt;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("ppp", "ipv6");
 	if (opt) {
 		if (!strcmp(opt, "deny"))
@@ -825,8 +820,6 @@ static void load_config(void)
 			conf_ipv6 = atoi(opt);
 	}
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void ipv6cp_init(void)

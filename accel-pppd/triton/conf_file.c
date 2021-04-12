@@ -198,9 +198,9 @@ static int _conf_load(const char *fname)
 
 int conf_load(const char *fname) {
 	int r;
-	pthread_rwlock_wrlock(&conf_rdwr_lock);
+	config_wrlock();
 	r = _conf_load(fname);
-	pthread_rwlock_unlock(&conf_rdwr_lock);
+	config_unlock();
 	return r;
 }
 
@@ -226,7 +226,7 @@ int conf_reload(const char *fname)
 	int r;
 	LIST_HEAD(sections_bak);
 
-	pthread_rwlock_wrlock(&conf_rdwr_lock);
+	config_wrlock();
 
 	list_splice_init(&sections, &sections_bak);
 
@@ -244,7 +244,7 @@ int conf_reload(const char *fname)
 			_free(sect);
 		}
 	}
-	pthread_rwlock_unlock(&conf_rdwr_lock);
+	config_unlock();
 
 	return r;
 }
@@ -345,6 +345,11 @@ __export char * conf_get_opt(const char *sect, const char *name)
 		return NULL;
 
 	return opt->val;
+}
+
+__export void config_wrlock()
+{
+	pthread_rwlock_wrlock(&conf_rdwr_lock);
 }
 
 __export void config_lock()

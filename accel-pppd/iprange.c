@@ -222,7 +222,6 @@ int __export iprange_tunnel_check(in_addr_t ipaddr)
 
 static void iprange_load_config()
 {
-	config_lock();
 	LIST_HEAD(new_ranges);
 	LIST_HEAD(old_ranges);
 	bool disable;
@@ -236,7 +235,6 @@ static void iprange_load_config()
 	pthread_mutex_unlock(&iprange_lock);
 
 	free_ranges(&old_ranges);
-	config_unlock();
 }
 
 static void iprange_init(void)

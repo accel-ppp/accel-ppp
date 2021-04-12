@@ -39,8 +39,6 @@ struct mru_option_t
 	unsigned int rejected:1;
 };
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static struct lcp_option_handler_t mru_opt_hnd=
 {
 	.init = mru_init,
@@ -165,9 +163,6 @@ static void load_config(void)
 {
 	char *opt;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("ppp", "mtu");
 	if (opt && atoi(opt) > 0)
 		conf_mtu = atoi(opt);
@@ -189,8 +184,6 @@ static void load_config(void)
 		conf_min_mtu = conf_mru;
 	}
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void mru_opt_init()

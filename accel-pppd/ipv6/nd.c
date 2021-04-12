@@ -94,8 +94,6 @@ static void *pd_key;
 #define BUF_SIZE 1024
 static mempool_t buf_pool;
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static void ipv6_nd_send_ra(struct ipv6_nd_handler_t *h, struct sockaddr_in6 *dst_addr)
 {
 	struct ap_session *ses = h->ses;
@@ -502,9 +500,6 @@ static void load_config(void)
 {
 	const char *opt;
 
-        config_lock();
-        pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("ipv6-nd", "MaxRtrAdvInterval");
 	if (opt)
 		conf_MaxRtrAdvInterval = atoi(opt);
@@ -574,8 +569,6 @@ static void load_config(void)
 		conf_AdvPrefixAutonomousFlag = atoi(opt);
 
 	load_dns();
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void init(void)

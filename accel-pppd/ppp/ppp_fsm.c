@@ -25,8 +25,6 @@ static void zero_req_counter(struct ppp_fsm_t *layer);
 static void restart_timer_func(struct triton_timer_t *t);
 static void stop_timer(struct ppp_fsm_t *fsm);
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 void ppp_fsm_init(struct ppp_fsm_t *layer)
 {
 	layer->fsm_state = FSM_Initial;
@@ -532,9 +530,6 @@ static void load_config(void)
 {
 	char *opt;
 
-        config_lock();
-        pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("ppp", "max-terminate");
 	if (opt && atoi(opt) > 0)
 		conf_max_terminate = atoi(opt);
@@ -551,8 +546,6 @@ static void load_config(void)
 	if (opt && atoi(opt) > 0)
 		conf_timeout = atoi(opt);
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void fsm_init(void)

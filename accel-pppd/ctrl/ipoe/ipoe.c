@@ -226,8 +226,6 @@ static struct ipoe_session *ipoe_session_create_up(struct ipoe_serv *serv, struc
 static void __terminate(struct ap_session *ses);
 static void ipoe_ipv6_disable(struct ipoe_serv *serv);
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static void ipoe_ctx_switch(struct triton_context_t *ctx, void *arg)
 {
 	if (arg) {
@@ -3783,9 +3781,6 @@ static void load_local_nets(struct conf_sect_t *sect)
 static void load_config(void)
 {
 	const char *opt;
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
-
 	struct conf_sect_t *s = conf_get_section("ipoe");
 	struct conf_option_t *opt1;
 
@@ -4080,8 +4075,6 @@ static void load_config(void)
 	load_gw_addr(s);
 	load_local_nets(s);
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static struct triton_context_t l4_redirect_ctx = {

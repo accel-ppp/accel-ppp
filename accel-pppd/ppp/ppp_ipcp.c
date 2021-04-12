@@ -48,8 +48,6 @@ static void ipcp_recv_proto_rej(struct ppp_handler_t*);
 static void send_term_req(struct ppp_fsm_t *fsm);
 static void send_term_ack(struct ppp_fsm_t *fsm);
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static void ipcp_options_init(struct ppp_ipcp_t *ipcp)
 {
 	struct ipcp_option_t *lopt;
@@ -808,9 +806,6 @@ static void load_config(void)
 {
 	const char *opt;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("ppp", "ipv4");
 	if (opt) {
 		if (!strcmp(opt, "deny"))
@@ -825,8 +820,6 @@ static void load_config(void)
 			conf_ipv4 = atoi(opt);
 	}
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void ipcp_init(void)

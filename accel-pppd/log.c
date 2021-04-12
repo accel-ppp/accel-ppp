@@ -66,8 +66,6 @@ static int add_msg(struct _log_msg_t *msg, const char *buf);
 //static struct log_pd_t *find_pd(struct ap_session *ses);
 static void write_msg(FILE *f, struct _log_msg_t *msg, struct ap_session *ses);
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static void stat_buf_free(void *ptr)
 {
 	_free(ptr);
@@ -494,9 +492,6 @@ static void load_config(void)
 {
 	char *opt;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("log", "level");
 	if (opt && atoi(opt) >= 0)
 		log_level = atoi(opt);
@@ -527,8 +522,6 @@ static void load_config(void)
 		debug_file = NULL;
 	}
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void log_init(void)

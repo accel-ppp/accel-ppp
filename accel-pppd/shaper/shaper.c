@@ -117,8 +117,6 @@ static struct triton_context_t shaper_ctx = {
 	.before_switch = log_switch,
 };
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static int alloc_idx(int init)
 {
 	int i, p = 0;
@@ -1059,9 +1057,6 @@ static void load_config(void)
 {
 	const char *opt;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
-
 #ifdef RADIUS
 	if (triton_module_loaded("radius")) {
 		opt = conf_get_opt("shaper", "vendor");
@@ -1084,7 +1079,7 @@ static void load_config(void)
 
 		if (conf_attr_up <= 0 || conf_attr_down <= 0) {
 			log_emerg("shaper: incorrect attribute(s), tbf disabled...\n");
-			goto exit;
+			return;
 		}
 	}
 #endif
@@ -1192,10 +1187,6 @@ static void load_config(void)
 		parse_dflt_shaper(opt, &dflt_down_speed, &dflt_up_speed);
 
 	triton_context_call(&shaper_ctx, (triton_event_func)load_time_ranges, NULL);
-
-	exit:
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void init(void)

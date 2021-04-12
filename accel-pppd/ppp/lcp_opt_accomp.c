@@ -53,8 +53,6 @@ static struct lcp_option_t *accomp_init(struct ppp_lcp_t *lcp)
 	return &accomp_opt->opt;
 }
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static void accomp_free(struct ppp_lcp_t *lcp, struct lcp_option_t *opt)
 {
 	struct accomp_option_t *accomp_opt = container_of(opt, typeof(*accomp_opt), opt);
@@ -141,9 +139,6 @@ static void load_config(void)
 {
 	char *opt;
 
-        config_lock();
-        pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("ppp", "accomp");
 	if (opt) {
 		if (!strcmp(opt, "deny"))
@@ -154,8 +149,6 @@ static void load_config(void)
 			conf_accomp = atoi(opt);
 	}
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void accomp_opt_init()

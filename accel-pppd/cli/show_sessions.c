@@ -56,8 +56,6 @@ static char *conf_def_columns = NULL;
 static __thread struct rtnl_link_stats stats;
 static __thread int stats_set;
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 void __export cli_show_ses_register(const char *name, const char *desc, void (*print)(struct ap_session *ses, char *buf))
 {
 	struct column_t *c = malloc(sizeof(*c));
@@ -619,8 +617,6 @@ static void load_config()
 	const char *opt = NULL;
 	char *ptr = NULL;
 
-	config_lock();
-	pthread_rwlock_wrlock(&config_modify);
 	opt = conf_get_opt("cli", "sessions-columns");
 	if (opt && strlen(opt) > 0) {
 		ptr = _realloc(conf_def_columns, strlen(opt) + 1);
@@ -635,8 +631,6 @@ static void load_config()
 		_free(conf_def_columns);
 		conf_def_columns = NULL;
 	}
-	pthread_rwlock_unlock(&config_modify);
-	config_unlock();
 }
 
 static void init(void)

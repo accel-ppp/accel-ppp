@@ -110,8 +110,6 @@ static unsigned int stat_active;
 static unsigned int stat_starting;
 static unsigned int stat_finishing;
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 struct l2tp_serv_t
 {
 	struct triton_context_t ctx;
@@ -4861,9 +4859,6 @@ static void load_config(void)
 {
 	const char *opt;
 
-        config_lock();
-        pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("l2tp", "verbose");
 	if (opt && atoi(opt) >= 0)
 		conf_verbose = atoi(opt) > 0;
@@ -4989,8 +4984,6 @@ static void load_config(void)
 		/* Makes compiler happy */
 		break;
 	}
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void l2tp_init(void)

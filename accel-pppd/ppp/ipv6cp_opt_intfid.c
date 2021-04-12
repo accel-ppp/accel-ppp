@@ -56,8 +56,6 @@ static struct ipv6cp_option_handler_t ipaddr_opt_hnd =
 	.print         = ipaddr_print,
 };
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 /* ipdb backend used for generating a link-local address when all other
  * backends (like radius and ipv6pool) failed to assign IPv6 addresses.
  * This backend isn't registered to ipdb as it's only used as a fallback
@@ -319,9 +317,6 @@ static void load_config(void)
 {
 	const char *opt;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("ppp", "check-ip");
 	if (!opt)
 		opt = conf_get_opt("common", "check-ip");
@@ -356,8 +351,6 @@ static void load_config(void)
 	if (opt)
 		conf_accept_peer_intf_id = atoi(opt);
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void init()

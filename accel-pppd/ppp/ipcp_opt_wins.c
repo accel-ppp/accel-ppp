@@ -48,8 +48,6 @@ static struct ipcp_option_handler_t wins2_opt_hnd =
 	.print = wins2_print,
 };
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static struct ipcp_option_t *wins1_init(struct ppp_ipcp_t *ipcp)
 {
 	struct wins_option_t *wins_opt = _malloc(sizeof(*wins_opt));
@@ -166,9 +164,6 @@ static void load_config(void)
 {
 	char *opt;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("wins", "wins1");
 	if (opt)
 		conf_wins1 = inet_addr(opt);
@@ -177,8 +172,6 @@ static void load_config(void)
 	if (opt)
 		conf_wins2 = inet_addr(opt);
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void wins_opt_init()

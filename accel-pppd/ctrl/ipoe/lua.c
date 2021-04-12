@@ -50,8 +50,6 @@ static const struct luaL_Reg packet4_lib [] = {
 	{NULL, NULL}
 };
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static int luaopen_packet4(lua_State *L)
 {
   luaL_newmetatable(L, IPOE_PACKET4);
@@ -370,15 +368,10 @@ out:
 
 static void load_config()
 {
-        config_lock();
-        pthread_rwlock_wrlock(&config_modify);
-
 	conf_filename = conf_get_opt("ipoe", "lua-file");
 
 	serial++;
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void init()

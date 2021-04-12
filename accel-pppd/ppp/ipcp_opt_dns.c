@@ -22,8 +22,6 @@ static int dns_recv_conf_req(struct ppp_ipcp_t *ipcp, struct ipcp_option_t *opt,
 static void dns1_print(void (*print)(const char *fmt, ...), struct ipcp_option_t *, uint8_t *ptr);
 static void dns2_print(void (*print)(const char *fmt, ...), struct ipcp_option_t *, uint8_t *ptr);
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 struct dns_option_t
 {
 	struct ipcp_option_t opt;
@@ -166,9 +164,6 @@ static void load_config(void)
 {
 	char *opt;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("dns", "dns1");
 	if (opt)
 		conf_dns1 = inet_addr(opt);
@@ -177,8 +172,6 @@ static void load_config(void)
 	if (opt)
 		conf_dns2 = inet_addr(opt);
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void dns_opt_init()

@@ -49,8 +49,6 @@ static LIST_HEAD(clients);
 
 static uint8_t *temp_buf;
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static void disconnect(struct tcp_client_t *cln)
 {
 	struct buffer_t *b;
@@ -371,15 +369,11 @@ static void load_config(void)
 {
 	const char *opt;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
 	opt = conf_get_opt("cli", "verbose");
 	if (opt)
 		conf_verbose = atoi(opt);
 	else
 		conf_verbose = 1;
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void init(void)

@@ -64,8 +64,6 @@ static void _free_layers(struct ppp_t *);
 static void start_first_layer(struct ppp_t *);
 static int setup_ppp_mru(struct ppp_t *ppp);
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 void __export ppp_init(struct ppp_t *ppp)
 {
 	memset(ppp, 0, sizeof(*ppp));
@@ -742,9 +740,6 @@ static void load_config(void)
 {
 	const char *opt;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
-
 	opt = conf_get_opt("ppp", "verbose");
 	if (opt && atoi(opt) >= 0)
 		conf_ppp_verbose = atoi(opt) > 0;
@@ -761,8 +756,6 @@ static void load_config(void)
 	else
 		conf_unit_preallocate = 0;
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void init(void)

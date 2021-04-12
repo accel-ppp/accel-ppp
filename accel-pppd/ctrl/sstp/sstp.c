@@ -192,8 +192,6 @@ static void sstp_disconnect(struct sstp_conn_t *conn);
 static int sstp_handler(struct sstp_conn_t *conn, struct buffer_t *buf);
 static int http_handler(struct sstp_conn_t *conn, struct buffer_t *buf);
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 /*
  * FCS lookup table as calculated by genfcstab.
  */
@@ -2764,8 +2762,6 @@ static void load_config(void)
 	int ipmode;
 	char *opt;
 
-        config_lock();
-        pthread_rwlock_wrlock(&config_modify);
 	opt = conf_get_opt("sstp", "verbose");
 	if (opt && atoi(opt) >= 0)
 		conf_verbose = atoi(opt) > 0;
@@ -2862,8 +2858,6 @@ static void load_config(void)
 		/* Makes compiler happy */
 		break;
 	}
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static struct sstp_serv_t serv = {

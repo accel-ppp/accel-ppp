@@ -35,8 +35,6 @@ static void pap_recv(struct ppp_handler_t*h);
 static void pap_timeout(struct triton_timer_t *t);
 static void pap_auth_result(struct pap_auth_data *, int);
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 struct pap_auth_data {
 	struct auth_data_t auth;
 	struct ppp_handler_t h;
@@ -321,8 +319,6 @@ static void load_config(void)
 {
 	const char *opt;
 
-	config_lock();
-	pthread_rwlock_wrlock(&config_modify);
 	opt = conf_get_opt("auth", "timeout");
 	if (opt && atoi(opt) > 0)
 		conf_timeout = atoi(opt);
@@ -330,8 +326,6 @@ static void load_config(void)
 	opt = conf_get_opt("auth", "any-login");
 	if (opt)
 		conf_any_login = atoi(opt);
-	pthread_rwlock_unlock(&config_modify);
-	config_unlock();
 }
 
 static void auth_pap_init()

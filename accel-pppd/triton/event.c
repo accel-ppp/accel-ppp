@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "triton_p.h"
+#include "events.h"
 
 #include "memdebug.h"
 
@@ -99,7 +100,13 @@ void __export triton_event_fire(int ev_id, void *arg)
 	if (!ev)
 		return;
 
-	list_for_each_entry(h, &ev->handlers, entry)
-		h->func(arg);
+	if (ev_id == EV_CONFIG_RELOAD) {
+		config_lock();
+		list_for_each_entry(h, &ev->handlers, entry)
+			h->func(arg);
+		config_unlock();
+	} else
+		list_for_each_entry(h, &ev->handlers, entry)
+			h->func(arg);
 }
 

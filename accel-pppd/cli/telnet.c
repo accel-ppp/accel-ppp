@@ -79,8 +79,6 @@ static pthread_mutex_t history_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void save_history_file(void);
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static void disconnect(struct telnet_client_t *cln)
 {
 	struct buffer_t *b, *b2;
@@ -749,15 +747,11 @@ static void load_config(void)
 {
 	const char *opt;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
 	opt = conf_get_opt("cli", "verbose");
 	if (opt)
 		conf_verbose = atoi(opt);
 	else
 		conf_verbose = 1;
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void init(void)

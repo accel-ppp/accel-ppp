@@ -31,8 +31,6 @@ static int need_close;
 static char *ident;
 static int prio_map[] = {LOG_INFO, LOG_ERR, LOG_WARNING, LOG_INFO, LOG_INFO, LOG_DEBUG};
 
-static pthread_rwlock_t config_modify = PTHREAD_RWLOCK_INITIALIZER;
-
 static void unpack_msg(struct log_msg_t *msg)
 {
 	struct log_chunk_t *chunk;
@@ -168,9 +166,6 @@ static void load_config()
 	const char *opt;
 	int facility = LOG_DAEMON;
 
-        config_lock();
-	pthread_rwlock_wrlock(&config_modify);
-
 	if (ident) {
 		closelog();
 		_free(ident);
@@ -184,8 +179,6 @@ static void load_config()
 
 	openlog(ident, 0, facility);
 
-	pthread_rwlock_unlock(&config_modify);
-        config_unlock();
 }
 
 static void init(void)
