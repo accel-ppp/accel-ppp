@@ -101,7 +101,7 @@ void __export triton_event_fire(int ev_id, void *arg)
 		return;
 
 	if (ev_id == EV_CONFIG_RELOAD) {
-		config_lock();
+		config_wrlock();
 		list_for_each_entry(h, &ev->handlers, entry)
 			h->func(arg);
 		config_unlock();
