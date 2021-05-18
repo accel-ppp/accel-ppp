@@ -113,7 +113,7 @@ static int parse_sfq(char *str)
 	for (key = strtok_r(str, " ", &ptr); key; key = strtok_r(NULL, " ", &ptr)) {
 		value = strtok_r(NULL, " ", &ptr);
 		if (!value)
-			return -1;
+			goto out;
 
 		if (strcmp(key, "quantum") == 0) {
 			if (parse_size(value, &conf_lq_arg1))
@@ -147,14 +147,14 @@ static int parse_fq_codel(char *str)
 		if (strcmp(key, "ecn") == 0) {
 			conf_lq_arg6 = 1;
 			continue;
-		} else if (strcmp(str, "noecn") == 0) {
+		} else if (strcmp(key, "noecn") == 0) {
 			conf_lq_arg6 = 0;
 			continue;
 		}
 
 		value = strtok_r(str, " ", &ptr);
 		if (!value)
-			return -1;
+			goto out;
 
 		if (strcmp(key, "limit") == 0) {
 			if (parse_u32(value, &conf_lq_arg1))
@@ -193,13 +193,12 @@ void leaf_qdisc_parse(const char *opt)
 
 	qdisc = strtok_r(str, " ", &ptr);
 	if (qdisc) {
-		params = strtok_r(NULL, " ", &ptr);
 		if (strcmp(qdisc, "sfq") == 0) {
-			if (parse_sfq(params))
+			if (parse_sfq(ptr))
 				goto out_err;
 #ifdef TCA_FQ_CODEL_MAX
 		} else if (strcmp(qdisc, "fq_codel") == 0) {
-			if (parse_fq_codel(params))
+			if (parse_fq_codel(ptr))
 				goto out_err;
 #endif
 		} else
