@@ -152,7 +152,7 @@ static int parse_fq_codel(char *str)
 			continue;
 		}
 
-		value = strtok_r(str, " ", &ptr);
+		value = strtok_r(NULL, " ", &ptr);
 		if (!value)
 			goto out;
 
@@ -183,7 +183,7 @@ out:
 
 void leaf_qdisc_parse(const char *opt)
 {
-	char *str, *qdisc, *params, *ptr;
+	char *str, *qdisc, *ptr;
 
 	str = strdup(opt);
 	if (!str) {
