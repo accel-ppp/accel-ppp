@@ -265,8 +265,10 @@ static void general_log(struct log_target_t *t, struct log_msg_t *msg, struct ap
 static struct ap_private *find_pd(struct ap_session *ses, void *pd_key)
 {
 	struct ap_private *pd;
+	struct list_head *pos, *next;
 
-	list_for_each_entry(pd, &ses->pd_list, entry) {
+	list_for_each_safe(pos, next, &ses->pd_list) {
+		pd = list_entry(pos->next, typeof(*pd), entry);
 		if (pd->key == pd_key) {
 			return pd;
 		}
@@ -551,8 +553,8 @@ static void ev_ctrl_started(struct ap_session *ses)
 		}
 		memset(fpd, 0, sizeof(*fpd));
 		fpd->pd.key = &pd_key3;
-		list_add_tail(&fpd->pd.entry, &ses->pd_list);
 		INIT_LIST_HEAD(&fpd->msgs);
+		list_add_tail(&fpd->pd.entry, &ses->pd_list);
 	}
 }
 
