@@ -52,7 +52,8 @@ static void disconnect(struct tcp_client_t *cln)
 {
 	struct buffer_t *b;
 
-	log_debug("cli: disconnect\n");
+	if (conf_verbose)
+		log_debug("cli: disconnect\n");
 
 	list_del(&cln->entry);
 
