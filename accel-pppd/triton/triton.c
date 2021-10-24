@@ -80,6 +80,20 @@ static void __config_reload(void (*notify)(int))
 	log_debug2("config_reload: exit\n");
 }
 
+__export int print_conf(char ***conf_p) {
+	int count;
+
+	log_debug2("print_conf: enter\n");
+
+	spin_lock(&threads_lock);
+	count = __print_conf(conf_p);
+	spin_unlock(&threads_lock);
+
+	log_debug2("print_conf: exit\n");
+
+	return count;
+}
+
 static void ctx_thread(struct _triton_context_t *ctx);
 
 static int check_ctx_queue_empty(struct _triton_thread_t *t)

@@ -176,6 +176,74 @@ static void print_conf()
 	}
 }*/
 
+static int print_conf_count(struct list_head *items)
+{
+	struct conf_option_t *opt;
+	int count = 0;
+
+	list_for_each_entry(opt, items, entry) {
+		count++;
+	}
+
+	return count;
+}
+
+static int print_conf_items(char **conf, int offset, struct list_head *items)
+{
+	struct conf_option_t *opt;
+	int l_s; /* line size */
+	int i = 0; /* line index */
+
+	list_for_each_entry(opt, items, entry) {
+		if (opt->val != NULL) {
+		    l_s = snprintf(NULL, 0, "%s=%s\r\n", opt->name, opt->val);
+		    conf[i + offset] = _malloc(l_s + 1);
+		    sprintf(conf[i + offset], "%s=%s\r\n", opt->name, opt->val);
+		} else {
+		    l_s = snprintf(NULL, 0, "%s\r\n", opt->name);
+		    conf[i + offset] = _malloc(l_s + 1);
+		    sprintf(conf[i + offset], "%s\r\n", opt->name);
+		}
+
+		i++;
+	}
+
+	return i;
+}
+
+
+int __print_conf(char ***conf_p)
+{
+	struct sect_t *s;
+	int count = 0; /* lines count */
+	int l_s; /* line size */
+	int i = 0; /* line index */
+	char **conf;
+
+
+	list_for_each_entry(s, &sections, entry) {
+		count += 2; /* two line per section name */
+		count += print_conf_count(&s->sect->items);
+	}
+
+	conf = _malloc(count * sizeof(char*));
+
+	list_for_each_entry(s, &sections, entry) {
+		conf[i] = _malloc(2 * sizeof(char) + 1);
+		sprintf(conf[i++], "\r\n");
+
+		l_s = snprintf(NULL, 0, "[%s]\r\n", s->sect->name);
+		conf[i] = _malloc(l_s + 1);
+		sprintf(conf[i++], "[%s]\r\n", s->sect->name);
+
+		i += print_conf_items(conf, i, &s->sect->items);
+	}
+
+	*conf_p = conf;
+	return count;
+}
+
+
 int conf_load(const char *fname)
 {
 	int r;

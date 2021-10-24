@@ -95,6 +95,32 @@ static void show_version_help(char * const *fields, int fields_cnt, void *client
 {
 	cli_send(client, "show version - shows version of running accel-pppd\r\n");
 }
+
+//=============================
+
+static int show_loaded_config_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
+{
+	char **conf = NULL;
+	int count;
+	int i;
+
+	cli_sendv(client, "#accel-ppp version %s\r\n", ACCEL_PPP_VERSION);
+	count = print_conf(&conf);
+
+	for(i = 0; i < count; i++) {
+	    cli_send(client, conf[i]);
+	    _free(conf[i]);
+	}
+	_free(conf);
+
+	return CLI_CMD_OK;
+}
+
+static void show_loaded_config_help(char * const *fields, int fields_cnt, void *client)
+{
+	cli_send(client, "show loaded-config - shows loaded configuration of running accel-pppd\r\n");
+}
+
 //=============================
 
 static int exit_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
@@ -395,6 +421,7 @@ static void init(void)
 {
 	cli_register_simple_cmd2(show_stat_exec, show_stat_help, 2, "show", "stat");
 	cli_register_simple_cmd2(show_version_exec, show_version_help, 2, "show", "version");
+	cli_register_simple_cmd2(show_loaded_config_exec, show_loaded_config_help, 2, "show", "loaded-config");
 	cli_register_simple_cmd2(terminate_exec, terminate_help, 1, "terminate");
 	cli_register_simple_cmd2(reload_exec, reload_help, 1, "reload");
 	cli_register_simple_cmd2(restart_exec, restart_help, 1, "restart");

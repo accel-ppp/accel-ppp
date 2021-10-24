@@ -104,6 +104,8 @@ struct conf_sect_t *conf_get_section(const char *name);
 char *conf_get_opt(const char *sect, const char *name);
 void triton_conf_reload(void (*notify)(int));
 
+int print_conf(char ***conf);
+
 void triton_collect_cpu_usage(void);
 void triton_stop_collect_cpu_usage(void);
 
