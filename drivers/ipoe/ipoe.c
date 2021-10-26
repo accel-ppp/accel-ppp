@@ -174,7 +174,7 @@ static struct genl_multicast_group ipoe_nl_mcg;
 #define NETIF_F_HW_VLAN_FILTER NETIF_F_HW_VLAN_CTAG_FILTER
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0) && RHEL_MAJOR < 8
 #define nla_nest_start_noflag(skb, attr) nla_nest_start(skb, attr)
 #endif
 
@@ -1762,7 +1762,7 @@ static const struct genl_ops ipoe_nl_ops[] = {
 	{
 		.cmd = IPOE_CMD_NOOP,
 		.doit = ipoe_nl_cmd_noop,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0) && RHEL_MAJOR < 8
 		.policy = ipoe_nl_policy,
 #endif
 		/* can be retrieved by unprivileged users */
@@ -1771,7 +1771,7 @@ static const struct genl_ops ipoe_nl_ops[] = {
 		.cmd = IPOE_CMD_CREATE,
 		.doit = ipoe_nl_cmd_create,
 		.flags = GENL_ADMIN_PERM,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0) && RHEL_MAJOR < 8
 		.policy = ipoe_nl_policy,
 #endif
 	},
@@ -1779,7 +1779,7 @@ static const struct genl_ops ipoe_nl_ops[] = {
 		.cmd = IPOE_CMD_DELETE,
 		.doit = ipoe_nl_cmd_delete,
 		.flags = GENL_ADMIN_PERM,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0) && RHEL_MAJOR < 8
 		.policy = ipoe_nl_policy,
 #endif
 	},
@@ -1787,14 +1787,14 @@ static const struct genl_ops ipoe_nl_ops[] = {
 		.cmd = IPOE_CMD_MODIFY,
 		.doit = ipoe_nl_cmd_modify,
 		.flags = GENL_ADMIN_PERM,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0) && RHEL_MAJOR < 8
 		.policy = ipoe_nl_policy,
 #endif
 	},
 	{
 		.cmd = IPOE_CMD_GET,
 		.dumpit = ipoe_nl_cmd_dump_sessions,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0) && RHEL_MAJOR < 8
 		.policy = ipoe_nl_policy,
 #endif
 	},
@@ -1802,7 +1802,7 @@ static const struct genl_ops ipoe_nl_ops[] = {
 		.cmd = IPOE_CMD_ADD_IF,
 		.doit = ipoe_nl_cmd_add_interface,
 		.flags = GENL_ADMIN_PERM,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0) && RHEL_MAJOR < 8
 		.policy = ipoe_nl_policy,
 #endif
 	},
@@ -1810,7 +1810,7 @@ static const struct genl_ops ipoe_nl_ops[] = {
 		.cmd = IPOE_CMD_DEL_IF,
 		.doit = ipoe_nl_cmd_del_interface,
 		.flags = GENL_ADMIN_PERM,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0) && RHEL_MAJOR < 8
 		.policy = ipoe_nl_policy,
 #endif
 	},
@@ -1818,7 +1818,7 @@ static const struct genl_ops ipoe_nl_ops[] = {
 		.cmd = IPOE_CMD_ADD_EXCLUDE,
 		.doit = ipoe_nl_cmd_add_exclude,
 		.flags = GENL_ADMIN_PERM,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0) && RHEL_MAJOR < 8
 		.policy = ipoe_nl_policy,
 #endif
 	},
@@ -1826,7 +1826,7 @@ static const struct genl_ops ipoe_nl_ops[] = {
 		.cmd = IPOE_CMD_DEL_EXCLUDE,
 		.doit = ipoe_nl_cmd_del_exclude,
 		.flags = GENL_ADMIN_PERM,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0) && RHEL_MAJOR < 8
 		.policy = ipoe_nl_policy,
 #endif
 	},
@@ -1834,7 +1834,7 @@ static const struct genl_ops ipoe_nl_ops[] = {
 		.cmd = IPOE_CMD_ADD_NET,
 		.doit = ipoe_nl_cmd_add_net,
 		.flags = GENL_ADMIN_PERM,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0) && RHEL_MAJOR < 8
 		.policy = ipoe_nl_policy,
 #endif
 	},
@@ -1842,7 +1842,7 @@ static const struct genl_ops ipoe_nl_ops[] = {
 		.cmd = IPOE_CMD_DEL_NET,
 		.doit = ipoe_nl_cmd_del_net,
 		.flags = GENL_ADMIN_PERM,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0) && RHEL_MAJOR < 8
 		.policy = ipoe_nl_policy,
 #endif
 	},
@@ -1873,7 +1873,7 @@ static struct genl_family ipoe_nl_family = {
 	.mcgrps = ipoe_nl_mcgs,
 	.n_mcgrps = ARRAY_SIZE(ipoe_nl_mcgs),
 #endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,2,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,2,0) || RHEL_MAJOR == 8
 	.policy = ipoe_nl_policy,
 #endif
 };
