@@ -258,6 +258,7 @@ static struct ipoe_session *ipoe_session_lookup(struct ipoe_serv *serv, struct d
 
 	uint8_t *agent_circuit_id = NULL;
 	uint8_t *agent_remote_id = NULL;
+	uint8_t *subscriber_id = NULL;
 	int opt82_match;
 
 	if (opt82_ses)
@@ -274,9 +275,10 @@ static struct ipoe_session *ipoe_session_lookup(struct ipoe_serv *serv, struct d
 		return ses;
 	}
 
-	if (!conf_check_mac_change || (pack->relay_agent && dhcpv4_parse_opt82(pack->relay_agent, &agent_circuit_id, &agent_remote_id))) {
+	if (!conf_check_mac_change || (pack->relay_agent && dhcpv4_parse_opt82(pack->relay_agent, &agent_circuit_id, &agent_remote_id, &subscriber_id))) {
 		agent_circuit_id = NULL;
 		agent_remote_id = NULL;
+		subscriber_id = NULL;
 	}
 
 	list_for_each_entry(ses, &serv->sessions, entry) {
@@ -1382,7 +1384,7 @@ static struct ipoe_session *ipoe_session_create_dhcpv4(struct ipoe_serv *serv, s
 		ses->relay_agent->data = (uint8_t *)(ses->relay_agent + 1);
 		memcpy(ses->relay_agent->data, pack->relay_agent->data, pack->relay_agent->len);
 		ptr += sizeof(struct dhcpv4_option) + pack->relay_agent->len;
-		if (dhcpv4_parse_opt82(ses->relay_agent, &ses->agent_circuit_id, &ses->agent_remote_id))
+		if (dhcpv4_parse_opt82(ses->relay_agent, &ses->agent_circuit_id, &ses->agent_remote_id, &ses->subscriber_id))
 			ses->relay_agent = NULL;
 	}
 
@@ -1440,6 +1442,7 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 	int opt82_match;
 	uint8_t *agent_circuit_id = NULL;
 	uint8_t *agent_remote_id = NULL;
+	uint8_t *subscriber_id = NULL;
 
 	if (conf_verbose) {
 		log_ppp_info2("recv ");
@@ -1453,9 +1456,10 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 		return;
 	}
 
-	if (pack->relay_agent && dhcpv4_parse_opt82(pack->relay_agent, &agent_circuit_id, &agent_remote_id)) {
+	if (pack->relay_agent && dhcpv4_parse_opt82(pack->relay_agent, &agent_circuit_id, &agent_remote_id, &subscriber_id)) {
 		agent_circuit_id = NULL;
 		agent_remote_id = NULL;
+		subscriber_id = NULL;
 	}
 
 	opt82_match = pack->relay_agent != NULL;
