@@ -67,6 +67,8 @@ struct ipoe_serv {
 	unsigned int opt_nat:1;
 	unsigned int opt_ipv6:1;
 	unsigned int opt_ip_unnumbered:1;
+	char *opt_ip_pool;
+	char *opt_l4_redirect_ip_pool;
 	unsigned int need_close:1;
 	unsigned int active:1;
 	unsigned int vlan_mon:1;
