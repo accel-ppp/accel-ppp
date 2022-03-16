@@ -991,6 +991,7 @@ static int parse_server(const char *opt, in_addr_t *addr, int *port, char **secr
 static int load_config(void)
 {
 	char *opt;
+	int r = 0;
 
 	opt = conf_get_opt("radius", "max-try");
 	if (opt && atoi(opt) > 0)
@@ -1037,7 +1038,8 @@ static int load_config(void)
 	opt = conf_get_opt("radius", "dae-server");
 	if (opt && parse_server(opt, &conf_dm_coa_server, &conf_dm_coa_port, &conf_dm_coa_secret, conf_dm_coa_bind_device, &conf_dm_coa_bind_default)) {
 		log_emerg("radius: failed to parse dae-server\n");
-		return -1;
+		r = -1;
+		goto exit;
 	}
 
 	opt = conf_get_opt("radius", "sid-in-auth");
@@ -1070,7 +1072,8 @@ static int load_config(void)
 	if (opt && atoi(opt) >= 0)
 		conf_strip_realm = atoi(opt) > 0;
 
-	return 0;
+	exit:
+	return r;
 }
 
 static void radius_init(void)

@@ -371,6 +371,7 @@ static void load_config()
 	conf_filename = conf_get_opt("ipoe", "lua-file");
 
 	serial++;
+
 }
 
 static void init()

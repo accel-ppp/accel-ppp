@@ -900,6 +900,7 @@ static void load_config(void)
 		conf_echo_timeout = atoi(opt);
 	else
 		conf_echo_timeout = 0;
+
 }
 
 static void lcp_init(void)

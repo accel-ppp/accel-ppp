@@ -103,6 +103,9 @@ void triton_event_fire(int ev_id, void *arg);
 struct conf_sect_t *conf_get_section(const char *name);
 char *conf_get_opt(const char *sect, const char *name);
 void triton_conf_reload(void (*notify)(int));
+void config_wrlock();
+void config_lock();
+void config_unlock();
 
 void triton_collect_cpu_usage(void);
 void triton_stop_collect_cpu_usage(void);

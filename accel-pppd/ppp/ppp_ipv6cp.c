@@ -819,6 +819,7 @@ static void load_config(void)
 		else
 			conf_ipv6 = atoi(opt);
 	}
+
 }
 
 static void ipv6cp_init(void)

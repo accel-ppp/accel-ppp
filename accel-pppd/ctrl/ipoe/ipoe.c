@@ -4093,6 +4093,7 @@ static void load_config(void)
 	load_vlan_mon(s);
 	load_gw_addr(s);
 	load_local_nets(s);
+
 }
 
 static struct triton_context_t l4_redirect_ctx = {

@@ -171,6 +171,7 @@ static void load_config(void)
 	opt = conf_get_opt("dns", "dns2");
 	if (opt)
 		conf_dns2 = inet_addr(opt);
+
 }
 
 static void dns_opt_init()

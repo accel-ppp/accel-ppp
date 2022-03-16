@@ -160,12 +160,15 @@ static void* triton_thread(struct _triton_thread_t *thread)
 			} else
 				spin_unlock(&threads_lock);
 
+			spin_lock(&ctx_list_lock);
 			if (terminate) {
+				spin_unlock(&ctx_list_lock);
 				spin_lock(&threads_lock);
 				list_del(&thread->entry);
 				spin_unlock(&threads_lock);
 				return NULL;
 			}
+			spin_unlock(&ctx_list_lock);
 
 			//printf("thread %p: enter sigwait\n", thread);
 			sigwait(&set, &sig);
@@ -224,9 +227,11 @@ static void ctx_thread(struct _triton_context_t *ctx)
 	while (1) {
 		spin_lock(&ctx->lock);
 		if (!list_empty(&ctx->pending_timers)) {
+			spin_lock(&threads_lock);
 			t = list_entry(ctx->pending_timers.next, typeof(*t), entry2);
 			list_del(&t->entry2);
 			t->pending = 0;
+			spin_unlock(&threads_lock);
 			spin_unlock(&ctx->lock);
 			__sync_sub_and_fetch(&triton_stat.timer_pending, 1);
 			read(t->fd, &tt, sizeof(tt));
@@ -236,11 +241,13 @@ static void ctx_thread(struct _triton_context_t *ctx)
 		}
 
 		if (!list_empty(&ctx->pending_handlers)) {
+			spin_lock(&threads_lock);
 			h = list_entry(ctx->pending_handlers.next, typeof(*h), entry2);
 			list_del(&h->entry2);
 			h->pending = 0;
 			events = h->trig_epoll_events;
 			h->trig_epoll_events = 0;
+			spin_unlock(&threads_lock);
 			spin_unlock(&ctx->lock);
 
 			__sync_sub_and_fetch(&triton_stat.md_handler_pending, 1);

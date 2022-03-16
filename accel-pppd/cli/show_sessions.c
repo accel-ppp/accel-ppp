@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <arpa/inet.h>
 #include <linux/if_link.h>
+#include <pthread.h>
 
 #include "triton.h"
 #include "events.h"
@@ -628,7 +629,7 @@ static void print_tx_pkts(struct ap_session *ses, char *buf)
 	sprintf(buf, "%u", stats.tx_packets);
 }
 
-static void load_config(void *data)
+static void load_config()
 {
 	const char *opt = NULL;
 	char *ptr = NULL;
@@ -651,7 +652,7 @@ static void load_config(void *data)
 
 static void init(void)
 {
-	load_config(NULL);
+	load_config();
 
 	cli_register_simple_cmd2(show_ses_exec, show_ses_help, 2, "show", "sessions");
 

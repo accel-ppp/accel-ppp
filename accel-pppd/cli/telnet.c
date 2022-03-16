@@ -13,6 +13,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <pthread.h>
 
 #include "triton.h"
 #include "events.h"
@@ -77,6 +78,7 @@ static int history_len;
 static pthread_mutex_t history_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void save_history_file(void);
+
 static void disconnect(struct telnet_client_t *cln)
 {
 	struct buffer_t *b, *b2;

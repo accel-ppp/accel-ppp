@@ -547,6 +547,7 @@ static void load_config(void)
 		conf_max_starting = atoi(opt);
 	else
 		conf_max_starting = 0;
+
 }
 
 static void init(void)

@@ -148,6 +148,7 @@ static void load_config(void)
 		else
 			conf_accomp = atoi(opt);
 	}
+
 }
 
 static void accomp_opt_init()

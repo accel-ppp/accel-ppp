@@ -545,6 +545,7 @@ static void load_config(void)
 	opt = conf_get_opt("ppp", "timeout");
 	if (opt && atoi(opt) > 0)
 		conf_timeout = atoi(opt);
+
 }
 
 static void fsm_init(void)

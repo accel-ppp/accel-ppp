@@ -521,6 +521,7 @@ static void load_config(void)
 		fclose(debug_file);
 		debug_file = NULL;
 	}
+
 }
 
 static void log_init(void)

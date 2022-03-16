@@ -353,6 +353,7 @@ static void load_config(void)
 		conf_noauth = atoi(opt);
 	else
 		conf_noauth = 0;
+
 }
 
 static void ppp_auth_init()

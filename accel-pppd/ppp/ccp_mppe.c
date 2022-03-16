@@ -342,6 +342,7 @@ static void load_config(void)
 			conf_mppe = MPPE_DENY;
 	} else
 		conf_mppe = MPPE_ALLOW;
+
 }
 
 static void mppe_opt_init()

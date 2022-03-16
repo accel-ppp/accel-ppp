@@ -177,6 +177,7 @@ static void load_config(void)
 		opt = conf_get_opt("common", "check-ip");
 	if (opt && atoi(opt) >= 0)
 		conf_check_exists = atoi(opt) > 0;
+
 }
 
 static void ipaddr_opt_init()

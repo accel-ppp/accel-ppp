@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <malloc.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 
 #include "triton.h"
 #include "events.h"

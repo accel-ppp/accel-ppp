@@ -350,6 +350,7 @@ static void load_config(void)
 	opt = conf_get_opt("ppp", "ipv6-accept-peer-intf-id");
 	if (opt)
 		conf_accept_peer_intf_id = atoi(opt);
+
 }
 
 static void init()

@@ -976,6 +976,7 @@ static void load_config(void)
 				s->starting = 0;
 		}
 	}
+
 }
 
 static void init(void)

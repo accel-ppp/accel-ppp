@@ -755,6 +755,7 @@ static void load_config(void)
 		conf_unit_preallocate = atoi(opt);
 	else
 		conf_unit_preallocate = 0;
+
 }
 
 static void init(void)

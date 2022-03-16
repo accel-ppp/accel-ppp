@@ -148,6 +148,7 @@ static void load_config(void)
 		else
 			conf_pcomp = atoi(opt);
 	}
+
 }
 
 static void pcomp_opt_init()

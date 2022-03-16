@@ -799,6 +799,7 @@ static void load_config(void)
 	opt = conf_get_opt("ppp", "ccp-max-configure");
 	if (opt && atoi(opt) > 0)
 		conf_ccp_max_configure = atoi(opt);
+
 }
 
 static void ccp_init(void)

@@ -171,6 +171,7 @@ static void load_config(void)
 	opt = conf_get_opt("wins", "wins2");
 	if (opt)
 		conf_wins2 = inet_addr(opt);
+
 }
 
 static void wins_opt_init()

@@ -160,7 +160,9 @@ static void load_config()
 	opt = conf_get_opt("connlimit", "timeout");
 	if (opt)
 		conf_burst_timeout = atoi(opt) * 1000;
+
 }
+
 
 static void init()
 {

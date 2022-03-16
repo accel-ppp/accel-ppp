@@ -183,6 +183,7 @@ static void load_config(void)
 		log_emerg("min-mtu cann't be greater then mtu/mru\n");
 		conf_min_mtu = conf_mru;
 	}
+
 }
 
 static void mru_opt_init()

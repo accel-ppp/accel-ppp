@@ -178,6 +178,7 @@ static void load_config()
 		ident = _strdup("accel-pppd");
 
 	openlog(ident, 0, facility);
+
 }
 
 static void init(void)

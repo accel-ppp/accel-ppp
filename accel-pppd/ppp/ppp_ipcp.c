@@ -819,6 +819,7 @@ static void load_config(void)
 		else
 			conf_ipv4 = atoi(opt);
 	}
+
 }
 
 static void ipcp_init(void)
