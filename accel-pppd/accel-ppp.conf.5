@@ -1135,7 +1135,7 @@ Specifies the fwmark for traffic that won't be passed through shaper.
 .BI "up-limiter=" police|htb
 Specifes upstream rate limiting method.
 .TP
-.BI "down-limiter=" tbf|htb
+.BI "down-limiter=" tbf|htb|adv_shaper
 Specifies downstream rate limiting method.
 .TP
 .BI "leaf-qdisc=" "qdisc parameters"
@@ -1151,6 +1151,191 @@ Due to accel-ppp operates with rates in kilobit basis if you send rates in diffe
 .TP
 .BI "rate-limit=" download_speed/upload_speed
 Specifies, should accel-ppp set default rate-limit for clients. Clients rate-limit will be overwritten by RADIUS filter attributes or chap-secrets rate-limit params.
+.SH [advanced_shaper]
+.SS DESCRIPTION
+.br
+Configuration for adv_shaper
+.TP
+.br
+qdisc - queue discipline.
+Discipline can be root or leaf and classfull and classless.
+.br
+The first discipline in the list is the root, the rest are leaf.
+.br
+HTB - classfull discipline, that support classes and filters.
+.br
+TBF, SFQ, FQ_CODEL - classless discipline, that not support classes and filters.
+.br
+.B By default Linux set pfifo_fast as leaf qdisc! 
+.br
+(see "man tc")
+.TP
+.br
+Supported kinds of qdiscs:
+.B htb, tbf, sfq, fq_codel
+.TP
+.br
+class  - htb class for shaping.
+.TP
+.br
+filter - filter for classify packets in classfull discipline.
+.SS QDISC SYNTAX
+.br
+.BI "qdisc = " "htb handle HANDLE parent PARENTID r2q R2Q default DEF_CLASS"
+.br
+.BI "qdisc = " "tbf handle HANDLE parent PARENTID rate RATE burst BURST latency LATENCY"
+.br
+.BI "qdisc = " "sfq handle HANDLE parent PARENTID perturb PERTURB [limit LIMIT quantum QUANTUM]"
+.br
+.BI "qdisc = " "fq_codel handle HANDLE parent PARENTID [limit LIMIT flows FLOWS quantum QUANTUM target TARGET interval INTERVAL ecn|noecn]"
+.SS QDISC PARAMETERS
+.br
+.B HANDLE, PARENTID, DEF_CLASS is the 32-bit hexadecimal number in format XXXX:XXXX
+.br
+HANDLE    - qdisc handle.
+.br
+PARENTID  - parent qdisc handle. First qdisc MUST have parent ffff:ffff
+.TP
+.br
+HTB specific params (see "man tc-htb"):
+.br
+DEF_CLASS - class handle (CLASSID) in which packets are sent by default.
+.br
+R2Q       - rate to quantum. Same as in tc. In Linux kernel quantum calculates as RATE/R2Q.
+.TP
+.br
+TBF specific params (see "man tc-tbf"):
+.br
+RATE    - rate limit (in kilobits). Set to 0 if required rate parameter from radius or shaper section.
+.br
+BURST   - burst value (in kilobits). Set to 0 if required rate parameter from radius or shaper section.
+.br
+LATENCY - latency parameter (in milliseconds).
+.TP
+.br
+SFQ specific params (see "man tc-sfq"):
+.br
+PERTURB - Decimal number (in seconds).
+.br
+LIMIT   - Decimal number.
+.br
+QUANTUM - Decimal number.
+.TP
+.br
+FQ_CODEL specific params (see "man tc-fq_codel"):
+.br
+LIMIT     - Decimal number.
+.br
+FLOWS     - Decimal number.
+.br
+QUANTUM   - Decimal number.
+.br
+TARGET    - Decimal number (in milliseconds).
+.br
+INTERVAL  - Decimal number (in milliseconds).
+.br
+ecn|noecn - by default noecn.
+.SS CLASS SYNTAX
+.br
+.BI "class = " "classid CLASSID parent PARENTID [rate RATE burst BURST cburst CBURST ceil CEIL]"
+.SS CLASS PARAMETERS
+.br
+.B CLASSID, PARENTID is the 32-bit hexadecimal number in format XXXX:XXXX
+.TP
+.br
+RATE - rate limit for htb class (in kilobits). Set to 0 if required rate parameter from radius or shaper section.
+.TP
+.br
+CEIL - ceil rate for htb class (in kilobits). Set to 0 if required rate parameter from radius or shaper section.
+.TP
+.br
+BURST - burst size for htb class (in kilobits). Set to 0 if required rate parameter from radius or shaper section.
+.TP
+.br
+CBURST - cburst size for htb class (in kilobits). Set to 0 if required rate parameter from radius or shaper section (cburst == burst).
+.SS FILTER SYNTAX
+.br
+.BI "filter = " "fw   parent PARENTID priority PRIO handle HANDLE classid CLASSID"
+.br
+.BI "filter = " "net  parent PARENTID priority PRIO ip NET src|dst classid CLASSID"
+.br
+.BI "filter = " "net6 parent PARENTID priority PRIO ip6 NET src|dst classid CLASSID"
+.br
+.BI "filter = " "u32  parent PARENTID priority PRIO value VAL mask VAL_MASK offset OFFSET offmask OFFMASK classid CLASSID"
+.SS FILTER PARAMETERS
+.br
+.B CLASSID, PARENTID is the 32-bit hexadecimal number in format XXXX:XXXX
+.TP
+.br
+PARENTID - parent handle for filter.
+.TP
+.br
+CLASSID  - classid for which send packets.
+.TP
+.br
+PRIO     - filter priority or preference (decimal number).
+.TP
+.br
+HANDLE   - same as fwmark (decimal number).
+.TP
+.br
+NET:
+.br
+IPV4 network for filter net
+.br
+IPV6 network for filter net6
+.TP
+.br
+NETTYPE  - src|dst.
+.TP
+.br
+VAL      - 32-bit hexadecimal number.
+.TP
+.br
+VAL_MASK - 32-bit hexadecimal number.
+.TP
+.br
+OFFSET   - offset from IP packet begin (decimal number).
+.TP
+.br
+OFFMASK  - offset mask.
+.SS EXAMPLES
+.TP
+.br
+[shaper]
+.br
+***
+.br
+down-limiter=adv_shaper
+.br
+***
+.TP
+.br
+[advanced_shaper]
+.br
+qdisc = htb handle 1:0 parent ffff:ffff r2q 100 default 1:100
+.br
+class = classid 1:1   parent 1:0 rate 0 burst 0 cburst 0
+.br
+class = classid 1:100 parent 1:1 rate 0 burst 0 cburst 0
+.br
+class = classid 1:10  parent 1:1 rate 10240 ceil 10240 burst 5120 cburst 5120
+.br
+qdisc = sfq handle 2:0 parent 1:10 perturb 10
+.br
+qdisc = fq_codel handle 3:0 parent 1:100
+.br
+filter = u32 parent 1:0 priority 40 value f16fb000 mask ffffff00 offset 16 classid 1:10
+.br
+filter = fw  parent 1:0 priority 50  handle 10 classid 1:0
+.br
+filter = fw  parent 1:0 priority 60  handle 20 classid 1:10
+.br
+filter = net parent 1:0 priority 100 ip 224.224.224.0/24 src classid 1:10
+.br
+filter = net6 parent 1:0 priority 300 ip6 fe80::cdef/24 src classid 1:10
+.br
+filter = net6 parent 1:0 priority 600 ip6 ::/0 dst classid 1:10
 .SH [cli]
 .br
 Configuration of the command line interface.
