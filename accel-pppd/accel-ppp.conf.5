@@ -449,7 +449,7 @@ parameter specifies list of vlans or ranges of vlans to monitor for and may be i
 vlan-mon=eth1,2,5,10,20-30
 .TP
 .BI "vlan-timeout=" n
-Specifies time of vlan inactivity before it will be removed (seconds).
+Specifies time of vlan inactivity before it will be removed (seconds) (default 60). A value of -1 disables removal of inactive vlan.
 .TP
 .BI "vlan-name=" pattern
 Specifies pattern of vlan interface name. Pattern may contain following macros:
