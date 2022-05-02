@@ -2804,7 +2804,8 @@ void ipoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 			if (serv->ifindex == vlan_ifindex) {
 				if (!serv->vlan_mon) {
 					serv->vlan_mon = 1;
-					set_vlan_timeout(serv);
+					if(conf_vlan_timeout > 0)
+						set_vlan_timeout(serv);
 				}
 				pthread_mutex_unlock(&serv_lock);
 				return;
@@ -3253,7 +3254,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 
 	if (vlan_mon) {
 		serv->vlan_mon = 1;
-		set_vlan_timeout(serv);
+		if(conf_vlan_timeout > 0)
+			set_vlan_timeout(serv);
 	}
 
 	if (opt_mtu)
@@ -3614,7 +3616,8 @@ static void add_vlan_mon(const char *opt, long *mask)
 
 			if (!serv->vlan_mon) {
 				serv->vlan_mon = 1;
-				set_vlan_timeout(serv);
+				if(conf_vlan_timeout > 0)
+					set_vlan_timeout(serv);
 			}
 		}
 	}
@@ -3647,7 +3650,8 @@ static int __load_vlan_mon_re(int index, int flags, const char *name, int iflink
 
 			if (!serv->vlan_mon) {
 				serv->vlan_mon = 1;
-				set_vlan_timeout(serv);
+				if(conf_vlan_timeout > 0)
+					set_vlan_timeout(serv);
 			}
 		}
 	}
@@ -4009,7 +4013,7 @@ static void load_config(void)
 		conf_proto = 3;
 
 	opt = conf_get_opt("ipoe", "vlan-timeout");
-	if (opt && atoi(opt) > 0)
+	if (opt && (atoi(opt) > 0 || atoi(opt) == -1))
 		conf_vlan_timeout = atoi(opt);
 	else
 		conf_vlan_timeout = 60;
