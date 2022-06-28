@@ -127,6 +127,7 @@ unsigned long stat_filtered;
 pthread_rwlock_t serv_lock = PTHREAD_RWLOCK_INITIALIZER;
 LIST_HEAD(serv_list);
 static int connlimit_loaded;
+static int conf_session_timeout;
 
 static pthread_mutex_t sid_lock = PTHREAD_MUTEX_INITIALIZER;
 static unsigned long *sid_map;
@@ -417,6 +418,8 @@ static struct pppoe_conn_t *allocate_channel(struct pppoe_serv_t *serv, const ui
 		conn->ppp.ses.dpv6_pool_name = _strdup(conf_dpv6_pool);
 	if (conf_ifname)
 		conn->ppp.ses.ifname_rename = _strdup(conf_ifname);
+	if (conf_session_timeout)
+		conn->ppp.ses.session_timeout = conf_session_timeout;
 
 	triton_context_register(&conn->ctx, conn);
 
@@ -2027,6 +2030,11 @@ static void load_config(void)
 	else
 		conf_cookie_timeout = 5;
 
+	opt = conf_get_opt("pppoe", "session-timeout");
+	if (opt)
+		conf_session_timeout = atoi(opt);
+	else
+		conf_session_timeout = 0;
 
 	conf_mppe = MPPE_UNSET;
 	opt = conf_get_opt("pppoe", "mppe");

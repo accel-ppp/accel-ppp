@@ -185,6 +185,7 @@ extern char *conf_dm_coa_secret;
 extern char conf_dm_coa_bind_device[IFNAMSIZ];
 extern unsigned int conf_dm_coa_bind_default;
 extern int conf_sid_in_auth;
+extern int conf_nas_port_id_in_req;
 extern int conf_require_nas_ident;
 extern in_addr_t conf_dm_coa_server;
 extern int conf_dm_coa_port;

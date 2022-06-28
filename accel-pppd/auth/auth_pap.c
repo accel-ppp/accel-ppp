@@ -43,6 +43,7 @@ struct pap_auth_data {
 	char *peer_id;
 	int req_id;
 	unsigned int started:1;
+	unsigned int active:1;
 };
 
 struct pap_hdr {
@@ -76,12 +77,21 @@ static struct auth_data_t* auth_data_init(struct ppp_t *ppp)
 	d->auth.len = 0;
 	d->ppp = ppp;
 
+	d->h.proto = PPP_PAP;
+	d->h.recv = pap_recv;
+	ppp_register_chan_handler(ppp, &d->h);
+
 	return &d->auth;
 }
 
 static void auth_data_free(struct ppp_t *ppp, struct auth_data_t *auth)
 {
 	struct pap_auth_data *d = container_of(auth, typeof(*d), auth);
+
+	if (d->timeout.tpd)
+		triton_timer_del(&d->timeout);
+
+	ppp_unregister_handler(ppp, &d->h);
 
 	_free(d);
 }
@@ -90,14 +100,12 @@ static int pap_start(struct ppp_t *ppp, struct auth_data_t *auth)
 {
 	struct pap_auth_data *d = container_of(auth, typeof(*d), auth);
 
-	d->h.proto = PPP_PAP;
-	d->h.recv = pap_recv;
 	d->timeout.expire = pap_timeout;
 	d->timeout.period = conf_timeout * 1000;
 
 	triton_timer_add(ppp->ses.ctrl->ctx, &d->timeout, 0);
 
-	ppp_register_chan_handler(ppp, &d->h);
+	d->active = 1;
 
 	return 0;
 }
@@ -105,13 +113,13 @@ static int pap_finish(struct ppp_t *ppp, struct auth_data_t *auth)
 {
 	struct pap_auth_data *d = container_of(auth, typeof(*d), auth);
 
+	d->active = 0;
+
 	if (d->timeout.tpd)
 		triton_timer_del(&d->timeout);
 
 	if (d->peer_id)
 		_free(d->peer_id);
-
-	ppp_unregister_handler(ppp, &d->h);
 
 	return 0;
 }
@@ -199,6 +207,11 @@ static int pap_recv_req(struct pap_auth_data *p, struct pap_hdr *hdr)
 	int peer_id_len;
 	int passwd_len;
 	uint8_t *ptr = (uint8_t*)(hdr + 1);
+
+	if (!p->active) {
+		log_ppp_debug("PAP: unexpected packet received\n");
+		return 0;
+	}
 
 	if (p->timeout.tpd)
 		triton_timer_del(&p->timeout);

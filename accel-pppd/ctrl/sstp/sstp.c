@@ -169,6 +169,7 @@ static const char *conf_ifname;
 static int conf_proxyproto = 0;
 static int conf_sndbuf = 0;
 static int conf_rcvbuf = 0;
+static int conf_session_timeout;
 
 static int conf_hash_protocol = CERT_HASH_PROTOCOL_SHA1 | CERT_HASH_PROTOCOL_SHA256;
 static struct hash_t conf_hash_sha1 = { .len = 0 };
@@ -2401,6 +2402,8 @@ static int sstp_connect(struct triton_md_handler_t *h)
 			conn->ppp.ses.dpv6_pool_name = _strdup(conf_dpv6_pool);
 		if (conf_ifname)
 			conn->ppp.ses.ifname_rename = _strdup(conf_ifname);
+		if (conf_session_timeout)
+			conn->ppp.ses.session_timeout = conf_session_timeout;
 
 		sockaddr_ntop(&addr, addr_buf, sizeof(addr_buf), FLAG_NOPORT);
 		conn->ctrl.calling_station_id = _strdup(addr_buf);
@@ -2842,6 +2845,12 @@ static void load_config(void)
 	opt = conf_get_opt("sstp", "rcvbuf");
 	if (opt && atoi(opt) > 0)
 		conf_rcvbuf = atoi(opt);
+
+	opt = conf_get_opt("sstp", "session-timeout");
+	if (opt)
+		conf_session_timeout = atoi(opt);
+	else
+		conf_session_timeout = 0;
 
 	ipmode = (serv.addr.u.sa.sa_family == AF_INET && !conf_proxyproto) ?
 			iprange_check_activation() : -1;

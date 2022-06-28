@@ -89,8 +89,10 @@ static struct rad_req_t *__rad_req_alloc(struct radius_pd_t *rpd, int code, cons
 	if (rpd->ses->unit_idx != -1 && rad_packet_add_int(req->pack, NULL, "NAS-Port", rpd->ses->unit_idx))
 		goto out_err;
 
-	if (*rpd->ses->ifname && rad_packet_add_str(req->pack, NULL, "NAS-Port-Id", rpd->ses->ifname))
-		goto out_err;
+	if (conf_nas_port_id_in_req) {
+		if (*rpd->ses->ifname && rad_packet_add_str(req->pack, NULL, "NAS-Port-Id", rpd->ses->ifname))
+			goto out_err;
+	}
 
 	if (req->rpd->ses->ctrl->type == CTRL_TYPE_IPOE) {
 		if (rad_packet_add_val(req->pack, NULL, "NAS-Port-Type", "Ethernet"))

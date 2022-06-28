@@ -35,6 +35,7 @@ static int conf_single_session = -1;
 static int conf_single_session_ignore_case;
 static int conf_sid_source;
 static int conf_seq_save_timeout = 10;
+static int conf_session_timeout;
 static const char *conf_seq_file;
 int __export conf_max_sessions;
 int __export conf_max_starting;
@@ -151,6 +152,9 @@ void __export ap_session_activate(struct ap_session *ses)
 	ses->state = AP_STATE_ACTIVE;
 	__sync_sub_and_fetch(&ap_session_stat.starting, 1);
 	__sync_add_and_fetch(&ap_session_stat.active, 1);
+
+	if (!ses->session_timeout && conf_session_timeout)
+		ses->session_timeout = conf_session_timeout;
 
 	if (ses->idle_timeout) {
 		ses->timer.expire = ap_session_timer;
@@ -547,6 +551,12 @@ static void load_config(void)
 		conf_max_starting = atoi(opt);
 	else
 		conf_max_starting = 0;
+
+	opt = conf_get_opt("common", "session-timeout");
+	if (opt)
+		conf_session_timeout = atoi(opt);
+	else
+		conf_session_timeout = 0;
 }
 
 static void init(void)

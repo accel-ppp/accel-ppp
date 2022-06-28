@@ -108,6 +108,8 @@ void *timer_thread(void *arg)
 
 		while (!list_empty(&freed_list2)) {
 			t = list_entry(freed_list2.next, typeof(*t), entry);
+			epoll_ctl(epoll_fd,EPOLL_CTL_DEL, t->fd, &t->epoll_event);
+			close(t->fd);
 			list_del(&t->entry);
 			triton_context_release(t->ctx);
 			mempool_free(t);
@@ -198,8 +200,6 @@ int __export triton_timer_mod(struct triton_timer_t *ud,int abs_time)
 void __export triton_timer_del(struct triton_timer_t *ud)
 {
 	struct _triton_timer_t *t = (struct _triton_timer_t *)ud->tpd;
-
-	close(t->fd);
 
 	spin_lock(&t->ctx->lock);
 	t->ud = NULL;

@@ -1154,7 +1154,11 @@ static int ipoe_create(__be32 peer_addr, __be32 addr, __be32 gw, int ifindex, co
 
 	if (link_dev) {
 		dev->features = link_dev->features & ~(NETIF_F_HW_VLAN_FILTER | NETIF_F_LRO);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,0)
+		dev_addr_mod(dev, 0, link_dev->dev_addr, ETH_ALEN);
+#else
 		memcpy(dev->dev_addr, link_dev->dev_addr, ETH_ALEN);
+#endif
 		memcpy(dev->broadcast, link_dev->broadcast, ETH_ALEN);
 	}
 
@@ -1446,7 +1450,11 @@ static int ipoe_nl_cmd_modify(struct sk_buff *skb, struct genl_info *info)
 
 		if (link_dev) {
 			ses->dev->features = link_dev->features & ~(NETIF_F_HW_VLAN_FILTER | NETIF_F_LRO);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,0)
+			dev_addr_mod(dev, 0, link_dev->dev_addr, ETH_ALEN);
+#else
 			memcpy(dev->dev_addr, link_dev->dev_addr, ETH_ALEN);
+#endif
 			memcpy(dev->broadcast, link_dev->broadcast, ETH_ALEN);
 		}
 	}

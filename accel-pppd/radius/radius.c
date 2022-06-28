@@ -42,6 +42,7 @@ char conf_dm_coa_bind_device[IFNAMSIZ];
 unsigned int conf_dm_coa_bind_default;
 
 int conf_sid_in_auth;
+int conf_nas_port_id_in_req = 1;
 int conf_require_nas_ident;
 int conf_acct_interim_interval;
 int conf_acct_interim_jitter;
@@ -1069,6 +1070,10 @@ static int load_config(void)
 	opt = conf_get_opt("radius", "strip-realm");
 	if (opt && atoi(opt) >= 0)
 		conf_strip_realm = atoi(opt) > 0;
+
+	opt = conf_get_opt("radius", "nas-port-id-in-req");
+	if (opt)
+		conf_nas_port_id_in_req = atoi(opt);
 
 	return 0;
 }

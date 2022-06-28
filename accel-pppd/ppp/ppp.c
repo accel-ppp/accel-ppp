@@ -430,6 +430,11 @@ cont:
 			}
 		}
 
+                list_for_each_entry(ppp_h, &ppp->unit_handlers, entry) {
+                        if (ppp_h->proto == proto)
+                                goto cont;
+                }
+
 		lcp_send_proto_rej(ppp, proto);
 		//log_ppp_warn("ppp_chan_read: discarding unknown packet %x\n", proto);
 	}

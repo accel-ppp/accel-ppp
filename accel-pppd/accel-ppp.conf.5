@@ -137,6 +137,11 @@ Specifies netlink maximum send buffer size (SO_SNDBUF option) (default 32768).
 .TP
 .BI "nl-rcv-buffer=" n
 Specifies netlink maximum receive buffer size (SO_RCVBUF option) (default 1048576).
+.TP
+.BI "session-timeout=" n
+Specifies max sessions time in seconds, after this time session will be terminated.
+.br
+This timeout can be redefined with radius attribute Session-Timeout. 0 value means infinite timeout.
 .SH [ppp]
 .br
 PPP module configuration.
@@ -239,6 +244,27 @@ This should reduce kernel-level interface creation/deletion rate lack.
 .TP
 .BI "unit-preallocate=" 0|1
 If set to 1 then allocate ppp unit (interface) before authorization, so Nas-Port and Nas-Port-Id would be defined in Access-Request phase.
+.SH [auth]
+.br
+Contains authentication params
+.TP
+.BI "timeout=" n
+If n is not zero specifies timeout in seconds to wait for PAP, CHAP, Microsoft CHAP v1/v2 authentication.
+.TP
+.BI "interval=" n
+If n is not zero specifies timeout in seconds to restart CHAP and Microsoft CHAP v1/v2 authentication.
+.TP
+.BI "max-failure=" n
+If n is not zero specifies maximum number of CHAP and Microsoft CHAP v1/v2 authentication failures.
+.TP
+.BI "any-login=" 0|1
+If set to 1 allows pass PAP, CHAP and Microsoft CHAP v1 authentication with any login.
+.TP
+.BI "noauth=" 0|1
+If set to 1 skips any PPP and IPOE authentication.
+.TP
+.BI "challenge-name=" name
+Specifies challenge name for CHAP authentication.
 .SH [ipoe]
 .TP
 .BI "verbose=" n
@@ -538,6 +564,11 @@ as a template, i.e pptp%d => pptp0.
 .BI "ppp-max-mtu=" n
 Set the maximum MTU value that can be negotiated for PPP over PPTP
 sessions. Default value is 1436.
+.TP
+.BI "session-timeout=" n
+Specifies max sessions time in seconds, after this time session will be terminated.
+.br
+This timeout can be redefined with radius attribute Session-Timeout. 0 value means infinite timeout.
 .SH [pppoe]
 .br
 Configuration of PPPoE module.
@@ -607,6 +638,11 @@ Specifies overall limit of PADI packets to reply in 1 second period (default 0 -
 If this option is given ppp interface will be renamed using
 .B ifname
 as a template, i.e pppoe%d => pppoe0.
+.TP
+.BI "session-timeout=" n
+Specifies max sessions time in seconds, after this time session will be terminated.
+.br
+This timeout can be redefined with radius attribute Session-Timeout. 0 value means infinite timeout.
 .SH [l2tp]
 .br
 Configuration of L2TP module.
@@ -698,6 +734,11 @@ sessions. Default value is 1420.
 If this option is given ppp interface will be renamed using
 .B ifname
 as a template, i.e l2tp%d => l2tp0.
+.TP
+.BI "session-timeout=" n
+Specifies max sessions time in seconds, after this time session will be terminated.
+.br
+This timeout can be redefined with radius attribute Session-Timeout. 0 value means infinite timeout.
 .SH [sstp]
 .br
 Configuration of SSTP module.
@@ -804,6 +845,11 @@ as a template, i.e sstp%d => sstp0.
 .BI "ppp-max-mtu=" n
 Set the maximum MTU value that can be negotiated for PPP over SSTP sessions.
 Default value is 1452, maximum is 4087.
+.TP
+.BI "session-timeout=" n
+Specifies max sessions time in seconds, after this time session will be terminated.
+.br
+This timeout can be redefined with radius attribute Session-Timeout. 0 value means infinite timeout.
 .SH [radius]
 .br
 Configuration of RADIUS module.
@@ -904,6 +950,9 @@ option for realm substitution.
 .TP
 .BI "sid-in-auth=0|1"
 Specifies should accel-ppp generate and send Acct-Session-Id on Access-Request packet.
+.TP
+.BI "nas-port-id-in-req=" 0|1
+Specifies should accel-ppp send NAS-Port-Id on Access-Request and Accounting-Request packets (default 1).
 .SH [log]
 .br
 Configuration of log and log_file modules.

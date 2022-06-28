@@ -2081,7 +2081,7 @@ static struct ipoe_session *ipoe_session_create_up(struct ipoe_serv *serv, struc
 	if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions)
 		return NULL;
 
-	if (connlimit_loaded && connlimit_check(cl_key_from_ipv4(saddr)))
+	if (connlimit_loaded && connlimit_check(serv->opt_shared ? cl_key_from_ipv4(saddr) : serv->ifindex))
 		return NULL;
 
 	if (l4_redirect_list_check(saddr))
