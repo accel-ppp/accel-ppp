@@ -292,9 +292,98 @@ int __export vlan_mon_check_busy(int ifindex, uint16_t vid)
 	return r;
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 //Create a vlan interface and then make an ipoe or pppoe callback
 static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 {
+	struct ifreq ifr;
+
+	memset(&ifr, 0, sizeof(ifr));
+	ifr.ifr_ifindex = ifindex;
+	if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
+		log_error("vlan_mon: vlan-mon: failed to get interface name, ifindex=%i\n", ifindex);
+		return;
+	}
+
+	svid = iplink_vlan_get_vid(ifindex, NULL);
+
+#ifdef USE_LUA
+	if (!memcmp(conf_vlan_name, "lua:", 4))
+		r = ipoe_lua_make_vlan_name(conf_vlan_name + 4, ifr.ifr_name, svid, vid, ifname);
+	else
+#endif
+	r = make_vlan_name(conf_vlan_name, ifr.ifr_name, svid, vid, ifname);
+	if (r) {
+		log_error("vlan_mon: vlan-mon: %s.%i: interface name is too long\n", ifr.ifr_name, vid);
+		return;
+	}
+
+	if (vlan_ifindex) {
+		log_info2("vlan_mon: rename vlan %s parent %s\n", ifname, ifr.ifr_name);
+
+		ifr.ifr_ifindex = vlan_ifindex;
+		if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
+			log_error("vlan_mon: vlan-mon: failed to get interface name, ifindex=%i\n", ifindex);
+			return;
+		}
+
+		if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr, sizeof(ifr))) {
+			log_error("vlan_mon: failed to get interface flags, ifindex=%i\n", ifindex);
+			return;
+		}
+
+		if (ifr.ifr_flags & IFF_UP) {
+			ifr.ifr_flags &= ~IFF_UP;
+
+			if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr, sizeof(ifr))) {
+				log_error("vlan_mon: failed to set interface flags, ifindex=%i\n", ifindex);
+				return;
+			}
+		}
+
+		if (strcmp(ifr.ifr_name, ifname)) {
+			strcpy(ifr.ifr_newname, ifname);
+			if (ioctl(sock_fd, SIOCSIFNAME, &ifr, sizeof(ifr))) {
+				log_error("vlan_mon: vlan-mon: failed to rename interface %s to %s\n", ifr.ifr_name, ifr.ifr_newname);
+				return;
+			}
+			strcpy(ifr.ifr_name, ifname);
+		}
+	} else {
+		log_info2("vlan_mon: create vlan %s parent %s\n", ifname, ifr.ifr_name);
+
+		if (iplink_vlan_add(ifname, ifindex, vid)) {
+			log_error("vlan_mon: failed to create interface. Parent=%i name=%s vid=%i\n", ifindex, ifname, vid);
+			return;
+		}
+	}
+
+	len = strlen(ifname);
+	memcpy(ifr.ifr_name, ifname, len + 1);
+
+	if (ioctl(sock_fd, SIOCGIFINDEX, &ifr, sizeof(ifr))) {
+		log_error("vlan_mon: vlan-mon: %s: failed to get interface index\n", ifr.ifr_name);
+		return;
+	}
+
+	//Send params to pppoe or ipoe callback
+	//ifname of new interface
+	//ifindex of new interface
+	//vid of new interface
+	//Return 0 if success, not 0 else
 	if (cb[proto])
 		cb[proto](ifindex, vid, vlan_ifindex);
 }
@@ -527,98 +616,98 @@ out_err:
 
 static int __load_vlan_mon_re(int index, int flags, const char *name, int iflink, int vid, struct iplink_arg *arg)
 {
-    struct ifreq ifr;
-    long mask1[4096/8/sizeof(long)];
+	struct ifreq ifr;
+	long mask1[4096/8/sizeof(long)];
 
-    if (pcre_exec(arg->re, NULL, name, strlen(name), 0, 0, NULL, 0) < 0)
+	if (pcre_exec(arg->re, NULL, name, strlen(name), 0, 0, NULL, 0) < 0)
+		return 0;
+
+	memset(&ifr, 0, sizeof(ifr));
+	strcpy(ifr.ifr_name, name);
+
+	ioctl(sock_fd, SIOCGIFFLAGS, &ifr);
+
+	if (!(ifr.ifr_flags & IFF_UP)) {
+		ifr.ifr_flags |= IFF_UP;
+
+		ioctl(sock_fd, SIOCSIFFLAGS, &ifr);
+	}
+
+	memcpy(mask1, arg->arg1, sizeof(mask1));
+	vlan_mon_add(index, ETH_P_PPP_DISC,  mask1, sizeof(mask1));
+
 	return 0;
-
-    memset(&ifr, 0, sizeof(ifr));
-    strcpy(ifr.ifr_name, name);
-
-    ioctl(sock_fd, SIOCGIFFLAGS, &ifr);
-
-    if (!(ifr.ifr_flags & IFF_UP)) {
-	ifr.ifr_flags |= IFF_UP;
-
-	ioctl(sock_fd, SIOCSIFFLAGS, &ifr);
-    }
-
-    memcpy(mask1, arg->arg1, sizeof(mask1));
-    vlan_mon_add(index, ETH_P_PPP_DISC,  mask1, sizeof(mask1));
-
-    return 0;
 }
 
 static void load_vlan_mon_re(const char *opt, long *mask, int len)
 {
-    pcre *re = NULL;
-    const char *pcre_err;
-    char *pattern;
-    const char *ptr;
-    int pcre_offset;
-    struct iplink_arg arg;
+	pcre *re = NULL;
+	const char *pcre_err;
+	char *pattern;
+	const char *ptr;
+	int pcre_offset;
+	struct iplink_arg arg;
 
-    for (ptr = opt; *ptr && *ptr != ','; ptr++);
+	for (ptr = opt; *ptr && *ptr != ','; ptr++);
 
-    pattern = _malloc(ptr - (opt + 3) + 1);
-    memcpy(pattern, opt + 3, ptr - (opt + 3));
-    pattern[ptr - (opt + 3)] = 0;
+	pattern = _malloc(ptr - (opt + 3) + 1);
+	memcpy(pattern, opt + 3, ptr - (opt + 3));
+	pattern[ptr - (opt + 3)] = 0;
 
-    re = pcre_compile2(pattern, 0, NULL, &pcre_err, &pcre_offset, NULL);
+	re = pcre_compile2(pattern, 0, NULL, &pcre_err, &pcre_offset, NULL);
 
-    if (!re) {
-	log_error("vlan_mon: '%s': %s at %i\r\n", pattern, pcre_err, pcre_offset);
-	return;
-    }
+	if (!re) {
+		log_error("vlan_mon: '%s': %s at %i\r\n", pattern, pcre_err, pcre_offset);
+		return;
+	}
 
-    arg.re = re;
-    arg.opt = opt;
-    arg.arg1 = mask;
+	arg.re = re;
+	arg.opt = opt;
+	arg.arg1 = mask;
 
-    iplink_list((iplink_list_func)__load_vlan_mon_re, &arg);
+	iplink_list((iplink_list_func)__load_vlan_mon_re, &arg);
 
-    pcre_free(re);
-    _free(pattern);
+	pcre_free(re);
+	_free(pattern);
 
 }
 
 static void add_vlan_mon(const char *opt, long *mask)
 {
-    const char *ptr;
-    struct ifreq ifr;
-    int ifindex;
-    long mask1[4096/8/sizeof(long)];
+	const char *ptr;
+	struct ifreq ifr;
+	int ifindex;
+	long mask1[4096/8/sizeof(long)];
 
-    for (ptr = opt; *ptr && *ptr != ','; ptr++);
+	for (ptr = opt; *ptr && *ptr != ','; ptr++);
 
-    if (ptr - opt >= IFNAMSIZ) {
-	log_error("vlan_mon: vlan-mon=%s: interface name is too long\n", opt);
-	return;
-    }
+	if (ptr - opt >= IFNAMSIZ) {
+		log_error("vlan_mon: vlan-mon=%s: interface name is too long\n", opt);
+		return;
+	}
 
-    memset(&ifr, 0, sizeof(ifr));
+	memset(&ifr, 0, sizeof(ifr));
 
-    memcpy(ifr.ifr_name, opt, ptr - opt);
-    ifr.ifr_name[ptr - opt] = 0;
+	memcpy(ifr.ifr_name, opt, ptr - opt);
+	ifr.ifr_name[ptr - opt] = 0;
 
-    if (ioctl(sock_fd, SIOCGIFINDEX, &ifr)) {
-	log_error("vlan_mon: '%s': ioctl(SIOCGIFINDEX): %s\n", ifr.ifr_name, strerror(errno));
-	return;
-    }
+	if (ioctl(sock_fd, SIOCGIFINDEX, &ifr)) {
+		log_error("vlan_mon: '%s': ioctl(SIOCGIFINDEX): %s\n", ifr.ifr_name, strerror(errno));
+		return;
+	}
 
-    ifindex = ifr.ifr_ifindex;
+	ifindex = ifr.ifr_ifindex;
 
-    ioctl(sock_fd, SIOCGIFFLAGS, &ifr);
+	ioctl(sock_fd, SIOCGIFFLAGS, &ifr);
 
-    if (!(ifr.ifr_flags & IFF_UP)) {
-	ifr.ifr_flags |= IFF_UP;
+	if (!(ifr.ifr_flags & IFF_UP)) {
+		ifr.ifr_flags |= IFF_UP;
 
-	ioctl(sock_fd, SIOCSIFFLAGS, &ifr);
-    }
+		ioctl(sock_fd, SIOCSIFFLAGS, &ifr);
+	}
 
-    memcpy(mask1, mask, sizeof(mask1));
-    vlan_mon_add(ifindex, ETH_P_PPP_DISC, mask1, sizeof(mask1));
+	memcpy(mask1, mask, sizeof(mask1));
+	vlan_mon_add(ifindex, ETH_P_PPP_DISC, mask1, sizeof(mask1));
 }
 
 static void load_interfaces(struct conf_sect_t *sect)
