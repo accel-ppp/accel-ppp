@@ -103,8 +103,16 @@ static int vlan_pt_recv(struct sk_buff *skb, struct net_device *dev, struct pack
 	if (!dev->ml_priv)
 		goto out;
 
+	printk(KERN_WARNING "------------------------------------------");
+	printk(KERN_WARNING "vlan_mon: dev->ifindex=(%i)\n", dev->ifindex);
+	printk(KERN_WARNING "vlan_mon: skb->len=(%i)\n", skb->len);
+	printk(KERN_WARNING "vlan_mon: 1\n");
+
 	if (!vlan_tx_tag_present(skb))
 		goto out;
+
+	printk(KERN_WARNING "vlan_mon: 2\n");
+
 
 	if (skb->protocol == htons(ETH_P_IP) || skb->protocol == htons(ETH_P_ARP))
 		proto = VLAN_MON_PROTO_IP;
@@ -118,12 +126,17 @@ static int vlan_pt_recv(struct sk_buff *skb, struct net_device *dev, struct pack
 	rcu_read_lock();
 
 	d = rcu_dereference(dev->ml_priv);
+
+	printk(KERN_WARNING "vlan_mon: d->ifindex=(%i) dev->ifindex=(%i)\n", d->ifindex, dev->ifindex);
+	printk(KERN_WARNING "------------------------------------------");
 	if (!d || d->magic != VLAN_MON_MAGIC || d->ifindex != dev->ifindex || (d->proto & (1 << proto)) == 0) {
 		rcu_read_unlock();
 		goto out;
 	}
 
 	vid = skb->vlan_tci & VLAN_VID_MASK;
+
+	printk(KERN_WARNING "vlan_mon: Vlan id (%i)\n", vid);
 
 	if (likely(d->busy[vid / (8*sizeof(long))] & (1lu << (vid % (8*sizeof(long))))))
 		vid = -1;
@@ -135,6 +148,8 @@ static int vlan_pt_recv(struct sk_buff *skb, struct net_device *dev, struct pack
 	} else
 		vid = -1;
 
+	printk(KERN_WARNING "vlan_mon: Vlan id (%i)\n", vid);
+
 	if (vid > 0) {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
 		struct net_device *vd = __vlan_find_dev_deep(dev, vid);
@@ -145,6 +160,8 @@ static int vlan_pt_recv(struct sk_buff *skb, struct net_device *dev, struct pack
 #endif
 		if (vd)
 			vlan_ifindex = vd->ifindex;
+
+		printk(KERN_WARNING "vlan_mon: Vlan ifindex (%i)\n", vlan_ifindex);
 	}
 
 	rcu_read_unlock();

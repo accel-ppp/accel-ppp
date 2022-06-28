@@ -13,12 +13,17 @@
 #include <linux/if.h>
 #include <linux/genetlink.h>
 
+#include <pcre.h>
+
 #include "triton.h"
 #include "log.h"
 #include "genl.h"
 #include "libnetlink.h"
 #include "iputils.h"
 #include "ap_net.h"
+
+//Only for sock_fd
+#include "ap_session.h"
 
 #include "vlan_mon.h"
 #include "if_vlan_mon.h"
@@ -27,13 +32,23 @@
 
 #define PKT_ATTR_MAX 256
 
+struct iplink_arg {
+    pcre *re;
+    const char *opt;
+    void *cli;
+    long *arg1;
+};
+
 static struct rtnl_handle rth;
 static struct triton_md_handler_t mc_hnd;
 static int vlan_mon_genl_id;
 
 static vlan_mon_notify cb[2];
 
-static void init(void);
+static const char *conf_vlan_name;
+static int conf_vlan_timeout;
+
+static void vlan_mon_init(void);
 
 void __export vlan_mon_register_proto(uint16_t proto, vlan_mon_notify func)
 {
@@ -44,8 +59,8 @@ void __export vlan_mon_register_proto(uint16_t proto, vlan_mon_notify func)
 
 	cb[proto] = func;
 
-	if (!vlan_mon_genl_id)
-		init();
+//	if (!vlan_mon_genl_id)
+//		vlan_mon_init();
 }
 
 int __export vlan_mon_add(int ifindex, uint16_t proto, long *mask, int len)
@@ -277,6 +292,13 @@ int __export vlan_mon_check_busy(int ifindex, uint16_t vid)
 	return r;
 }
 
+//Create a vlan interface and then make an ipoe or pppoe callback
+static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
+{
+	if (cb[proto])
+		cb[proto](ifindex, vid, vlan_ifindex);
+}
+
 static void vlan_mon_handler(const struct sockaddr_nl *addr, struct nlmsghdr *h)
 {
 	struct rtattr *tb[PKT_ATTR_MAX + 1];
@@ -322,8 +344,8 @@ static void vlan_mon_handler(const struct sockaddr_nl *addr, struct nlmsghdr *h)
 		else
 			proto = 0;
 
-		if (cb[proto])
-			cb[proto](ifindex, vid, vlan_ifindex);
+		vlan_mon_cb(proto, ifindex, vid, vlan_ifindex);
+
 	}
 }
 
@@ -498,6 +520,162 @@ out_err:
 }
 
 
+
+
+
+
+
+static int __load_vlan_mon_re(int index, int flags, const char *name, int iflink, int vid, struct iplink_arg *arg)
+{
+    struct ifreq ifr;
+    long mask1[4096/8/sizeof(long)];
+
+    if (pcre_exec(arg->re, NULL, name, strlen(name), 0, 0, NULL, 0) < 0)
+	return 0;
+
+    memset(&ifr, 0, sizeof(ifr));
+    strcpy(ifr.ifr_name, name);
+
+    ioctl(sock_fd, SIOCGIFFLAGS, &ifr);
+
+    if (!(ifr.ifr_flags & IFF_UP)) {
+	ifr.ifr_flags |= IFF_UP;
+
+	ioctl(sock_fd, SIOCSIFFLAGS, &ifr);
+    }
+
+    memcpy(mask1, arg->arg1, sizeof(mask1));
+    vlan_mon_add(index, ETH_P_PPP_DISC,  mask1, sizeof(mask1));
+
+    return 0;
+}
+
+static void load_vlan_mon_re(const char *opt, long *mask, int len)
+{
+    pcre *re = NULL;
+    const char *pcre_err;
+    char *pattern;
+    const char *ptr;
+    int pcre_offset;
+    struct iplink_arg arg;
+
+    for (ptr = opt; *ptr && *ptr != ','; ptr++);
+
+    pattern = _malloc(ptr - (opt + 3) + 1);
+    memcpy(pattern, opt + 3, ptr - (opt + 3));
+    pattern[ptr - (opt + 3)] = 0;
+
+    re = pcre_compile2(pattern, 0, NULL, &pcre_err, &pcre_offset, NULL);
+
+    if (!re) {
+	log_error("vlan_mon: '%s': %s at %i\r\n", pattern, pcre_err, pcre_offset);
+	return;
+    }
+
+    arg.re = re;
+    arg.opt = opt;
+    arg.arg1 = mask;
+
+    iplink_list((iplink_list_func)__load_vlan_mon_re, &arg);
+
+    pcre_free(re);
+    _free(pattern);
+
+}
+
+static void add_vlan_mon(const char *opt, long *mask)
+{
+    const char *ptr;
+    struct ifreq ifr;
+    int ifindex;
+    long mask1[4096/8/sizeof(long)];
+
+    for (ptr = opt; *ptr && *ptr != ','; ptr++);
+
+    if (ptr - opt >= IFNAMSIZ) {
+	log_error("vlan_mon: vlan-mon=%s: interface name is too long\n", opt);
+	return;
+    }
+
+    memset(&ifr, 0, sizeof(ifr));
+
+    memcpy(ifr.ifr_name, opt, ptr - opt);
+    ifr.ifr_name[ptr - opt] = 0;
+
+    if (ioctl(sock_fd, SIOCGIFINDEX, &ifr)) {
+	log_error("vlan_mon: '%s': ioctl(SIOCGIFINDEX): %s\n", ifr.ifr_name, strerror(errno));
+	return;
+    }
+
+    ifindex = ifr.ifr_ifindex;
+
+    ioctl(sock_fd, SIOCGIFFLAGS, &ifr);
+
+    if (!(ifr.ifr_flags & IFF_UP)) {
+	ifr.ifr_flags |= IFF_UP;
+
+	ioctl(sock_fd, SIOCSIFFLAGS, &ifr);
+    }
+
+    memcpy(mask1, mask, sizeof(mask1));
+    vlan_mon_add(ifindex, ETH_P_PPP_DISC, mask1, sizeof(mask1));
+}
+
+static void load_interfaces(struct conf_sect_t *sect)
+{
+	struct conf_option_t *opt;
+	long mask[4096/8/sizeof(long)];
+
+	vlan_mon_del(-1, ETH_P_PPP_DISC);
+
+	list_for_each_entry(opt, &sect->items, entry) {
+		if (strcmp(opt->name, "vlan-mon"))
+			continue;
+
+		if (!opt->val)
+			continue;
+
+		if (parse_vlan_mon(opt->val, mask))
+			continue;
+
+		if (strlen(opt->val) > 3 && !memcmp(opt->val, "re:", 3))
+			load_vlan_mon_re(opt->val, mask, sizeof(mask));
+		else
+			add_vlan_mon(opt->val, mask);
+	}
+}
+
+static void load_config(void)
+{
+	char *opt;
+	struct conf_sect_t *s = conf_get_section("vlan_mon");
+
+	if (!s) {
+		log_debug("vlan_mon: section \"vlan_mon\" not found!\n");
+		return;
+	}
+
+	opt = conf_get_opt("vlan_mon", "vlan-name");
+	if (opt) {
+		conf_vlan_name = opt;
+	} else {
+		conf_vlan_name = "%I.%N";
+	}
+	log_debug("vlan_mon: vlan-name=(%s)\n", conf_vlan_name);
+
+	//Loading vlan-timeout if specified
+	//If there is an error in the value, then conf_vlan_timeout=0
+	//If no value is specified, then conf_vlan_timeout=0
+	opt = conf_get_opt("vlan_mon", "vlan-timeout");
+	if (opt)
+		conf_vlan_timeout = atoi(opt);
+	else
+		conf_vlan_timeout = 0;
+	log_debug("vlan_mon: vlan-timeout=(%i)\n", conf_vlan_timeout);
+
+	load_interfaces(s);
+}
+
 static void vlan_mon_mc_close(struct triton_context_t *ctx)
 {
 	triton_md_unregister_handler(&mc_hnd, 0);
@@ -518,7 +696,7 @@ static struct triton_md_handler_t mc_hnd = {
 	.read = vlan_mon_mc_read,
 };
 
-static void init(void)
+static void vlan_mon_init(void)
 {
 	int mcg_id;
 
@@ -538,6 +716,7 @@ static void init(void)
 		return;
 	}
 
+	load_config();
 	vlan_mon_clean();
 
 	fcntl(rth.fd, F_SETFL, O_NONBLOCK);
@@ -551,3 +730,4 @@ static void init(void)
 	triton_context_wakeup(&mc_ctx);
 }
 
+DEFINE_INIT(19, vlan_mon_init);
