@@ -2618,7 +2618,7 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 		ipoe_nl_del_interface(serv->ifindex);
 
 	if (serv->vlan_mon) {
-		vlan_mon_serv_down(serv->parent_ifindex, serv->vid, ETH_P_IP);
+		vlan_mon_serv_down(serv->ifindex, serv->vid, ETH_P_IP);
 //		log_info2("ipoe: remove vlan %s\n", serv->ifname);
 //		iplink_vlan_del(serv->ifindex);
 //		vlan_mon_add_vid(serv->parent_ifindex, ETH_P_IP, serv->vid);
@@ -3157,7 +3157,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	}
 	pthread_mutex_unlock(&serv_lock);
 
-	if (vid && !vlan_mon && vlan_mon_check_busy(parent_ifindex, vid))
+	if (vid && !vlan_mon && vlan_mon_check_busy(parent_ifindex, vid, ETH_P_IP))
 		return;
 
 	if (!opt_auto) {

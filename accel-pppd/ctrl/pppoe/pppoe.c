@@ -1449,7 +1449,7 @@ static void __pppoe_server_start(const char *ifname, const char *opt, void *cli,
 	}
 	pthread_rwlock_unlock(&serv_lock);
 
-	if (vid && !vlan_mon && vlan_mon_check_busy(parent_ifindex, vid))
+	if (vid && !vlan_mon && vlan_mon_check_busy(parent_ifindex, vid, ETH_P_PPP_DISC))
 		return;
 
 	serv = _malloc(sizeof(*serv));

@@ -51,6 +51,7 @@ static vlan_mon_notify cb[2];
 
 static const char *conf_vlan_name;
 static int conf_vlan_timeout;
+static int conf_remove_when_no_subscribers = 0;
 
 static void vlan_mon_init(void);
 
@@ -274,7 +275,7 @@ void vlan_mon_clean()
 	rtnl_close(&rth);
 }
 
-int __export vlan_mon_check_busy(int ifindex, uint16_t vid)
+int __export vlan_mon_check_busy(int ifindex, uint16_t vid, uint16_t proto)
 {
 	struct rtnl_handle rth;
 	struct nlmsghdr *nlh;
@@ -303,6 +304,7 @@ int __export vlan_mon_check_busy(int ifindex, uint16_t vid)
 
 	addattr32(nlh, 1024, VLAN_MON_ATTR_IFINDEX, ifindex);
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_VID, &vid, 2);
+	addattr_l(nlh, 1024, VLAN_MON_ATTR_PROTO, &proto, 2);
 
 	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 1) < 0 ) {
 		if (errno == EBUSY)
@@ -349,10 +351,21 @@ int __export vlan_mon_serv_down(int ifindex, uint16_t vid, uint16_t proto)
 	if (vl_dev) {
 		pthread_mutex_lock(&vl_dev->lock);
 		vl_dev->serv_count -= 1;
-		pthread_mutex_unlock(&vl_dev->lock);
 //		iplink_vlan_del(vlan_ifindex);
 //		vlan_mon_del_vid(ifindex, proto, vid);
 		vlan_mon_add_vid(vl_dev->parent_ifindex, proto, vl_dev->vid);
+
+		if (!vl_dev->serv_count) {
+			if (conf_remove_when_no_subscribers) {
+				log_info2("vlan_mon: remove vlan interface ifindex=%i vid=%i\n", ifindex, vid);
+				iplink_vlan_del(ifindex);
+
+				log_debug("vlan_mon: remove vlan_mon_device ifindex=%i vid=%i\n", ifindex, vid);
+				list_del(&vl_dev->entry);
+				_free(vl_dev);
+			}
+		}
+		pthread_mutex_unlock(&vl_dev->lock);
 	} else {
 		log_warn("vlan_mon: vlan_mon_device ifindex=%i not found!\n", ifindex);
 		pthread_rwlock_unlock(&vlan_mon_devices_lock);
@@ -442,6 +455,8 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 		return;
 	}
 
+	vlan_ifindex = ifr.ifr_ifindex;
+
 	//Send params to pppoe or ipoe callback
 	//ifname of new interface
 	//ifindex of new interface
@@ -470,6 +485,10 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 				vl_dev->ifindex = vlan_ifindex;
 				vl_dev->serv_count = 1;
 				vl_dev->vid = vid;
+				pthread_mutex_init(&vl_dev->lock, NULL);
+
+				log_debug("vlan_mon: creating vlan_mon_device parent_ifindex=%i ifindex=%i serv_count=%i vid=%i\n", 
+						vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->serv_count, vl_dev->vid);
 
 				list_add_tail(&vl_dev->entry, &vlan_mon_devices);
 			}
@@ -900,6 +919,13 @@ static void load_config(void)
 		conf_vlan_timeout = 0;
 	log_debug("vlan_mon: vlan-timeout=(%i)\n", conf_vlan_timeout);
 
+	opt = conf_get_opt("vlan_mon", "remove-when-no-subscribers");
+	if (opt)
+		conf_remove_when_no_subscribers = atoi(opt);
+	else
+		conf_remove_when_no_subscribers = 0;
+	log_debug("vlan_mon: remove-when-no-subscribers=(%i)", conf_remove_when_no_subscribers);
+
 	load_interfaces(s);
 }
 
@@ -910,12 +936,14 @@ static int show_vlan_exec(const char *cmd, char * const *fields, int fields_cnt,
 //	cli_sendv(client,"  active: %u\r\n", stat_active);
 //	cli_sendv(client,"  delayed: %u\r\n", stat_delayed_offer);
 
-	cli_sendv(client, "vlan_id\tserv_count\r\n");
+	cli_sendv(client, "parent\tifindex\tvlan_id\tserv_count\r\n");
 
 	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
 	struct vlan_mon_device* vl_dev = NULL;
 	list_for_each_entry(vl_dev, &vlan_mon_devices, entry) {
-		cli_sendv(client, "%u\t%u\r\n", vl_dev->vid, vl_dev->serv_count);
+		pthread_mutex_lock(&vl_dev->lock);
+		cli_sendv(client, "%u\t%u\t%u\t%u\r\n", vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->vid, vl_dev->serv_count);
+		pthread_mutex_unlock(&vl_dev->lock);
 	}
 	pthread_rwlock_unlock(&vlan_mon_devices_lock);
 

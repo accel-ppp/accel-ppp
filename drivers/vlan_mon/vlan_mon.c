@@ -55,7 +55,7 @@ struct vlan_dev {
 
 	spinlock_t lock;
 	unsigned long vid[2][4096/8/sizeof(long)];
-	unsigned long busy[4096/8/sizeof(long)];
+	unsigned long busy[2][4096/8/sizeof(long)];
 	int proto;
 };
 
@@ -138,11 +138,11 @@ static int vlan_pt_recv(struct sk_buff *skb, struct net_device *dev, struct pack
 
 	printk(KERN_WARNING "vlan_mon: Vlan id (%i)\n", vid);
 
-	if (likely(d->busy[vid / (8*sizeof(long))] & (1lu << (vid % (8*sizeof(long))))))
+	if (likely(d->busy[proto][vid / (8*sizeof(long))] & (1lu << (vid % (8*sizeof(long))))))
 		vid = -1;
 	else if (likely(!(d->vid[proto][vid / (8*sizeof(long))] & (1lu << (vid % (8*sizeof(long))))))) {
 		spin_lock(&d->lock);
-		d->busy[vid / (8*sizeof(long))] |= 1lu << (vid % (8*sizeof(long)));
+		d->busy[proto][vid / (8*sizeof(long))] |= 1lu << (vid % (8*sizeof(long)));
 		d->vid[proto][vid / (8*sizeof(long))] |= 1lu << (vid % (8*sizeof(long)));
 		spin_unlock(&d->lock);
 	} else
@@ -449,7 +449,7 @@ static int vlan_mon_nl_cmd_add_vlan_mon_vid(struct sk_buff *skb, struct genl_inf
 
 	spin_lock_bh(&d->lock);
 	d->vid[proto][vid / (8*sizeof(long))] &= ~(1lu << (vid % (8*sizeof(long))));
-	d->busy[vid / (8*sizeof(long))] &= ~(1lu << (vid % (8*sizeof(long))));
+	d->busy[proto][vid / (8*sizeof(long))] &= ~(1lu << (vid % (8*sizeof(long))));
 	spin_unlock_bh(&d->lock);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
 	if (dev->features & NETIF_F_HW_VLAN_FILTER) {
@@ -513,7 +513,7 @@ static int vlan_mon_nl_cmd_del_vlan_mon_vid(struct sk_buff *skb, struct genl_inf
 
 	spin_lock_bh(&d->lock);
 	d->vid[proto][vid / (8*sizeof(long))] |= 1lu << (vid % (8*sizeof(long)));
-	d->busy[vid / (8*sizeof(long))] &= ~(1lu << (vid % (8*sizeof(long))));
+	d->busy[proto][vid / (8*sizeof(long))] &= ~(1lu << (vid % (8*sizeof(long))));
 	spin_unlock_bh(&d->lock);
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
@@ -533,27 +533,29 @@ static int vlan_mon_nl_cmd_del_vlan_mon_vid(struct sk_buff *skb, struct genl_inf
 
 static void vlan_dev_clean(struct vlan_dev *d, struct net_device *dev, struct list_head *list)
 {
-	int i;
+	int i, proto;
 	struct net_device *vd;
 
 	printk(KERN_WARNING "vlan_dev_clean\n");
 
-	for (i = 1; i < 4096; i++) {
-		if (d->busy[i / (8*sizeof(long))] & (1lu << (i % (8*sizeof(long))))) {
+	for (proto = 0; proto <= 1; ++proto) {
+		for (i = 1; i < 4096; i++) {
+			if (d->busy[proto][i / (8*sizeof(long))] & (1lu << (i % (8*sizeof(long))))) {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
-			vd = __vlan_find_dev_deep(dev, i);
+				vd = __vlan_find_dev_deep(dev, i);
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(3,16,0) && RHEL_MAJOR < 7
-			vd = __vlan_find_dev_deep(dev, htons(ETH_P_8021Q), i);
-			if (!vd)
-				vd = __vlan_find_dev_deep(dev, htons(ETH_P_8021AD), i);
+				vd = __vlan_find_dev_deep(dev, htons(ETH_P_8021Q), i);
+				if (!vd)
+					vd = __vlan_find_dev_deep(dev, htons(ETH_P_8021AD), i);
 #else
-			vd = __vlan_find_dev_deep_rcu(dev, htons(ETH_P_8021Q), i);
-			if (!vd)
-				vd = __vlan_find_dev_deep_rcu(dev, htons(ETH_P_8021AD), i);
+				vd = __vlan_find_dev_deep_rcu(dev, htons(ETH_P_8021Q), i);
+				if (!vd)
+					vd = __vlan_find_dev_deep_rcu(dev, htons(ETH_P_8021AD), i);
 #endif
 
-			if (vd)
-				vd->rtnl_link_ops->dellink(vd, list);
+				if (vd)
+					vd->rtnl_link_ops->dellink(vd, list);
+			}
 		}
 	}
 }
@@ -647,7 +649,7 @@ static int vlan_mon_nl_cmd_del_vlan_mon(struct sk_buff *skb, struct genl_info *i
 
 static int vlan_mon_nl_cmd_check_busy(struct sk_buff *skb, struct genl_info *info)
 {
-	int ifindex, vid;
+	int ifindex, vid, proto;
 	struct net_device *dev;
 	int ret = 0;
 
@@ -656,6 +658,11 @@ static int vlan_mon_nl_cmd_check_busy(struct sk_buff *skb, struct genl_info *inf
 
 	ifindex = nla_get_u32(info->attrs[VLAN_MON_ATTR_IFINDEX]);
 	vid = nla_get_u16(info->attrs[VLAN_MON_ATTR_VID]);
+	proto = nla_get_u16(info->attrs[VLAN_MON_ATTR_PROTO]);
+
+	proto = vlan_mon_proto(proto);
+	if (proto < 0)
+		return proto;
 
 	down(&vlan_mon_lock);
 
@@ -664,7 +671,7 @@ static int vlan_mon_nl_cmd_check_busy(struct sk_buff *skb, struct genl_info *inf
 	if (dev) {
 		struct vlan_dev *d = dev->ml_priv;
 		if (d) {
-			if (d->busy[vid / (8*sizeof(long))] & (1lu << (vid % (8*sizeof(long)))))
+			if (d->busy[proto][vid / (8*sizeof(long))] & (1lu << (vid % (8*sizeof(long)))))
 				ret = -EBUSY;
 		}
 	}
