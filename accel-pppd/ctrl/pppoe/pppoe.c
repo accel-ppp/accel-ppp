@@ -1601,9 +1601,10 @@ void pppoe_server_free(struct pppoe_serv_t *serv)
 		triton_timer_del(&serv->timer);
 
 	if (serv->vlan_mon) {
-		log_info2("pppoe: remove vlan %s\n", serv->ifname);
-		iplink_vlan_del(serv->ifindex);
-		vlan_mon_add_vid(serv->parent_ifindex, ETH_P_PPP_DISC, serv->vid);
+		vlan_mon_serv_down(serv->ifindex, serv->vid, ETH_P_PPP_DISC);
+//		log_info2("pppoe: remove vlan %s\n", serv->ifname);
+//		iplink_vlan_del(serv->ifindex);
+//		vlan_mon_add_vid(serv->parent_ifindex, ETH_P_PPP_DISC, serv->vid);
 	}
 
 	triton_context_unregister(&serv->ctx);
@@ -1657,7 +1658,7 @@ static void set_vlan_timeout(struct pppoe_serv_t *serv)
 	}
 }
 
-void pppoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char* vlan_ifname, int vlan_ifname_len)
+int pppoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char* vlan_ifname, int vlan_ifname_len)
 {
 	struct conf_sect_t *sect = conf_get_section("pppoe");
 	struct conf_option_t *opt;
@@ -1672,7 +1673,7 @@ void pppoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, cha
 //	char ifname[IFNAMSIZ];
 
 	if (!sect)
-		return;
+		return -1;
 
 //	memset(&ifr, 0, sizeof(ifr));
 //	ifr.ifr_ifindex = ifindex;
@@ -1705,7 +1706,7 @@ void pppoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, cha
 					set_vlan_timeout(serv);
 				}
 				pthread_rwlock_unlock(&serv_lock);
-				return;
+				return 0;
 			}
 		}
 		pthread_rwlock_unlock(&serv_lock);
@@ -1780,12 +1781,14 @@ void pppoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, cha
 				continue;
 
 			__pppoe_server_start(vlan_ifname, opt->val, NULL, ifindex, vid, 1);
-			return;
+			return 0;
 		} else if (ptr - opt->val == vlan_ifname_len && memcmp(opt->val, vlan_ifname, vlan_ifname_len) == 0) {
 			__pppoe_server_start(vlan_ifname, opt->val, NULL, ifindex, vid, 1);
-			return;
+			return 0;
 		}
 	}
+
+	return -1;
 
 //	log_warn("pppoe: vlan %s not started\n", ifname);
 //	iplink_vlan_del(ifr.ifr_ifindex);

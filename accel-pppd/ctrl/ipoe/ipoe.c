@@ -2760,7 +2760,7 @@ static void set_vlan_timeout(struct ipoe_serv *serv)
 		triton_timer_add(&serv->ctx, &serv->timer, 0);
 }
 
-void ipoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char* vlan_ifname, int vlan_ifname_len)
+int ipoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char* vlan_ifname, int vlan_ifname_len)
 {
 	struct conf_sect_t *sect = conf_get_section("ipoe");
 	struct conf_option_t *opt;
@@ -2775,13 +2775,13 @@ void ipoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char
 	char ifname[IFNAMSIZ];
 
 	if (!sect)
-		return;
+		return -1;
 
 	memset(&ifr, 0, sizeof(ifr));
 	ifr.ifr_ifindex = ifindex;
 	if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
 		log_error("ipoe: vlan-mon: failed to get interface name, ifindex=%i\n", ifindex);
-		return;
+		return -1;
 	}
 
 	svid = iplink_vlan_get_vid(ifindex, NULL);
@@ -2794,7 +2794,7 @@ void ipoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char
 	r = make_vlan_name(conf_vlan_name, ifr.ifr_name, svid, vid, ifname);
 	if (r) {
 		log_error("ipoe: vlan-mon: %s.%i: interface name is too long\n", ifr.ifr_name, vid);
-		return;
+		return -1;
 	}
 
 	if (vlan_ifindex) {
@@ -2808,7 +2808,7 @@ void ipoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char
 					set_vlan_timeout(serv);
 				}
 				pthread_mutex_unlock(&serv_lock);
-				return;
+				return 0;
 			}
 		}
 		pthread_mutex_unlock(&serv_lock);
@@ -2883,10 +2883,10 @@ void ipoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char
 				continue;
 
 			add_interface(ifname, ifr.ifr_ifindex, opt->val, ifindex, vid, 1);
-			return;
+			return 0;
 		} else if (ptr - opt->val == len && memcmp(opt->val, ifname, len) == 0) {
 			add_interface(ifname, ifr.ifr_ifindex, opt->val, ifindex, vid, 1);
-			return;
+			return 0;
 		}
 	}
 
