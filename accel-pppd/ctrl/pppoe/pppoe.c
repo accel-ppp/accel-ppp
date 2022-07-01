@@ -1919,8 +1919,8 @@ int pppoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char
 
 static void load_vlan_mon(struct conf_sect_t *sect)
 {
-	struct conf_option_t *opt;
-	long mask[4096/8/sizeof(long)];
+//	struct conf_option_t *opt;
+//	long mask[4096/8/sizeof(long)];
 	static int registered = 0;
 
 	if (!registered) {

@@ -756,6 +756,7 @@ static int __load_vlan_mon_re(int index, int flags, const char *name, int iflink
 
 	memcpy(mask1, arg->arg1, sizeof(mask1));
 	vlan_mon_add(index, ETH_P_PPP_DISC,  mask1, sizeof(mask1));
+	vlan_mon_add(index, ETH_P_IP,  mask1, sizeof(mask1));
 
 	return 0;
 }
@@ -831,6 +832,8 @@ static void add_vlan_mon(const char *opt, long *mask)
 	log_debug("vlan_mon: ifindex=(%i)\n", ifindex);
 	int res = vlan_mon_add(ifindex, ETH_P_PPP_DISC, mask1, sizeof(mask1));
 	log_debug("vlan_mon: vlan_mon_add res=(%i)\n", res);
+	res = vlan_mon_add(ifindex, ETH_P_IP, mask1, sizeof(mask1));
+	log_debug("vlan_mon: vlan_mon_add res=(%i)\n", res);
 }
 
 static void load_interfaces(struct conf_sect_t *sect)
@@ -841,6 +844,7 @@ static void load_interfaces(struct conf_sect_t *sect)
 	log_debug("vlan_mon: 1\n");
 
 	vlan_mon_del(-1, ETH_P_PPP_DISC);
+	vlan_mon_del(-1, ETH_P_IP);
 
 	log_debug("vlan_mon: 5\n");
 
