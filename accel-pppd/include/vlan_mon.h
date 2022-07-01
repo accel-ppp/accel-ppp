@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-typedef void (*vlan_mon_notify)(int ifindex, int vid, int vlan_ifindex);
+typedef void (*vlan_mon_notify)(int ifindex, int svid, int vid, int vlan_ifindex, char* vlan_ifname, int vlan_ifname_len);
 
 void vlan_mon_register_proto(uint16_t proto, vlan_mon_notify cb);
 

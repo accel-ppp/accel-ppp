@@ -310,6 +310,8 @@ int __export vlan_mon_check_busy(int ifindex, uint16_t vid)
 static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 {
 	struct ifreq ifr;
+	int svid, r, len;
+	char ifname[IFNAMSIZ];
 
 	memset(&ifr, 0, sizeof(ifr));
 	ifr.ifr_ifindex = ifindex;
@@ -385,7 +387,7 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 	//vid of new interface
 	//Return 0 if success, not 0 else
 	if (cb[proto])
-		cb[proto](ifindex, vid, vlan_ifindex);
+		cb[proto](ifindex, svid, vid, vlan_ifindex, ifname, len);
 }
 
 static void vlan_mon_handler(const struct sockaddr_nl *addr, struct nlmsghdr *h)
@@ -460,6 +462,9 @@ static int vlan_mon_mc_read(struct triton_md_handler_t *h)
 	nladdr.nl_groups = 0;
 
 	iov.iov_base = buf;
+
+	log_debug("vlan_mon: starting vlan_mon_mc_read\n");
+
 	while (1) {
 		iov.iov_len = sizeof(buf);
 		status = recvmsg(h->fd, &msg, 0);
@@ -707,7 +712,9 @@ static void add_vlan_mon(const char *opt, long *mask)
 	}
 
 	memcpy(mask1, mask, sizeof(mask1));
-	vlan_mon_add(ifindex, ETH_P_PPP_DISC, mask1, sizeof(mask1));
+	log_debug("vlan_mon: ifindex=(%i)\n", ifindex);
+	int res = vlan_mon_add(ifindex, ETH_P_PPP_DISC, mask1, sizeof(mask1));
+	log_debug("vlan_mon: vlan_mon_add res=(%i)\n", res);
 }
 
 static void load_interfaces(struct conf_sect_t *sect)
@@ -715,7 +722,11 @@ static void load_interfaces(struct conf_sect_t *sect)
 	struct conf_option_t *opt;
 	long mask[4096/8/sizeof(long)];
 
+	log_debug("vlan_mon: 1\n");
+
 	vlan_mon_del(-1, ETH_P_PPP_DISC);
+
+	log_debug("vlan_mon: 5\n");
 
 	list_for_each_entry(opt, &sect->items, entry) {
 		if (strcmp(opt->name, "vlan-mon"))
@@ -724,13 +735,20 @@ static void load_interfaces(struct conf_sect_t *sect)
 		if (!opt->val)
 			continue;
 
+		log_debug("vlan_mon: 10\n");
+
 		if (parse_vlan_mon(opt->val, mask))
 			continue;
 
-		if (strlen(opt->val) > 3 && !memcmp(opt->val, "re:", 3))
+		log_debug("vlan_mon: vlan-mon=(%s)\n", opt->val);
+
+		if (strlen(opt->val) > 3 && !memcmp(opt->val, "re:", 3)) {
+			log_debug("vlan_mon: 14\n");
 			load_vlan_mon_re(opt->val, mask, sizeof(mask));
-		else
+		} else {
+			log_debug("vlan_mon: 15\n");
 			add_vlan_mon(opt->val, mask);
+		}
 	}
 }
 

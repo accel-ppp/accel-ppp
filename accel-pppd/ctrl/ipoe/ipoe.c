@@ -2760,13 +2760,14 @@ static void set_vlan_timeout(struct ipoe_serv *serv)
 		triton_timer_add(&serv->ctx, &serv->timer, 0);
 }
 
-void ipoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
+void ipoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char* vlan_ifname, int vlan_ifname_len)
 {
 	struct conf_sect_t *sect = conf_get_section("ipoe");
 	struct conf_option_t *opt;
 	struct ifreq ifr;
 	char *ptr;
-	int len, r, svid;
+	int len, r;
+//, svid;
 	pcre *re = NULL;
 	const char *pcre_err;
 	char *pattern;
