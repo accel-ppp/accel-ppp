@@ -17,7 +17,7 @@ struct vlan_mon_device {
 extern struct list_head vlan_mon_devices;
 extern pthread_rwlock_t vlan_mon_devices_lock;
 
-extern int conf_vlan_timeout;
+__export extern int conf_vlan_timeout;
 
 typedef int (*vlan_mon_notify)(int ifindex, int svid, int vid, int vlan_ifindex, char* vlan_ifname, int vlan_ifname_len);
 
