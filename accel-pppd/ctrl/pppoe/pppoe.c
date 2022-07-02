@@ -105,8 +105,6 @@ static const char *conf_ifname;
 enum {CSID_MAC, CSID_IFNAME, CSID_IFNAME_MAC};
 static int conf_called_sid;
 static int conf_cookie_timeout;
-static const char *conf_vlan_name;
-static int conf_vlan_timeout;
 
 static mempool_t conn_pool;
 static mempool_t pado_pool;
@@ -1855,18 +1853,6 @@ static void load_config(void)
 		else
 			log_error("pppoe: unknown called-sid type\n");
 	}
-
-	opt = conf_get_opt("pppoe", "vlan-name");
-	if (opt)
-		conf_vlan_name = opt;
-	else
-		conf_vlan_name = "%I.%N";
-
-	opt = conf_get_opt("pppoe", "vlan-timeout");
-	if (opt && atoi(opt) > 0)
-		conf_vlan_timeout = atoi(opt);
-	else
-		conf_vlan_timeout = 60;
 
 	load_vlan_mon(s);
 }

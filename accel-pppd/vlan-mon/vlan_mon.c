@@ -50,8 +50,9 @@ static int vlan_mon_genl_id;
 static vlan_mon_notify cb[2];
 
 static const char *conf_vlan_name;
-static int conf_vlan_timeout;
 static int conf_remove_when_no_subscribers = 0;
+
+int conf_vlan_timeout;
 
 static void vlan_mon_init(void);
 static void load_interfaces(struct conf_sect_t *sect);
@@ -884,7 +885,7 @@ static void load_config(void)
 	//If there is an error in the value, then conf_vlan_timeout=60
 	//If no value is specified, then conf_vlan_timeout=60
 	opt = conf_get_opt("vlan_mon", "vlan-timeout");
-	if (opt && atoi(opt))
+	if (opt && atoi(opt) > 0)
 		conf_vlan_timeout = atoi(opt);
 	else
 		conf_vlan_timeout = 60;

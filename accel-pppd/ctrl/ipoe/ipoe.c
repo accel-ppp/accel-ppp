@@ -150,7 +150,6 @@ static const char *conf_attr_dhcp_opt82_circuit_id;
 static int conf_l4_redirect_table;
 static int conf_l4_redirect_on_reject;
 static const char *conf_l4_redirect_ipset;
-static int conf_vlan_timeout;
 static int conf_max_request = 3;
 static int conf_session_timeout;
 static int conf_idle_timeout;
@@ -175,7 +174,6 @@ static int conf_verbose;
 static const char *conf_agent_remote_id;
 static int conf_proto;
 static LIST_HEAD(conf_offer_delay);
-static const char *conf_vlan_name;
 static int conf_ip_unnumbered;
 static int conf_check_mac_change;
 static int conf_soft_terminate;
@@ -3801,12 +3799,6 @@ static void load_config(void)
 	else
 		conf_proto = 3;
 
-	opt = conf_get_opt("ipoe", "vlan-timeout");
-	if (opt && atoi(opt) > 0)
-		conf_vlan_timeout = atoi(opt);
-	else
-		conf_vlan_timeout = 60;
-
 	opt = conf_get_opt("ipoe", "offer-timeout");
 	if (opt && atoi(opt) > 0)
 		conf_offer_timeout = atoi(opt);
@@ -3817,10 +3809,6 @@ static void load_config(void)
 	conf_ipv6_pool = conf_get_opt("ipoe", "ipv6-pool");
 	conf_dpv6_pool = conf_get_opt("ipoe", "ipv6-pool-delegate");
 	conf_l4_redirect_pool = conf_get_opt("ipoe", "l4-redirect-ip-pool");
-
-	conf_vlan_name = conf_get_opt("ipoe", "vlan-name");
-	if (!conf_vlan_name)
-		conf_vlan_name = "%I.%N";
 
 	opt = conf_get_opt("ipoe", "ip-unnumbered");
 	if (opt)
