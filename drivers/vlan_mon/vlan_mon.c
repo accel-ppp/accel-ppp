@@ -103,16 +103,8 @@ static int vlan_pt_recv(struct sk_buff *skb, struct net_device *dev, struct pack
 	if (!dev->ml_priv)
 		goto out;
 
-	printk(KERN_WARNING "------------------------------------------");
-	printk(KERN_WARNING "vlan_mon: dev->ifindex=(%i)\n", dev->ifindex);
-	printk(KERN_WARNING "vlan_mon: skb->len=(%i)\n", skb->len);
-	printk(KERN_WARNING "vlan_mon: 1\n");
-
 	if (!vlan_tx_tag_present(skb))
 		goto out;
-
-	printk(KERN_WARNING "vlan_mon: 2\n");
-
 
 	if (skb->protocol == htons(ETH_P_IP) || skb->protocol == htons(ETH_P_ARP))
 		proto = VLAN_MON_PROTO_IP;
@@ -127,16 +119,12 @@ static int vlan_pt_recv(struct sk_buff *skb, struct net_device *dev, struct pack
 
 	d = rcu_dereference(dev->ml_priv);
 
-	printk(KERN_WARNING "vlan_mon: d->ifindex=(%i) dev->ifindex=(%i)\n", d->ifindex, dev->ifindex);
-	printk(KERN_WARNING "------------------------------------------");
 	if (!d || d->magic != VLAN_MON_MAGIC || d->ifindex != dev->ifindex || (d->proto & (1 << proto)) == 0) {
 		rcu_read_unlock();
 		goto out;
 	}
 
 	vid = skb->vlan_tci & VLAN_VID_MASK;
-
-	printk(KERN_WARNING "vlan_mon: Vlan id (%i)\n", vid);
 
 	if (likely(d->busy[proto][vid / (8*sizeof(long))] & (1lu << (vid % (8*sizeof(long))))))
 		vid = -1;
@@ -148,8 +136,6 @@ static int vlan_pt_recv(struct sk_buff *skb, struct net_device *dev, struct pack
 	} else
 		vid = -1;
 
-	printk(KERN_WARNING "vlan_mon: Vlan id (%i)\n", vid);
-
 	if (vid > 0) {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
 		struct net_device *vd = __vlan_find_dev_deep(dev, vid);
@@ -160,8 +146,6 @@ static int vlan_pt_recv(struct sk_buff *skb, struct net_device *dev, struct pack
 #endif
 		if (vd)
 			vlan_ifindex = vd->ifindex;
-
-		printk(KERN_WARNING "vlan_mon: Vlan ifindex (%i)\n", vlan_ifindex);
 	}
 
 	rcu_read_unlock();
@@ -199,7 +183,6 @@ static void vlan_do_notify(struct work_struct *w)
 	struct nlattr *ns;
 	int id = 1;
 
-	printk(KERN_WARNING "vlan_do_notify\n");
 	//pr_info("vlan_do_notify\n");
 
 	while (1) {
@@ -315,25 +298,17 @@ static int vlan_mon_nl_cmd_add_vlan_mon(struct sk_buff *skb, struct genl_info *i
 	struct net_device *dev;
 	int ifindex, i, proto;
 
-	printk(KERN_WARNING "vlan_mon_nl_cmd_add_vlan_mon 1 \n");
-
 	if (!info->attrs[VLAN_MON_ATTR_IFINDEX])
 		return -EINVAL;
 
-	printk(KERN_WARNING "vlan_mon_nl_cmd_add_vlan_mon 2 \n");
-
 	if (!info->attrs[VLAN_MON_ATTR_PROTO])
 		return -EINVAL;
-
-	printk(KERN_WARNING "vlan_mon_nl_cmd_add_vlan_mon 3 \n");
 
 	proto = nla_get_u16(info->attrs[VLAN_MON_ATTR_PROTO]);
 
 	proto = vlan_mon_proto(proto);
 	if (proto < 0)
 		return proto;
-
-	printk(KERN_WARNING "vlan_mon_nl_cmd_add_vlan_mon 4 proto=%i\n", proto);
 
 	ifindex = nla_get_u32(info->attrs[VLAN_MON_ATTR_IFINDEX]);
 
@@ -342,11 +317,8 @@ static int vlan_mon_nl_cmd_add_vlan_mon(struct sk_buff *skb, struct genl_info *i
 	if (!dev)
 		return -ENODEV;
 
-	printk(KERN_WARNING "vlan_mon_nl_cmd_add_vlan_mon 5 ifindex=%i\n", ifindex);
-
 	down(&vlan_mon_lock);
 	if (dev->ml_priv) {
-		printk(KERN_WARNING "vlan_mon_nl_cmd_add_vlan_mon 6 dev has ml_priv\n");
 		d = (struct vlan_dev *)dev->ml_priv;
 		if (d->magic != VLAN_MON_MAGIC || (d->proto & (1 << proto))) {
 			up(&vlan_mon_lock);
@@ -354,7 +326,6 @@ static int vlan_mon_nl_cmd_add_vlan_mon(struct sk_buff *skb, struct genl_info *i
 			return -EBUSY;
 		}
 	} else {
-		printk(KERN_WARNING "vlan_mon_nl_cmd_add_vlan_mon 6 dev has not ml_priv\n");
 		d = kzalloc(sizeof(*d), GFP_KERNEL);
 		if (!d) {
 			up(&vlan_mon_lock);
@@ -372,18 +343,10 @@ static int vlan_mon_nl_cmd_add_vlan_mon(struct sk_buff *skb, struct genl_info *i
 		list_add_tail(&d->entry, &vlan_devices);
 	}
 
-	printk(KERN_WARNING "vlan_mon_nl_cmd_add_vlan_mon 10 \n");
-
 	d->proto |= 1 << proto;
 
 	if (info->attrs[VLAN_MON_ATTR_VLAN_MASK]) {
 		memcpy(d->vid[proto], nla_data(info->attrs[VLAN_MON_ATTR_VLAN_MASK]), min((int)nla_len(info->attrs[VLAN_MON_ATTR_VLAN_MASK]), (int)sizeof(d->vid)));
-
-		for (i = 1; i < 4096; i++) {
-			if (!(d->vid[proto][i / (8*sizeof(long))] & (1lu << (i % (8*sizeof(long)))))) {
-				printk(KERN_WARNING "vlan_mon: add vlan id=%u\n", i);
-			}
-		}
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
 		if (dev->features & NETIF_F_HW_VLAN_FILTER) {
@@ -405,8 +368,6 @@ static int vlan_mon_nl_cmd_add_vlan_mon(struct sk_buff *skb, struct genl_info *i
 		}
 #endif
 	}
-
-	printk(KERN_WARNING "vlan_mon_nl_cmd_add_vlan_mon 15 \n");
 
 	up(&vlan_mon_lock);
 
@@ -478,8 +439,6 @@ static int vlan_mon_nl_cmd_del_vlan_mon_vid(struct sk_buff *skb, struct genl_inf
 	int ifindex, vid, proto;
 	struct net_device *dev;
 
-	printk(KERN_WARNING "vlan_mon_nl_cmd_del_vlan_mon_vid\n");
-
 	if (!info->attrs[VLAN_MON_ATTR_IFINDEX] || !info->attrs[VLAN_MON_ATTR_VID] || !info->attrs[VLAN_MON_ATTR_PROTO])
 		return -EINVAL;
 
@@ -492,8 +451,6 @@ static int vlan_mon_nl_cmd_del_vlan_mon_vid(struct sk_buff *skb, struct genl_inf
 		return proto;
 
 	down(&vlan_mon_lock);
-
-	printk(KERN_WARNING "vlan_mon_nl_cmd_del_vlan_mon_vid ifindex=%i vid=%u proto=%i\n", ifindex, vid, proto);
 
 	rtnl_lock();
 	dev = __dev_get_by_index(&init_net, ifindex);
@@ -536,8 +493,6 @@ static void vlan_dev_clean(struct vlan_dev *d, struct net_device *dev, struct li
 	int i, proto;
 	struct net_device *vd;
 
-	printk(KERN_WARNING "vlan_dev_clean\n");
-
 	for (proto = 0; proto <= 1; ++proto) {
 		for (i = 1; i < 4096; i++) {
 			if (d->busy[proto][i / (8*sizeof(long))] & (1lu << (i % (8*sizeof(long))))) {
@@ -570,12 +525,8 @@ static int vlan_mon_nl_cmd_del_vlan_mon(struct sk_buff *skb, struct genl_info *i
 	struct net_device *dev;
 	LIST_HEAD(list_kill);
 
-	printk(KERN_WARNING "vlan_mon_nl_cmd_del_vlan_mon\n");
-
 	if (info->attrs[VLAN_MON_ATTR_PROTO]) {
 		proto = nla_get_u16(info->attrs[VLAN_MON_ATTR_PROTO]);
-
-		printk(KERN_WARNING "vlan_mon_nl_cmd_del_vlan_mon_vid proto=%i\n", proto);
 
 		proto = vlan_mon_proto(proto);
 		if (proto < 0)
@@ -586,15 +537,11 @@ static int vlan_mon_nl_cmd_del_vlan_mon(struct sk_buff *skb, struct genl_info *i
 
 	if (info->attrs[VLAN_MON_ATTR_IFINDEX]) {
 		ifindex = nla_get_u32(info->attrs[VLAN_MON_ATTR_IFINDEX]);
-		printk(KERN_WARNING "vlan_mon_nl_cmd_del_vlan_mon_vid ifindex=%i\n", ifindex);
 	} else {
 		ifindex = -1;
-		printk(KERN_WARNING "vlan_mon_nl_cmd_del_vlan_mon_vid (ifindex not specified) ifindex=%i\n", ifindex);
 	}
 
 	down(&vlan_mon_lock);
-
-	printk(KERN_WARNING "vlan_mon_nl_cmd_del_vlan_mon_vid ifindex=%i proto=%i\n", ifindex, proto);
 
 	rtnl_lock();
 	rcu_read_lock();
