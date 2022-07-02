@@ -378,7 +378,7 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 	memset(&ifr, 0, sizeof(ifr));
 	ifr.ifr_ifindex = ifindex;
 	if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
-		log_error("vlan_mon: vlan-mon: failed to get interface name, ifindex=%i\n", ifindex);
+		log_error("vlan_mon: failed to get interface name, ifindex=%i\n", ifindex);
 		return;
 	}
 
@@ -391,7 +391,7 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 #endif
 	r = make_vlan_name(conf_vlan_name, ifr.ifr_name, svid, vid, ifname);
 	if (r) {
-		log_error("vlan_mon: vlan-mon: %s.%i: interface name is too long\n", ifr.ifr_name, vid);
+		log_error("vlan_mon: %s.%i: interface name is too long\n", ifr.ifr_name, vid);
 		return;
 	}
 
@@ -400,14 +400,14 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 
 		ifr.ifr_ifindex = vlan_ifindex;
 		if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
-			log_error("vlan_mon: vlan-mon: failed to get interface name, ifindex=%i\n", ifr.ifr_ifindex);
+			log_error("vlan_mon: failed to get interface name, ifindex=%i\n", ifr.ifr_ifindex);
 			return;
 		}
 
 		if (strcmp(ifr.ifr_name, ifname)) {
 			strcpy(ifr.ifr_newname, ifname);
 			if (ioctl(sock_fd, SIOCSIFNAME, &ifr, sizeof(ifr))) {
-				log_error("vlan_mon: vlan-mon: failed to rename interface %s to %s\n", ifr.ifr_name, ifr.ifr_newname);
+				log_error("vlan_mon: failed to rename interface %s to %s\n", ifr.ifr_name, ifr.ifr_newname);
 				return;
 			}
 			strcpy(ifr.ifr_name, ifname);
@@ -426,7 +426,7 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 	memcpy(ifr.ifr_name, ifname, len + 1);
 
 	if (ioctl(sock_fd, SIOCGIFINDEX, &ifr, sizeof(ifr))) {
-		log_error("vlan_mon: vlan-mon: %s: failed to get interface index\n", ifr.ifr_name);
+		log_error("vlan_mon: %s: failed to get interface index\n", ifr.ifr_name);
 		return;
 	}
 
@@ -509,7 +509,9 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 		pthread_rwlock_wrlock(&vlan_mon_devices_lock);
 
 		struct vlan_mon_device* vl_dev = get_vlan_mon_device(vlan_ifindex);
-		//If callback is not registered then delete vlan and deregister proto
+		//If callback is not registered
+		//and vlan_mon_device not created by another proto,
+		//then delete vlan and deregister proto in vlan
 		if (!vl_dev) {
 			iplink_vlan_del(vlan_ifindex);
 			vlan_mon_del_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
@@ -558,7 +560,7 @@ static void vlan_mon_handler(const struct sockaddr_nl *addr, struct nlmsghdr *h)
 		else
 			vlan_ifindex = 0;
 
-		log_debug("vlan-mon: notify %i %i %04x %i\n", ifindex, vid, proto, vlan_ifindex);
+		log_debug("vlan_mon: notify %i %i %04x %i\n", ifindex, vid, proto, vlan_ifindex);
 
 		if (proto == ETH_P_PPP_DISC)
 			proto = 1;
@@ -592,8 +594,6 @@ static int vlan_mon_mc_read(struct triton_md_handler_t *h)
 	nladdr.nl_groups = 0;
 
 	iov.iov_base = buf;
-
-	log_debug("vlan_mon: starting vlan_mon_mc_read\n");
 
 	while (1) {
 		iov.iov_len = sizeof(buf);
@@ -739,15 +739,9 @@ int __export parse_vlan_mon(const char *opt, long *mask)
 	return 0;
 
 out_err:
-	log_error("vlan-mon=%s: failed to parse\n", opt);
+	log_error("vlan_mon: vlan-mon=%s: failed to parse\n", opt);
 	return -1;
 }
-
-
-
-
-
-
 
 static int __load_vlan_mon_re(int index, int flags, const char *name, int iflink, int vid, struct iplink_arg *arg)
 {
@@ -843,11 +837,8 @@ static void add_vlan_mon(const char *opt, long *mask)
 	}
 
 	memcpy(mask1, mask, sizeof(mask1));
-	log_debug("vlan_mon: ifindex=(%i)\n", ifindex);
-	int res = vlan_mon_add(ifindex, ETH_P_PPP_DISC, mask1, sizeof(mask1));
-	log_debug("vlan_mon: vlan_mon_add res=(%i)\n", res);
-	res = vlan_mon_add(ifindex, ETH_P_IP, mask1, sizeof(mask1));
-	log_debug("vlan_mon: vlan_mon_add res=(%i)\n", res);
+	vlan_mon_add(ifindex, ETH_P_PPP_DISC, mask1, sizeof(mask1));
+	vlan_mon_add(ifindex, ETH_P_IP, mask1, sizeof(mask1));
 }
 
 static void load_interfaces(struct conf_sect_t *sect)
@@ -855,12 +846,9 @@ static void load_interfaces(struct conf_sect_t *sect)
 	struct conf_option_t *opt;
 	long mask[4096/8/sizeof(long)];
 
-	log_debug("vlan_mon: 1\n");
-
+	//Clean all interfaces
 	vlan_mon_del(-1, ETH_P_PPP_DISC);
 	vlan_mon_del(-1, ETH_P_IP);
-
-	log_debug("vlan_mon: 5\n");
 
 	list_for_each_entry(opt, &sect->items, entry) {
 		if (strcmp(opt->name, "vlan-mon"))
@@ -869,18 +857,14 @@ static void load_interfaces(struct conf_sect_t *sect)
 		if (!opt->val)
 			continue;
 
-		log_debug("vlan_mon: 10\n");
-
 		if (parse_vlan_mon(opt->val, mask))
 			continue;
 
 		log_debug("vlan_mon: vlan-mon=(%s)\n", opt->val);
 
 		if (strlen(opt->val) > 3 && !memcmp(opt->val, "re:", 3)) {
-			log_debug("vlan_mon: 14\n");
 			load_vlan_mon_re(opt->val, mask, sizeof(mask));
 		} else {
-			log_debug("vlan_mon: 15\n");
 			add_vlan_mon(opt->val, mask);
 		}
 	}
@@ -905,13 +889,13 @@ static void load_config(void)
 	log_debug("vlan_mon: vlan-name=(%s)\n", conf_vlan_name);
 
 	//Loading vlan-timeout if specified
-	//If there is an error in the value, then conf_vlan_timeout=0
-	//If no value is specified, then conf_vlan_timeout=0
+	//If there is an error in the value, then conf_vlan_timeout=60
+	//If no value is specified, then conf_vlan_timeout=60
 	opt = conf_get_opt("vlan_mon", "vlan-timeout");
-	if (opt)
+	if (opt && atoi(opt))
 		conf_vlan_timeout = atoi(opt);
 	else
-		conf_vlan_timeout = 0;
+		conf_vlan_timeout = 60;
 	log_debug("vlan_mon: vlan-timeout=(%i)\n", conf_vlan_timeout);
 
 	opt = conf_get_opt("vlan_mon", "remove-when-no-subscribers");
@@ -926,11 +910,6 @@ static void load_config(void)
 
 static int show_vlan_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
 {
-//	cli_send(client, "ipoe:\r\n");
-//	cli_sendv(client,"  starting: %u\r\n", stat_starting);
-//	cli_sendv(client,"  active: %u\r\n", stat_active);
-//	cli_sendv(client,"  delayed: %u\r\n", stat_delayed_offer);
-
 	cli_sendv(client, "parent\tifindex\tvlan_id\tserv_count\r\n");
 
 	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
