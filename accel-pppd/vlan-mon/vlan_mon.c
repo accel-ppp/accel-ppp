@@ -316,15 +316,6 @@ int __export vlan_mon_check_busy(int ifindex, uint16_t vid, uint16_t proto)
 	return r;
 }
 
-
-
-
-
-
-
-
-
-
 //====================WARNING==========================
 //==============NOT THREAD SAFETY!=====================
 //=====================================================
@@ -351,8 +342,6 @@ int __export vlan_mon_serv_down(int ifindex, uint16_t vid, uint16_t proto)
 	if (vl_dev) {
 		pthread_mutex_lock(&vl_dev->lock);
 		vl_dev->serv_count -= 1;
-//		iplink_vlan_del(vlan_ifindex);
-//		vlan_mon_del_vid(ifindex, proto, vid);
 		vlan_mon_add_vid(vl_dev->parent_ifindex, proto, vl_dev->vid);
 
 		if (!vl_dev->serv_count) {
@@ -384,7 +373,7 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 	int svid, r, len;
 	char ifname[IFNAMSIZ];
 
-	log_debug("vlan_mon: vlan_mon_cb(proto=%i, ifindex=%i, vid=%i, vlan_ifindex=%i)\n", proto, ifindex, vid, vlan_ifindex);
+//	log_debug("vlan_mon: vlan_mon_cb(proto=%i, ifindex=%i, vid=%i, vlan_ifindex=%i)\n", proto, ifindex, vid, vlan_ifindex);
 
 	memset(&ifr, 0, sizeof(ifr));
 	ifr.ifr_ifindex = ifindex;
@@ -415,21 +404,6 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 			return;
 		}
 
-		if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr, sizeof(ifr))) {
-			log_error("vlan_mon: failed to get interface flags, ifindex=%i\n", ifr.ifr_ifindex);
-			return;
-		}
-
-		if (!(ifr.ifr_flags & IFF_UP)) {
-			log_debug("vlan_mon: interface ifindex=%i is DOWN. Enabling it...\n", vlan_ifindex);
-			ifr.ifr_flags |= IFF_UP;
-
-			if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr, sizeof(ifr))) {
-				log_error("vlan_mon: failed to set interface flags, ifindex=%i\n", ifr.ifr_ifindex);
-				return;
-			}
-		}
-
 		if (strcmp(ifr.ifr_name, ifname)) {
 			strcpy(ifr.ifr_newname, ifname);
 			if (ioctl(sock_fd, SIOCSIFNAME, &ifr, sizeof(ifr))) {
@@ -445,6 +419,7 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 			log_error("vlan_mon: failed to create interface. Parent=%i name=%s vid=%i\n", ifindex, ifname, vid);
 			return;
 		}
+
 	}
 
 	len = strlen(ifname);
@@ -457,17 +432,36 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 
 	vlan_ifindex = ifr.ifr_ifindex;
 
+	if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr, sizeof(ifr))) {
+		log_error("vlan_mon: failed to get interface flags, ifindex=%i\n", ifr.ifr_ifindex);
+		return;
+	}
+
+	ifr.ifr_ifindex = vlan_ifindex;
+	if (!(ifr.ifr_flags & IFF_UP)) {
+		log_debug("vlan_mon: interface ifindex=%i is DOWN. Enabling it...\n", vlan_ifindex);
+		ifr.ifr_flags |= IFF_UP;
+
+		if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr, sizeof(ifr))) {
+			log_error("vlan_mon: failed to set interface flags, ifindex=%i\n", ifr.ifr_ifindex);
+			return;
+		}
+	}
+
 	//Send params to pppoe or ipoe callback
-	//ifname of new interface
-	//ifindex of new interface
-	//vid of new interface
+	//ifindex      - vlan interface parent ifindex
+	//svid         - vlan id of parent interface
+	//vid          - vlan id of new interface
+	//vlan_ifindex - ifindex of new interface
+	//ifname       - interface name of new vlan interface
+	//len          - length of ifname
 	//Return 0 if success, not 0 else
 	if (cb[proto]) {
 		if (!cb[proto](ifindex, svid, vid, vlan_ifindex, ifname, len)) {
 			log_debug("vlan_mon: vlan %s started\n", ifname);
 
 			pthread_rwlock_wrlock(&vlan_mon_devices_lock);
-
+			//Searching vlan_mon_device by ifindex
 			struct vlan_mon_device* vl_dev = get_vlan_mon_device(vlan_ifindex);
 			if (vl_dev) {
 				pthread_mutex_lock(&vl_dev->lock);
@@ -510,11 +504,12 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 
 		}
 	} else {
-		log_warn("vlan_mon: vlan %s has not registered callback\n", ifname);
+		log_warn("vlan_mon: vlan %s does not have a registered callback\n", ifname);
 
 		pthread_rwlock_wrlock(&vlan_mon_devices_lock);
 
 		struct vlan_mon_device* vl_dev = get_vlan_mon_device(vlan_ifindex);
+		//If callback is not registered then delete vlan and deregister proto
 		if (!vl_dev) {
 			iplink_vlan_del(vlan_ifindex);
 			vlan_mon_del_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
