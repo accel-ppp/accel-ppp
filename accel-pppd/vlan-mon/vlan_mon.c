@@ -54,6 +54,7 @@ static int conf_vlan_timeout;
 static int conf_remove_when_no_subscribers = 0;
 
 static void vlan_mon_init(void);
+static void load_interfaces(struct conf_sect_t *sect);
 
 int vlan_mon_proto_to_proto(int proto)
 {
@@ -65,6 +66,8 @@ int vlan_mon_proto_to_proto(int proto)
 
 void __export vlan_mon_register_proto(uint16_t proto, vlan_mon_notify func)
 {
+	log_debug("vlan_mon: registering callback for proto=%04x\n", proto);
+
 	if (proto == ETH_P_PPP_DISC)
 		proto = 1;
 	else
@@ -72,8 +75,8 @@ void __export vlan_mon_register_proto(uint16_t proto, vlan_mon_notify func)
 
 	cb[proto] = func;
 
-//	if (!vlan_mon_genl_id)
-//		vlan_mon_init();
+	struct conf_sect_t *s = conf_get_section("vlan_mon");
+	load_interfaces(s);
 }
 
 int __export vlan_mon_add(int ifindex, uint16_t proto, long *mask, int len)
@@ -169,8 +172,6 @@ int __export vlan_mon_del_vid(int ifindex, uint16_t proto, uint16_t vid)
 	} req;
 	int r = 0;
 
-	log_debug("vlan_mon: vlan_mon_del(ifindex=%i, proto=%u, vid=%u)\n", ifindex, proto, vid);
-
 	if (vlan_mon_genl_id < 0)
 		return -1;
 
@@ -212,12 +213,8 @@ int __export vlan_mon_del(int ifindex, uint16_t proto)
 	} req;
 	int r = 0;
 
-	log_debug("vlan_mon: vlan_mon_del(ifindex=%i, proto=%u)\n", ifindex, proto);
-
 	if (vlan_mon_genl_id < 0)
 		return -1;
-
-	log_debug("vlan_mon: vlan_mon_del 1 \n");
 
 	if (rtnl_open_byproto(&rth, 0, NETLINK_GENERIC)) {
 		log_error("vlan_mon: cannot open generic netlink socket\n");
@@ -235,14 +232,10 @@ int __export vlan_mon_del(int ifindex, uint16_t proto)
 	addattr32(nlh, 1024, VLAN_MON_ATTR_IFINDEX, ifindex);
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_PROTO, &proto, 2);
 
-	log_debug("vlan_mon: vlan_mon_del 2 \n");
-
 	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 ) {
 		log_error("vlan_mon: nl_del_vlan_mon: error talking to kernel\n");
 		r = -1;
 	}
-
-	log_debug("vlan_mon: vlan_mon_del 3 \n");
 
 	rtnl_close(&rth);
 
@@ -334,7 +327,7 @@ static struct vlan_mon_device* get_vlan_mon_device(int ifindex)
 
 int __export vlan_mon_serv_down(int ifindex, uint16_t vid, uint16_t proto)
 {
-	log_debug("vlan_mon: upstream server down proto=%i ifindex=%i vid=%i\n", proto, ifindex, vid);
+	log_debug("vlan_mon: upstream server down proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
 
 	pthread_rwlock_wrlock(&vlan_mon_devices_lock);
 
@@ -437,7 +430,6 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 		return;
 	}
 
-	ifr.ifr_ifindex = vlan_ifindex;
 	if (!(ifr.ifr_flags & IFF_UP)) {
 		log_debug("vlan_mon: interface ifindex=%i is DOWN. Enabling it...\n", vlan_ifindex);
 		ifr.ifr_flags |= IFF_UP;
@@ -903,7 +895,7 @@ static void load_config(void)
 		conf_remove_when_no_subscribers = atoi(opt);
 	else
 		conf_remove_when_no_subscribers = 0;
-	log_debug("vlan_mon: remove-when-no-subscribers=(%i)", conf_remove_when_no_subscribers);
+	log_debug("vlan_mon: remove-when-no-subscribers=(%i)\n", conf_remove_when_no_subscribers);
 
 	load_interfaces(s);
 }
