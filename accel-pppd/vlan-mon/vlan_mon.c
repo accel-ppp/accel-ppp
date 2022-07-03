@@ -395,6 +395,8 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 		ifr.ifr_ifindex = vlan_ifindex;
 		if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
 			log_error("vlan_mon: failed to get interface name, ifindex=%i\n", ifr.ifr_ifindex);
+			//Interface maybe deleted
+			vlan_mon_add_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
 			return;
 		}
 
@@ -402,6 +404,8 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 			strcpy(ifr.ifr_newname, ifname);
 			if (ioctl(sock_fd, SIOCSIFNAME, &ifr, sizeof(ifr))) {
 				log_error("vlan_mon: failed to rename interface %s to %s\n", ifr.ifr_name, ifr.ifr_newname);
+				//Interface maybe deleted
+				vlan_mon_add_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
 				return;
 			}
 			strcpy(ifr.ifr_name, ifname);
@@ -411,6 +415,9 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 
 		if (iplink_vlan_add(ifname, ifindex, vid)) {
 			log_error("vlan_mon: failed to create interface. Parent=%i name=%s vid=%i\n", ifindex, ifname, vid);
+			//Sometimes the vlan_mon driver send notify faster then the previous request be processed.
+			//So, device cannot be created because it already exists
+			vlan_mon_add_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
 			return;
 		}
 
@@ -421,6 +428,8 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 
 	if (ioctl(sock_fd, SIOCGIFINDEX, &ifr, sizeof(ifr))) {
 		log_error("vlan_mon: %s: failed to get interface index\n", ifr.ifr_name);
+		//Interface maybe deleted
+		vlan_mon_add_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
 		return;
 	}
 
@@ -428,6 +437,8 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 
 	if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr, sizeof(ifr))) {
 		log_error("vlan_mon: failed to get interface flags, ifindex=%i\n", ifr.ifr_ifindex);
+		//Interface maybe deleted
+		vlan_mon_add_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
 		return;
 	}
 
@@ -437,6 +448,8 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 
 		if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr, sizeof(ifr))) {
 			log_error("vlan_mon: failed to set interface flags, ifindex=%i\n", ifr.ifr_ifindex);
+			//Interface maybe deleted
+			vlan_mon_add_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
 			return;
 		}
 	}
@@ -488,8 +501,13 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 			pthread_rwlock_wrlock(&vlan_mon_devices_lock);
 
 			struct vlan_mon_device* vl_dev = get_vlan_mon_device(vlan_ifindex);
+			//If interface does not match by upstream server then delete and deregister proto in vlan
 			if (!vl_dev) {
 				iplink_vlan_del(vlan_ifindex);
+				vlan_mon_del_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
+			} else {
+				//If interface does not match by upstream server, but created by another proto
+				//then deregister proto in vlan
 				vlan_mon_del_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
 			}
 
@@ -497,7 +515,7 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 
 		}
 	} else {
-		log_warn("vlan_mon: vlan %s does not have a registered callback\n", ifname);
+		log_debug("vlan_mon: vlan %s does not have a registered callback\n", ifname);
 
 		pthread_rwlock_wrlock(&vlan_mon_devices_lock);
 
@@ -507,6 +525,9 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 		//then delete vlan and deregister proto in vlan
 		if (!vl_dev) {
 			iplink_vlan_del(vlan_ifindex);
+			vlan_mon_del_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
+		} else {
+			//If device created by another proto, then deregister vlan for proto
 			vlan_mon_del_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
 		}
 
