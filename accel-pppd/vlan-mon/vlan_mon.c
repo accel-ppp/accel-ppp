@@ -16,6 +16,7 @@
 #include <pcre.h>
 
 #include "triton.h"
+#include "events.h"
 #include "log.h"
 #include "genl.h"
 #include "libnetlink.h"
@@ -909,7 +910,7 @@ static void load_interfaces(struct conf_sect_t *sect)
 	}
 }
 
-static void load_config(void)
+static void load_config(void *data)
 {
 	char *opt;
 	struct conf_sect_t *s = conf_get_section("vlan_mon");
@@ -947,6 +948,11 @@ static void load_config(void)
 	load_interfaces(s);
 }
 
+static void show_vlan_help(char * const *fields, int fields_cnt, void *client)
+{
+	cli_sendv(client, "show vlan - shows vlans that registered in vlan-mon\r\n");
+}
+
 static int show_vlan_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
 {
 	cli_sendv(client, "parent\tifindex\tvlan_id\tpppoe\tipoe\r\n");
@@ -954,7 +960,6 @@ static int show_vlan_exec(const char *cmd, char * const *fields, int fields_cnt,
 	LIST_HEAD(vl_dev_list);
 	struct vlan_mon_device* vl_dev = NULL;
 	struct vlan_mon_device* new_vl_dev = NULL;
-
 
 	//Copy data
 	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
@@ -1036,7 +1041,7 @@ static void vlan_mon_init(void)
 	}
 
 	vlan_mon_clean();
-	load_config();
+	load_config(NULL);
 
 	fcntl(rth.fd, F_SETFL, O_NONBLOCK);
 	fcntl(rth.fd, F_SETFD, fcntl(rth.fd, F_GETFD) | FD_CLOEXEC);
@@ -1048,7 +1053,9 @@ static void vlan_mon_init(void)
 	triton_md_enable_handler(&mc_hnd, MD_MODE_READ);
 	triton_context_wakeup(&mc_ctx);
 
-	cli_register_simple_cmd2(show_vlan_exec, NULL, 2, "show", "vlan");
+	cli_register_simple_cmd2(show_vlan_exec, show_vlan_help, 2, "show", "vlan");
+
+	triton_event_register_handler(EV_CONFIG_RELOAD, load_config);
 }
 
 DEFINE_INIT(19, vlan_mon_init);
