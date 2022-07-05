@@ -951,18 +951,46 @@ static int show_vlan_exec(const char *cmd, char * const *fields, int fields_cnt,
 {
 	cli_sendv(client, "parent\tifindex\tvlan_id\tpppoe\tipoe\r\n");
 
-	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
+	LIST_HEAD(vl_dev_list);
 	struct vlan_mon_device* vl_dev = NULL;
+	struct vlan_mon_device* new_vl_dev = NULL;
+
+
+	//Copy data
+	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
 	list_for_each_entry(vl_dev, &vlan_mon_devices, entry) {
 		pthread_mutex_lock(&vl_dev->lock);
 
-		uint8_t pppoe_present = vl_dev->serv_mask & VLAN_MON_DEVICE_SERVER_PPPOE ? 1 : 0;
-		uint8_t ipoe_present  = vl_dev->serv_mask & VLAN_MON_DEVICE_SERVER_IPOE ? 1 : 0;
-		cli_sendv(client, "%u\t%u\t%u\t%u\t%u\r\n", vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->vid, pppoe_present, ipoe_present);
+		new_vl_dev = _malloc(sizeof(*vl_dev));
+		if (!new_vl_dev) {
+			cli_sendv(client, "Cannot allocate memory!\r\n");
+
+			pthread_mutex_unlock(&vl_dev->lock);
+			pthread_rwlock_unlock(&vlan_mon_devices_lock);
+			goto out;
+		}
+
+		memcpy(new_vl_dev, vl_dev, sizeof(*vl_dev));
+		list_add_tail(&new_vl_dev->entry, &vl_dev_list);
 
 		pthread_mutex_unlock(&vl_dev->lock);
 	}
 	pthread_rwlock_unlock(&vlan_mon_devices_lock);
+
+	//Show data
+	list_for_each_entry(vl_dev, &vl_dev_list, entry) {
+		uint8_t pppoe_present = vl_dev->serv_mask & VLAN_MON_DEVICE_SERVER_PPPOE ? 1 : 0;
+		uint8_t ipoe_present  = vl_dev->serv_mask & VLAN_MON_DEVICE_SERVER_IPOE ? 1 : 0;
+		cli_sendv(client, "%u\t%u\t%u\t%u\t%u\r\n", vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->vid, pppoe_present, ipoe_present);
+	}
+
+	//Free local copy
+out:
+	while (!list_empty(&vl_dev_list)) {
+		vl_dev = list_entry(vl_dev_list.next, typeof(*vl_dev), entry);
+		list_del(&vl_dev->entry);
+		_free(vl_dev);
+	}
 
 	return CLI_CMD_OK;
 }
