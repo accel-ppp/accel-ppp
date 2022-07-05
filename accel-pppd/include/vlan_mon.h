@@ -3,6 +3,9 @@
 
 #include <stdint.h>
 
+#define VLAN_MON_DEVICE_SERVER_PPPOE	0x01
+#define VLAN_MON_DEVICE_SERVER_IPOE	0x02
+
 struct vlan_mon_device {
 	struct list_head entry;
 
@@ -11,7 +14,7 @@ struct vlan_mon_device {
 	int parent_ifindex;
 	int ifindex;
 	uint16_t vid;
-	int serv_count;
+	uint8_t serv_mask;
 };
 
 extern struct list_head vlan_mon_devices;

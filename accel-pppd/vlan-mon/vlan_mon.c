@@ -65,6 +65,30 @@ int vlan_mon_proto_to_proto(int proto)
 		return ETH_P_IP;
 }
 
+int proto_to_vlan_mon_proto(int proto)
+{
+	if (proto == ETH_P_PPP_DISC)
+		return 1;
+	else
+		return 0;
+}
+
+uint8_t vlan_mon_proto_to_mask(int proto)
+{
+	if (proto == 1)
+		return VLAN_MON_DEVICE_SERVER_PPPOE;
+	else
+		return VLAN_MON_DEVICE_SERVER_IPOE;
+}
+
+uint8_t proto_to_mask(int proto)
+{
+	if (proto == ETH_P_PPP_DISC)
+		return VLAN_MON_DEVICE_SERVER_PPPOE;
+	else
+		return VLAN_MON_DEVICE_SERVER_IPOE;
+}
+
 void __export vlan_mon_register_proto(uint16_t proto, vlan_mon_notify func)
 {
 	log_debug("vlan_mon: registering callback for proto=%04x\n", proto);
@@ -335,10 +359,11 @@ int __export vlan_mon_serv_down(int ifindex, uint16_t vid, uint16_t proto)
 	struct vlan_mon_device* vl_dev = get_vlan_mon_device(ifindex);
 	if (vl_dev) {
 		pthread_mutex_lock(&vl_dev->lock);
-		vl_dev->serv_count -= 1;
+		//Delete protocol from servers
+		vl_dev->serv_mask &= ~proto_to_mask(proto);
 		vlan_mon_add_vid(vl_dev->parent_ifindex, proto, vl_dev->vid);
 
-		if (!vl_dev->serv_count) {
+		if (!vl_dev->serv_mask) {
 			if (conf_remove_when_no_subscribers) {
 				log_info2("vlan_mon: remove vlan interface ifindex=%i vid=%i\n", ifindex, vid);
 				iplink_vlan_del(ifindex);
@@ -471,7 +496,7 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 			struct vlan_mon_device* vl_dev = get_vlan_mon_device(vlan_ifindex);
 			if (vl_dev) {
 				pthread_mutex_lock(&vl_dev->lock);
-				vl_dev->serv_count += 1;
+				vl_dev->serv_mask |= vlan_mon_proto_to_mask(proto);
 				pthread_mutex_unlock(&vl_dev->lock);
 			} else {
 				vl_dev = _malloc(sizeof(struct vlan_mon_device));
@@ -483,12 +508,12 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 
 				vl_dev->parent_ifindex = ifindex;
 				vl_dev->ifindex = vlan_ifindex;
-				vl_dev->serv_count = 1;
+				vl_dev->serv_mask = vlan_mon_proto_to_mask(proto);
 				vl_dev->vid = vid;
 				pthread_mutex_init(&vl_dev->lock, NULL);
 
-				log_debug("vlan_mon: creating vlan_mon_device parent_ifindex=%i ifindex=%i serv_count=%i vid=%i\n", 
-						vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->serv_count, vl_dev->vid);
+				log_debug("vlan_mon: creating vlan_mon_device parent_ifindex=%i ifindex=%i serv_mask=%i vid=%i\n", 
+						vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->serv_mask, vl_dev->vid);
 
 				list_add_tail(&vl_dev->entry, &vlan_mon_devices);
 			}
@@ -924,13 +949,17 @@ static void load_config(void)
 
 static int show_vlan_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
 {
-	cli_sendv(client, "parent\tifindex\tvlan_id\tserv_count\r\n");
+	cli_sendv(client, "parent\tifindex\tvlan_id\tpppoe\tipoe\r\n");
 
 	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
 	struct vlan_mon_device* vl_dev = NULL;
 	list_for_each_entry(vl_dev, &vlan_mon_devices, entry) {
 		pthread_mutex_lock(&vl_dev->lock);
-		cli_sendv(client, "%u\t%u\t%u\t%u\r\n", vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->vid, vl_dev->serv_count);
+
+		uint8_t pppoe_present = vl_dev->serv_mask & VLAN_MON_DEVICE_SERVER_PPPOE ? 1 : 0;
+		uint8_t ipoe_present  = vl_dev->serv_mask & VLAN_MON_DEVICE_SERVER_IPOE ? 1 : 0;
+		cli_sendv(client, "%u\t%u\t%u\t%u\t%u\r\n", vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->vid, pppoe_present, ipoe_present);
+
 		pthread_mutex_unlock(&vl_dev->lock);
 	}
 	pthread_rwlock_unlock(&vlan_mon_devices_lock);
