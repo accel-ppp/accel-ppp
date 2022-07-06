@@ -50,7 +50,7 @@ static int vlan_mon_genl_id;
 
 static vlan_mon_notify cb[2];
 
-static const char *conf_vlan_name;
+static char conf_vlan_name[IFNAMSIZ];
 static int conf_remove_when_no_subscribers = 0;
 
 int conf_vlan_timeout;
@@ -370,8 +370,12 @@ int __export vlan_mon_serv_down(int ifindex, uint16_t vid, uint16_t proto)
 				iplink_vlan_del(ifindex);
 
 				log_debug("vlan_mon: remove vlan_mon_device ifindex=%i vid=%i\n", ifindex, vid);
+
 				list_del(&vl_dev->entry);
+				pthread_mutex_unlock(&vl_dev->lock);
 				_free(vl_dev);
+
+				goto out;
 			}
 		}
 		pthread_mutex_unlock(&vl_dev->lock);
@@ -381,6 +385,7 @@ int __export vlan_mon_serv_down(int ifindex, uint16_t vid, uint16_t proto)
 		return -1;
 	}
 
+out:
 	pthread_rwlock_unlock(&vlan_mon_devices_lock);
 
 	return 0;
@@ -922,27 +927,31 @@ static void load_config(void *data)
 
 	opt = conf_get_opt("vlan_mon", "vlan-name");
 	if (opt) {
-		conf_vlan_name = opt;
+		strncpy(conf_vlan_name, opt, IFNAMSIZ);
 	} else {
-		conf_vlan_name = "%I.%N";
+		strncpy(conf_vlan_name, "%I.%N", IFNAMSIZ);
 	}
+	//Make string null-terminated
+	conf_vlan_name[IFNAMSIZ-1] = 0;
 	log_debug("vlan_mon: vlan-name=(%s)\n", conf_vlan_name);
 
 	//Loading vlan-timeout if specified
 	//If there is an error in the value, then conf_vlan_timeout=60
 	//If no value is specified, then conf_vlan_timeout=60
 	opt = conf_get_opt("vlan_mon", "vlan-timeout");
-	if (opt && atoi(opt) > 0)
+	if (opt && atoi(opt) > 0) {
 		conf_vlan_timeout = atoi(opt);
-	else
+	} else {
 		conf_vlan_timeout = 60;
+	}
 	log_debug("vlan_mon: vlan-timeout=(%i)\n", conf_vlan_timeout);
 
 	opt = conf_get_opt("vlan_mon", "remove-when-no-subscribers");
-	if (opt)
+	if (opt) {
 		conf_remove_when_no_subscribers = atoi(opt);
-	else
+	} else {
 		conf_remove_when_no_subscribers = 0;
+	}
 	log_debug("vlan_mon: remove-when-no-subscribers=(%i)\n", conf_remove_when_no_subscribers);
 
 	load_interfaces(s);
