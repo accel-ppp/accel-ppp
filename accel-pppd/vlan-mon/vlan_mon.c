@@ -951,7 +951,7 @@ static void show_vlan_help(char * const *fields, int fields_cnt, void *client)
 
 static int show_vlan_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
 {
-	cli_sendv(client, "parent\tifindex\tvlan_id\tpppoe\tipoe\r\n");
+	cli_sendv(client, "%-16s %-16s %-16s %-16s %-8s %-8s %-8s\r\n", "parent_if", "parent_ifindex", "interface", "ifindex", "vlan_id", "pppoe", "ipoe");
 
 	LIST_HEAD(vl_dev_list);
 	struct vlan_mon_device* vl_dev = NULL;
@@ -978,11 +978,37 @@ static int show_vlan_exec(const char *cmd, char * const *fields, int fields_cnt,
 	}
 	pthread_rwlock_unlock(&vlan_mon_devices_lock);
 
+
+	char parent_ifname[IFNAMSIZ];
+	char ifname[IFNAMSIZ];
+
+	struct ifreq ifr;
+	memset(&ifr, 0, sizeof(ifr));
+
 	//Show data
 	list_for_each_entry(vl_dev, &vl_dev_list, entry) {
+
+		ifr.ifr_ifindex = vl_dev->ifindex;
+		if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
+			strncpy(ifname, "unknown", IFNAMSIZ);
+		} else {
+			strncpy(ifname, ifr.ifr_name, IFNAMSIZ);
+		}
+		ifname[IFNAMSIZ-1] = 0;
+
+		ifr.ifr_ifindex = vl_dev->parent_ifindex;
+		if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
+			strncpy(parent_ifname, "unknown", IFNAMSIZ);
+		} else {
+			strncpy(parent_ifname, ifr.ifr_name, IFNAMSIZ);
+		}
+		parent_ifname[IFNAMSIZ-1] = 0;
+
 		uint8_t pppoe_present = vl_dev->serv_mask & VLAN_MON_DEVICE_SERVER_PPPOE ? 1 : 0;
 		uint8_t ipoe_present  = vl_dev->serv_mask & VLAN_MON_DEVICE_SERVER_IPOE ? 1 : 0;
-		cli_sendv(client, "%u\t%u\t%u\t%u\t%u\r\n", vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->vid, pppoe_present, ipoe_present);
+
+		cli_sendv(client, "%-16s %-16u %-16s %-16u %-8u %-8u %-8u\r\n", parent_ifname, vl_dev->parent_ifindex,
+					ifname, vl_dev->ifindex, vl_dev->vid, pppoe_present, ipoe_present);
 	}
 
 	//Free local copy
