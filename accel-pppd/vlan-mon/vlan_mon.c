@@ -505,6 +505,9 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 				pthread_mutex_lock(&vl_dev->lock);
 				vl_dev->serv_mask |= vlan_mon_proto_to_mask(proto);
 				pthread_mutex_unlock(&vl_dev->lock);
+
+				log_debug("vlan_mon: added proto in vlan_mon_device parent_ifindex=%i ifindex=%i serv_mask=%i vid=%i\n", 
+						vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->serv_mask, vl_dev->vid);
 			} else {
 				vl_dev = _malloc(sizeof(struct vlan_mon_device));
 				if (!vl_dev) {
