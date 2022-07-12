@@ -1200,7 +1200,7 @@ Due to accel-ppp operates with rates in kilobit basis if you send rates in diffe
 .TP
 .BI "rate-limit=" download_speed/upload_speed
 Specifies, should accel-ppp set default rate-limit for clients. Clients rate-limit will be overwritten by RADIUS filter attributes or chap-secrets rate-limit params.
-.SH [advanced_shaper]
+.SH [advanced_shaper] and [advanced_shaper_up]
 .SS DESCRIPTION
 .br
 Configuration for adv_shaper
@@ -1215,35 +1215,42 @@ HTB - classfull discipline, that support classes and filters.
 .br
 TBF, SFQ, FQ_CODEL - classless discipline, that not support classes and filters.
 .br
-.B By default Linux set pfifo_fast as leaf qdisc! 
+INGRESS - classless discipline that support filters.
+.br
+.B By default Linux set pfifo_fast as leaf qdisc!
 .br
 (see "man tc")
 .TP
 .br
 Supported kinds of qdiscs:
-.B htb, tbf, sfq, fq_codel
+.B htb, tbf, sfq, fq_codel, ingress
 .TP
 .br
 class  - htb class for shaping.
 .TP
 .br
 filter - filter for classify packets in classfull discipline.
+.TP
+.br
+action - independently defined actions in tc.
 .SS QDISC SYNTAX
 .br
 .BI "qdisc = " "htb handle HANDLE parent PARENTID r2q R2Q default DEF_CLASS"
 .br
 .BI "qdisc = " "tbf handle HANDLE parent PARENTID rate RATE burst BURST latency LATENCY"
 .br
-.BI "qdisc = " "sfq handle HANDLE parent PARENTID perturb PERTURB [limit LIMIT quantum QUANTUM]"
+.BI "qdisc = " "sfq handle HANDLE parent PARENTID perturb PERTURB [ limit LIMIT ] [ quantum QUANTUM ]"
 .br
-.BI "qdisc = " "fq_codel handle HANDLE parent PARENTID [limit LIMIT flows FLOWS quantum QUANTUM target TARGET interval INTERVAL ecn|noecn]"
+.BI "qdisc = " "fq_codel handle HANDLE parent PARENTID [ limit LIMIT ] [ flows FLOWS ] [ quantum QUANTUM ] [ target TARGET ] [ interval INTERVAL ] [ ecn|noecn ]"
+.br
+.BI "qdisc = " "ingress handle HANDLE parent PARENTID"
 .SS QDISC PARAMETERS
 .br
 .B HANDLE, PARENTID, DEF_CLASS is the 32-bit hexadecimal number in format XXXX:XXXX
 .br
-HANDLE    - qdisc handle.
+HANDLE    - qdisc handle. Ingress qdisc MUST have handle ffff:0
 .br
-PARENTID  - parent qdisc handle. First qdisc MUST have parent ffff:ffff
+PARENTID  - parent qdisc handle. Root qdisc for abonent download MUST have parent ffff:ffff. Ingress qdisc MUST have parent ffff:fff1.
 .TP
 .br
 HTB specific params (see "man tc-htb"):
@@ -1292,13 +1299,13 @@ ecn|noecn - by default noecn.
 .B CLASSID, PARENTID is the 32-bit hexadecimal number in format XXXX:XXXX
 .TP
 .br
-RATE - rate limit for htb class (in kilobits). Set to 0 if required rate parameter from radius or shaper section.
+RATE   - rate limit for htb class (in kilobits). Set to 0 if required rate parameter from radius or shaper section.
 .TP
 .br
-CEIL - ceil rate for htb class (in kilobits). Set to 0 if required rate parameter from radius or shaper section.
+CEIL   - ceil rate for htb class (in kilobits). Set to 0 if required rate parameter from radius or shaper section.
 .TP
 .br
-BURST - burst size for htb class (in kilobits). Set to 0 if required rate parameter from radius or shaper section.
+BURST  - burst size for htb class (in kilobits). Set to 0 if required rate parameter from radius or shaper section.
 .TP
 .br
 CBURST - cburst size for htb class (in kilobits). Set to 0 if required rate parameter from radius or shaper section (cburst == burst).
@@ -1348,6 +1355,39 @@ OFFSET   - offset from IP packet begin (decimal number).
 .TP
 .br
 OFFMASK  - offset mask.
+.SS ACTION SYNTAX
+.br
+.BI "action = " "parent PARENTID priority PRIO pass"
+.br
+.BI "action = " "parent PARENTID priority PRIO police mtu MTU action pass|drop [ mpu MPU ] [ rate RATE ] [ burst BURST ]"
+.SS ACTION PARAMETERS
+.br
+.B PARENTID is the 32-bit hexadecimal number in format XXXX:XXXX
+.TP
+.br
+PARENTID - PARENTID of target filter.
+.TP
+.br
+PRIO     - PRIO of target filter.
+.TP
+.br
+MTU      - This is the maximum packet size handled by the policer (larger ones will be handled like they exceeded the configured rate). BY DEFAULT tc set mtu to 2048 bytes.
+.TP
+.br
+MPU      - A zero-sized packet does not use zero bandwidth. For ethernet, no packet uses less than 64 bytes. The Minimum Packet Unit determines the minimal token usage (specified in bytes) for a packet. Defaults to zero.
+.TP
+.br
+RATE     - The maximum traffic rate of packets passing this action in kilobits. Those exceeding it will be treated as defined by the action option. Set 0 - get rate from other ways (radius, shaper section, etc)
+.TP
+.br
+BURST    - Set the maximum allowed burst in kbits. Set to 0 for calculate burst as described in shaper section.
+.TP
+.br
+police action - Can be pass or drop.
+.br
+pass - accept packet.
+.br
+drop - drop packet
 .SS EXAMPLES
 .TP
 .br
@@ -1356,6 +1396,8 @@ OFFMASK  - offset mask.
 ***
 .br
 down-limiter=adv_shaper
+.br
+up-limiter=adv_shaper
 .br
 ***
 .TP
@@ -1385,6 +1427,29 @@ filter = net parent 1:0 priority 100 ip 224.224.224.0/24 src classid 1:10
 filter = net6 parent 1:0 priority 300 ip6 fe80::cdef/24 src classid 1:10
 .br
 filter = net6 parent 1:0 priority 600 ip6 ::/0 dst classid 1:10
+.br
+#Policer that use speed from radius
+.br
+filter = net parent 1:0 priority 1000 ip 0.0.0.0/0 src classid 1:0
+.br
+action = parent 1:0 priority 1000 police rate 0 burst 0 mpu 0 mtu 40960 action drop
+.TP
+.br
+[advanced_shaper_up]
+.br
+qdisc = ingress handle ffff:0 parent ffff:fff1
+.br
+#Exclude packets from policer
+.br
+filter = net parent ffff:0 priority 50 ip 192.0.2.0/24 dst classid ffff:0
+.br
+action = parent ffff:0 priority 50 pass
+.br
+#Policer that use speed from radius
+.br
+filter = net parent ffff:0 priority 100 ip 0.0.0.0/0 src classid ffff:0
+.br
+action = parent ffff:0 priority 100 police rate 0 burst 0 mpu 0 mtu 40960 action drop
 .SH [cli]
 .br
 Configuration of the command line interface.

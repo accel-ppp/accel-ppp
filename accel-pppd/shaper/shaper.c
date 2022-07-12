@@ -1180,11 +1180,11 @@ static void load_config(void)
 			conf_up_limiter = LIM_POLICE;
 		else if (!strcmp(opt, "htb"))
 			conf_up_limiter = LIM_HTB;
+		else if (!strcmp(opt, "adv_shaper"))
+			conf_up_limiter = LIM_ADV_SHAPER;
 		else
 			log_error("shaper: unknown upstream limiter '%s'\n", opt);
 	}
-
-	load_advanced_shaper();
 
 	opt = conf_get_opt("shaper", "down-limiter");
 	if (opt) {
@@ -1196,6 +1196,10 @@ static void load_config(void)
 			conf_down_limiter = LIM_ADV_SHAPER;
 		else
 			log_error("shaper: unknown downstream limiter '%s'\n", opt);
+	}
+
+	if (conf_down_limiter == LIM_ADV_SHAPER || conf_up_limiter == LIM_ADV_SHAPER) {
+		load_advanced_shaper();
 	}
 
 	if (conf_up_limiter == LIM_HTB && !conf_ifb_ifindex) {

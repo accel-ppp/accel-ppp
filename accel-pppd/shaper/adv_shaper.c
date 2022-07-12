@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include <netinet/in.h>
 #include <linux/if.h>
+#include <linux/pkt_cls.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/mman.h>
@@ -29,6 +30,7 @@ pthread_rwlock_t adv_shaper_lock = PTHREAD_RWLOCK_INITIALIZER;
 LIST_HEAD(conf_adv_shaper_qdisc_list);
 LIST_HEAD(conf_adv_shaper_class_list);
 LIST_HEAD(conf_adv_shaper_filter_list);
+LIST_HEAD(conf_adv_shaper_action_list);
 
 
 static int parse_classid(__u32 *classid, char* str) {
@@ -133,7 +135,18 @@ static size_t split_string(char ***res, const char *str, const char splitter, co
 	return cleared_params_count;
 }
 
+// ||=======================================================================================||
+// ||                                       QDISCS                                          ||
+// ||=======================================================================================||
 
+static void free_advanced_shaper_qdisc() {
+	struct adv_shaper_qdisc* qdisc;
+	while (!list_empty(&conf_adv_shaper_qdisc_list)) {
+		qdisc = list_entry(conf_adv_shaper_qdisc_list.next, typeof(*qdisc), entry);
+		list_del(&qdisc->entry);
+		_free(qdisc);
+	}
+}
 
 static int load_qdisc_htb(struct adv_shaper_qdisc *qopt, char **params, size_t param_count) 
 {
@@ -363,7 +376,7 @@ static int load_qdisc_fq_codel(struct adv_shaper_qdisc *qopt, char **params, siz
 #undef cannot_parse_log
 }
 
-static int load_qdisc_sfq(struct adv_shaper_qdisc *qopt, char **params, size_t param_count) 
+static int load_qdisc_sfq(struct adv_shaper_qdisc *qopt, char **params, size_t param_count)
 {
 #define cannot_parse_log(key, value)  \
 	log_error("adv_shaper: qdisc: sfq: Cannot parse %s! (%s)\n", key, value)
@@ -432,14 +445,54 @@ static int load_qdisc_sfq(struct adv_shaper_qdisc *qopt, char **params, size_t p
 #undef cannot_parse_log
 }
 
-static void free_advanced_shaper_qdisc() {
-	struct adv_shaper_qdisc* qdisc;
-	while (!list_empty(&conf_adv_shaper_qdisc_list)) {
-		qdisc = list_entry(conf_adv_shaper_qdisc_list.next, typeof(*qdisc), entry);
-		list_del(&qdisc->entry);
-		_free(qdisc);
+static int load_qdisc_ingress(struct adv_shaper_qdisc *qopt, char **params, size_t param_count)
+{
+#define cannot_parse_log(key, value)  \
+	log_error("adv_shaper: qdisc: ingress: Cannot parse %s! (%s)\n", key, value)
+
+	__u32 handle   = 0;
+	__u32 parentid = 0;
+
+	char *key = NULL;
+	char *value = NULL;
+
+	for (size_t i = 0; i < param_count; ++i) {
+		key = params[i];
+		if (i+1 < param_count) {
+			value = params[i+1];
+			++i;
+		} else {
+			log_error("adv_shaper: qdisc: ingress: Not enough parameters for building key-value pair! key == (%s)\n", key);
+			return -1;
+		}
+		if (!strcmp(key, "handle")) {
+			if (parse_classid(&handle, value)) {
+				cannot_parse_log(key, value);
+				return -1;
+			}
+		} else if (!strcmp(key, "parent")) {
+			if (parse_classid(&parentid, value)) {
+				cannot_parse_log(key, value);
+				return -1;
+			}
+		} else {
+			log_error("adv_shaper: qdisc: ingress: Unknown key! key == (%s)\n", key);
+			return -1;
+		}
 	}
+
+	if (!handle || !parentid) {
+		log_error("adv_shaper: qdisc: ingress: Not enough columns! Format - qdisc = ingress handle HANDLE parent PARENTID\n");
+		return -1;
+	}
+
+	qopt->handle = handle;
+	qopt->parent = parentid;
+
+	return 0;
+#undef cannot_parse_log
 }
+
 
 static struct adv_shaper_qdisc* preload_advanced_shaper_qdisc(char* opt_str)
 {
@@ -459,8 +512,10 @@ static struct adv_shaper_qdisc* preload_advanced_shaper_qdisc(char* opt_str)
 			kind = ADV_SHAPER_QDISC_SFQ;
 		} else if (!strcmp(params[0], "fq_codel")) {
 			kind = ADV_SHAPER_QDISC_FQ_CODEL;
+		} else if (!strcmp(params[0], "ingress")) {
+			kind = ADV_SHAPER_QDISC_INGRESS;
 		} else {
-			log_error("adv_shaper: qdisc: Unknown qdisc (%s). Supported : htb,tbf,sfq,fq_codel  (%s)\n", params[0], opt_str);
+			log_error("adv_shaper: qdisc: Unknown qdisc (%s). Supported : htb,tbf,sfq,fq_codel,ingress  (%s)\n", params[0], opt_str);
 			goto parse_end;
 		}
 	} else {
@@ -524,7 +579,18 @@ static struct adv_shaper_qdisc* preload_advanced_shaper_qdisc(char* opt_str)
 			goto parse_end;
 		}
 
-	} else {
+	} else if (kind == ADV_SHAPER_QDISC_INGRESS) {
+
+		qdisc->kind = "ingress";
+		if (!load_qdisc_ingress(qdisc, params+1, sended_params)) {
+			log_info2("adv_shaper: qdisc: Loaded qdisc (%s) as (handle: 0x%x, parent: 0x%x)\n",
+					opt_str, qdisc->handle, qdisc->parent);
+		} else {
+			log_error("adv_shaper: qdisc: Error while reading ingress params (%s)\n", opt_str);
+			_free(qdisc);
+			qdisc = NULL;
+			goto parse_end;
+		}
 
 	}
 
@@ -545,9 +611,8 @@ parse_end:
 //Config pattern:
 //HTB:
 //qdisc = KIND,HANDLE,PARENT,r2q,DEF_CLASS
-static int load_advanced_shaper_qdisc(struct conf_sect_t *s) {
-	free_advanced_shaper_qdisc();
-
+static int load_advanced_shaper_qdisc(struct conf_sect_t *s, __u8 isdown) 
+{
 	struct conf_option_t *opt = NULL;
 
 	list_for_each_entry(opt, &s->items, entry) {
@@ -559,6 +624,7 @@ static int load_advanced_shaper_qdisc(struct conf_sect_t *s) {
 		struct adv_shaper_qdisc *qdisc = preload_advanced_shaper_qdisc(opt->val);
 
 		if (qdisc) {
+			qdisc->isdown = isdown;
 			list_add_tail(&qdisc->entry, &conf_adv_shaper_qdisc_list);
 		} else {
 			return -1;
@@ -566,6 +632,10 @@ static int load_advanced_shaper_qdisc(struct conf_sect_t *s) {
 	}
 	return 0;
 }
+
+// ||=======================================================================================||
+// ||                                     CLASSES                                           ||
+// ||=======================================================================================||
 
 static void free_advanced_shaper_class() {
 	struct adv_shaper_class* class;
@@ -677,9 +747,8 @@ parse_end:
 
 //Config pattern:
 //class = CLASSID,PARENTID,RATE,BURST,CBURST
-static int load_advanced_shaper_class(struct conf_sect_t *s) {
-	free_advanced_shaper_class();
-
+static int load_advanced_shaper_class(struct conf_sect_t *s, __u8 isdown)
+{
 	struct conf_option_t *opt = NULL;
 
 	list_for_each_entry(opt, &s->items, entry) {
@@ -691,6 +760,7 @@ static int load_advanced_shaper_class(struct conf_sect_t *s) {
 		struct adv_shaper_class* adv_shaper_class_item = preload_advanced_shaper_class(opt->val);
 
 		if (adv_shaper_class_item) {
+			adv_shaper_class_item->isdown = isdown;
 			list_add_tail(&adv_shaper_class_item->entry, &conf_adv_shaper_class_list);
 		} else {
 			return -1;
@@ -698,6 +768,10 @@ static int load_advanced_shaper_class(struct conf_sect_t *s) {
 	}
 	return 0;
 }
+
+// ||=======================================================================================||
+// ||                                     FILTERS                                           ||
+// ||=======================================================================================||
 
 static void free_advanced_shaper_filter() {
 	struct adv_shaper_filter* filter;
@@ -764,7 +838,11 @@ static int load_filter_net(struct adv_shaper_filter *fopt, char **params, size_t
 
 		} else if (!strcmp(key, "ip")) {
 			if (u_parse_ip4cidr(value, &prefix, &prefix_len)) {
-				ip_mask = htonl(0xffffffff << (32 - prefix_len));
+				if (prefix_len) {
+					ip_mask = htonl(0xffffffff << (32 - prefix_len));
+				} else {
+					ip_mask = 0;
+				}
 			} else {
 				cannot_parse_log(key, value);
 				return -1;
@@ -1161,13 +1239,10 @@ parse_end:
 	return filter;
 }
 
-
 //Config pattern:
 //filter_net = PARENT,PRIO,IP4CIDR,(SRC/DST),FLOWID(aka CLASSID)
-static int load_advanced_shaper_filter(struct conf_sect_t *s) 
+static int load_advanced_shaper_filter(struct conf_sect_t *s, __u8 isdown)
 {
-	free_advanced_shaper_filter();
-
 	struct conf_option_t *opt;
 
 	list_for_each_entry(opt, &s->items, entry) {
@@ -1178,6 +1253,7 @@ static int load_advanced_shaper_filter(struct conf_sect_t *s)
 			struct adv_shaper_filter *adv_shaper_filter_item = preload_advanced_shaper_filter(opt->val);
 
 			if (adv_shaper_filter_item) {
+				adv_shaper_filter_item->isdown = isdown;
 				list_add_tail(&adv_shaper_filter_item->entry, &conf_adv_shaper_filter_list);
 			} else {
 				return -1;
@@ -1186,6 +1262,218 @@ static int load_advanced_shaper_filter(struct conf_sect_t *s)
 	}
 	return 0;
 }
+
+// ||=======================================================================================||
+// ||                                      ACTIONS                                          ||
+// ||=======================================================================================||
+
+static void free_advanced_shaper_action() {
+	struct adv_shaper_action* action;
+	while (!list_empty(&conf_adv_shaper_action_list)) {
+		action = list_entry(conf_adv_shaper_action_list.next, typeof(*action), entry);
+		list_del(&action->entry);
+		_free(action);
+	}
+}
+
+static int load_action_police(struct adv_shaper_action *aopt, char **params, size_t param_count)
+{
+#define cannot_parse_log(key, value)  \
+	log_error("adv_shaper: action: police: Cannot parse %s! (%s)\n", key, value)
+
+	__u32 mtu = 0;
+	__u32 mpu = 0;
+	__u32 rate = 0;
+	__u32 burst = 0;
+	int act = -1;
+
+	char *key = NULL;
+	char *value = NULL;
+
+	for (size_t i = 0; i < param_count; ++i) {
+		key = params[i];
+		if (i+1 < param_count) {
+			value = params[i+1];
+			++i;
+		} else {
+			log_error("adv_shaper: action: police: Not enough parameters for building key-value pair! key == (%s)\n", key);
+			return -1;
+		}
+		if (!strcmp(key, "mtu")) {
+
+			mtu = strtol(value, NULL, 10);
+
+		} else if (!strcmp(key, "mpu")) {
+
+			mpu = strtol(value, NULL, 10);
+
+		} else if (!strcmp(key, "rate")) {
+			if (!u_parse_u32(value, &rate)) {
+				cannot_parse_log(key, value);
+				return -1;
+			}
+		} else if (!strcmp(key, "burst")) {
+			if (!u_parse_u32(value, &burst)) {
+				cannot_parse_log(key, value);
+				return -1;
+			}
+		} else if (!strcmp(key, "action")) {
+			if (!strcmp(value, "drop")) {
+				act = TC_POLICE_SHOT;
+			} else if (!strcmp(value, "pass")) {
+				act = TC_POLICE_OK;
+			} else {
+				cannot_parse_log(key, value);
+				return -1;
+			}
+		} else {
+			log_error("adv_shaper: action: police: Unknown key! key == (%s)\n", key);
+			return -1;
+		}
+	}
+
+	if ( !mtu || (act < 0) ) {
+		log_error("adv_shaper: action: police: Not enough columns! Format - action = parent PARENTID priority PRIORITY police mtu MTU action pass|drop [mpu MPU] [rate RATE] [burst BURST] \n");
+		return -1;
+	}
+
+	aopt->mtu    = mtu;
+	aopt->mpu    = mpu;
+	aopt->rate   = rate  * 1000 / 8;
+	aopt->burst  = burst * 1000 / 8;
+	aopt->action = act;
+
+	return 0;
+#undef cannot_parse_log
+}
+
+static struct adv_shaper_action* preload_advanced_shaper_action(char *opt_str)
+{
+#define MINIMUM_PARSED_PARAMS 5
+#define POLICY_KIND_NUM       4
+#define cannot_parse_log(key, value)  \
+	log_error("adv_shaper: action: Cannot parse %s! (%s)\n", key, value)
+
+	struct adv_shaper_action *action = NULL;
+
+	char **params = NULL;
+	size_t parsed_params = split_string(&params, opt_str, ' ', MAX_PARAM_COUNT);
+
+	__u8 kind = 0;
+
+	if (parsed_params >= MINIMUM_PARSED_PARAMS) {
+		if (!strcmp(params[POLICY_KIND_NUM], "pass")) {
+			kind = ADV_SHAPER_ACTION_PASS;
+		} else if (!strcmp(params[POLICY_KIND_NUM], "police")) {
+			kind = ADV_SHAPER_ACTION_POLICE;
+		} else {
+			log_error("adv_shaper: action: Unknown action (%s). Supported : pass,police  (%s)\n", params[POLICY_KIND_NUM], opt_str);
+			goto parse_end;
+		}
+	} else {
+		log_error("adv_shaper: action: Not enough items! Format - action = parent PARENT priority PRIORITY KIND (KIND_PARAMS)  (%s)\n", opt_str);
+		goto parse_end;
+	}
+
+	__u32 parentid = 0;
+	__u32 priority = 0;
+
+	char *key = NULL;
+	char *value = NULL;
+
+	for (size_t i = 0; i < MINIMUM_PARSED_PARAMS-1; ++i) {
+		key   = params[i];
+		value = params[i+1];
+		++i;
+		if (!strcmp(key, "priority")) {
+
+			priority = strtol(value, NULL, 10);
+
+		} else if (!strcmp(key, "parent")) {
+			if (parse_classid(&parentid, value)) {
+				cannot_parse_log(key, value);
+				goto parse_end;
+			}
+		} else {
+			log_error("adv_shaper: action: Unknown key! key == (%s)\n", key);
+			goto parse_end;
+		}
+	}
+
+	if (!priority || !parentid) {
+		log_error("adv_shaper: action: Not enough columns! Format - action = parent PARENTID priority PRIORITY KIND KIND_PARAMS\n");
+		goto parse_end;
+	}
+
+	action = _malloc(sizeof(struct adv_shaper_action));
+	action->parentid = parentid;
+	action->priority = priority;
+
+	size_t sended_params = parsed_params - MINIMUM_PARSED_PARAMS;
+
+	if (kind == ADV_SHAPER_ACTION_PASS) {
+
+		action->kind = "pass";
+		action->action = TC_ACT_OK;
+		log_info2("adv_shaper: action: Loaded action (%s) as (parent 0x%x, priority %u, action %u)\n",
+				opt_str, action->parentid, action->priority, action->action);
+
+	} else if (kind == ADV_SHAPER_ACTION_POLICE) {
+
+		action->kind = "police";
+		if (!load_action_police(action, params+MINIMUM_PARSED_PARAMS, sended_params)) {
+			log_info2("adv_shaper: action: Loaded action police (%s) as (parent 0x%x, priority %u, rate %u, burst %u, mtu %u, mpu %u, action %u)\n",
+					opt_str, action->parentid, action->priority, action->rate, action->burst, action->mtu, action->mpu, action->action);
+		} else {
+			log_error("adv_shaper: action: Error while reading police action params (%s)\n", opt_str);
+			_free(action);
+			action = NULL;
+			goto parse_end;
+		}
+
+	} else {
+
+	}
+
+parse_end:
+	if (params) {
+		for (size_t i = 0; i < parsed_params; ++i) {
+			_free(params[i]);
+		}
+		_free(params);
+	}
+
+	return action;
+#undef cannot_parse_log
+#undef MINIMUM_PARSED_PARAMS
+#undef POLICY_KIND_NUM
+}
+
+static int load_advanced_shaper_action(struct conf_sect_t *s, __u8 isdown)
+{
+	struct conf_option_t *opt;
+
+	list_for_each_entry(opt, &s->items, entry) {
+		if (!strcmp(opt->name, "action")) {
+			if (!opt->val)
+				continue;
+
+			struct adv_shaper_action *adv_shaper_action_item = preload_advanced_shaper_action(opt->val);
+
+			if (adv_shaper_action_item) {
+				adv_shaper_action_item->isdown = isdown;
+				list_add_tail(&adv_shaper_action_item->entry, &conf_adv_shaper_action_list);
+			} else {
+				return -1;
+			}
+		}
+	}
+	return 0;
+}
+
+// ||=======================================================================================||
+// ||                                      CHECKERS                                         ||
+// ||=======================================================================================||
 
 //!!!IMPORTANT!!!
 //FIRST qdisc == root qdisc
@@ -1258,6 +1546,27 @@ static int check_advanced_shaper_filter(struct conf_sect_t *s)
 	return 0;
 }
 
+static int check_advanced_shaper_action(struct conf_sect_t *s) 
+{
+	struct conf_option_t *opt;
+
+	list_for_each_entry(opt, &s->items, entry) {
+		if (!strcmp(opt->name, "action")) {
+			if (!opt->val)
+				continue;
+
+			struct adv_shaper_action *adv_shaper_action_item = preload_advanced_shaper_action(opt->val);
+
+			if (adv_shaper_action_item) {
+				_free(adv_shaper_action_item);
+			} else {
+				return -1;
+			}
+		}
+	}
+
+	return 0;
+}
 
 static int check_advanced_shaper(struct conf_sect_t *s) 
 {
@@ -1266,6 +1575,7 @@ static int check_advanced_shaper(struct conf_sect_t *s)
 	res |= check_advanced_shaper_qdisc(s);
 	res |= check_advanced_shaper_class(s);
 	res |= check_advanced_shaper_filter(s);
+	res |= check_advanced_shaper_action(s);
 
 	if (res) {
 		log_info2("adv_shaper: Configuration checkout FAILED!\n");
@@ -1276,21 +1586,63 @@ static int check_advanced_shaper(struct conf_sect_t *s)
 	return res;
 }
 
+// ||=======================================================================================||
+// ||                                  MAIN LOADER                                          ||
+// ||=======================================================================================||
+
 void load_advanced_shaper()
 {
-	struct conf_sect_t *s = conf_get_section("advanced_shaper");
+	struct conf_sect_t *sect_download = conf_get_section("advanced_shaper");
+	struct conf_sect_t *sect_upload = conf_get_section("advanced_shaper_up");
+	int check_res = 0;
 
-	log_debug("adv_shaper: load adv_shaper section BEGIN\n");
-	if (s) {
-		pthread_rwlock_wrlock(&adv_shaper_lock);
+	log_debug("adv_shaper: load adv_shaper sections BEGIN\n");
+	pthread_rwlock_wrlock(&adv_shaper_lock);
 
-		if (!check_advanced_shaper(s)) {
-			load_advanced_shaper_qdisc(s);
-			load_advanced_shaper_class(s);
-			load_advanced_shaper_filter(s);
+	if (conf_up_limiter == LIM_ADV_SHAPER) {
+		if (sect_upload) {
+			check_res |= check_advanced_shaper(sect_upload);
+		} else {
+			log_error("adv_shaper: section \"advanced_shaper_up\" not found!\n");
+			goto out_err;
 		}
-
-		pthread_rwlock_unlock(&adv_shaper_lock);
 	}
-	log_debug("adv_shaper: load adv_shaper section END\n");
+
+	if (conf_down_limiter == LIM_ADV_SHAPER) {
+		if (sect_download) {
+			check_res |= check_advanced_shaper(sect_download);
+		} else {
+			log_error("adv_shaper: section \"advanced_shaper\" not found!\n");
+			goto out_err;
+		}
+	}
+
+	if (!check_res) {
+		free_advanced_shaper_action();
+		free_advanced_shaper_filter();
+		free_advanced_shaper_class();
+		free_advanced_shaper_qdisc();
+	} else {
+		log_error("adv_shaper: Error while configuration checkout!\n");
+		goto out_err;
+	}
+
+	if (conf_down_limiter == LIM_ADV_SHAPER && sect_download) {
+		load_advanced_shaper_qdisc(sect_download, ADV_SHAPER_DOWNLOAD);
+		load_advanced_shaper_class(sect_download, ADV_SHAPER_DOWNLOAD);
+		load_advanced_shaper_filter(sect_download, ADV_SHAPER_DOWNLOAD);
+		load_advanced_shaper_action(sect_download, ADV_SHAPER_DOWNLOAD);
+	}
+
+	if (conf_up_limiter == LIM_ADV_SHAPER && sect_upload) {
+		load_advanced_shaper_qdisc(sect_upload, ADV_SHAPER_UPLOAD);
+		load_advanced_shaper_class(sect_upload, ADV_SHAPER_UPLOAD);
+		load_advanced_shaper_filter(sect_upload, ADV_SHAPER_UPLOAD);
+		load_advanced_shaper_action(sect_upload, ADV_SHAPER_UPLOAD);
+	}
+
+out_err:
+	pthread_rwlock_unlock(&adv_shaper_lock);
+	log_debug("adv_shaper: load adv_shaper sections END\n");
 }
+

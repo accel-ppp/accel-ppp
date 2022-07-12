@@ -11,11 +11,14 @@
 #include <linux/if_ether.h>
 #include <linux/pkt_cls.h>
 #include <linux/pkt_sched.h>
+#include <linux/tc_act/tc_gact.h>
 #include <linux/tc_act/tc_mirred.h>
 #include <linux/tc_act/tc_skbedit.h>
 
 #include "log.h"
 #include "ppp.h"
+
+#include "memdebug.h"
 
 #include "shaper.h"
 #include "tc_core.h"
@@ -252,6 +255,14 @@ static int prepare_qdisc_opt(struct adv_shaper_qdisc *qdisc_opt, struct qdisc_op
 		opt->ecn      = qdisc_opt->ecn;
 		opt->qdisc    = qdisc_fq_codel;
 
+	} else if (!strcmp(qdisc_opt->kind, "ingress")) {
+
+		opt->kind     = "ingress";
+		opt->handle   = qdisc_opt->handle;
+		opt->parent   = qdisc_opt->parent;
+
+		opt->qdisc    = NULL;
+
 	} else {
 		return -1;
 	}
@@ -259,12 +270,14 @@ static int prepare_qdisc_opt(struct adv_shaper_qdisc *qdisc_opt, struct qdisc_op
 	return 0;
 }
 
-static int install_adv_root_qdisc(struct rtnl_handle *rth, int ifindex, int rate, int burst)
+static int install_adv_root_qdisc(struct rtnl_handle *rth, int ifindex, int rate, int burst, __u8 isdown)
 {
 	struct adv_shaper_qdisc *qdisc_opt;
 
 	list_for_each_entry(qdisc_opt, &conf_adv_shaper_qdisc_list, entry) {
-
+		if (qdisc_opt->isdown != isdown) {
+			continue;
+		}
 		struct qdisc_opt opt;
 
 		if (prepare_qdisc_opt(qdisc_opt, &opt, rate, burst)) {
@@ -283,12 +296,15 @@ static int install_adv_root_qdisc(struct rtnl_handle *rth, int ifindex, int rate
 	return 0;
 }
 
-static int install_adv_leaf_qdisc(struct rtnl_handle *rth, int ifindex, int rate, int burst)
+static int install_adv_leaf_qdisc(struct rtnl_handle *rth, int ifindex, int rate, int burst, __u8 isdown)
 {
 	struct adv_shaper_qdisc *qdisc_opt;
 	__u32 qdisc_num = 0;
 
 	list_for_each_entry(qdisc_opt, &conf_adv_shaper_qdisc_list, entry) {
+		if (qdisc_opt->isdown != isdown) {
+			continue;
+		}
 		if (qdisc_num == 0) {
 			++qdisc_num;
 			continue;
@@ -312,11 +328,15 @@ static int install_adv_leaf_qdisc(struct rtnl_handle *rth, int ifindex, int rate
 	return 0;
 }
 
-static int install_adv_class(struct rtnl_handle *rth, int ifindex, int rate, int burst)
+static int install_adv_class(struct rtnl_handle *rth, int ifindex, int rate, int burst, __u8 isdown)
 {
 	struct adv_shaper_class *class_opt;
 
 	list_for_each_entry(class_opt, &conf_adv_shaper_class_list, entry) {
+		if (class_opt->isdown != isdown) {
+			continue;
+		}
+
 		struct qdisc_opt opt = {
 			.kind = "htb",
 			.handle  = class_opt->classid,
@@ -347,7 +367,7 @@ static int install_adv_class(struct rtnl_handle *rth, int ifindex, int rate, int
 	return 0;
 }
 
-static int install_u32_filter(struct rtnl_handle *rth, int ifindex, struct adv_shaper_filter *filter_opt)
+static int install_u32_filter(struct rtnl_handle *rth, int ifindex, struct adv_shaper_filter *filter_opt, struct list_head *action_list)
 {
 	struct {
 	    struct nlmsghdr 	n;
@@ -388,6 +408,23 @@ static int install_u32_filter(struct rtnl_handle *rth, int ifindex, struct adv_s
 	struct rtattr *tail = NLMSG_TAIL(&req.n);
 	addattr_l(&req.n, MAX_MSG, TCA_OPTIONS, NULL, 0);
 
+	if (!list_empty(action_list)) {
+		int action_prio = 0;
+
+		struct rtattr *tail_action = NLMSG_TAIL(&req.n);
+		addattr_l(&req.n, MAX_MSG, TCA_U32_ACT, NULL, 0);
+
+		struct action_opt *action_opt = NULL;
+		list_for_each_entry(action_opt, action_list, entry) {
+			if (action_opt->action_prepare) {
+				++action_prio;
+				action_opt->action_prepare(action_opt, &req.n, &action_prio);
+			}
+		}
+
+		tail_action->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)tail_action;
+	}
+
 	__u32 flowid = filter_opt->classid;
 	addattr_l(&req.n, MAX_MSG, TCA_U32_CLASSID, &(flowid), 4);
 	addattr_l(&req.n, MAX_MSG, TCA_U32_SEL, &sel, sizeof(sel));
@@ -400,7 +437,7 @@ static int install_u32_filter(struct rtnl_handle *rth, int ifindex, struct adv_s
 	return 0;
 }
 
-static int install_fw_filter(struct rtnl_handle *rth, int ifindex, struct adv_shaper_filter *filter_opt)
+static int install_fw_filter(struct rtnl_handle *rth, int ifindex, struct adv_shaper_filter *filter_opt, struct list_head *action_list)
 {
 	struct {
 		struct nlmsghdr 	n;
@@ -425,6 +462,24 @@ static int install_fw_filter(struct rtnl_handle *rth, int ifindex, struct adv_sh
 	struct rtattr *tail = NLMSG_TAIL(&req.n);
 	addattr_l(&req.n, TCA_BUF_MAX, TCA_OPTIONS, NULL, 0);
 
+	if (!list_empty(action_list)) {
+		int action_prio = 0;
+
+		struct rtattr *tail_action = NLMSG_TAIL(&req.n);
+		addattr_l(&req.n, MAX_MSG, TCA_FW_ACT, NULL, 0);
+
+		struct action_opt *action_opt = NULL;
+		list_for_each_entry(action_opt, action_list, entry) {
+			if (action_opt->action_prepare) {
+				++action_prio;
+				action_opt->action_prepare(action_opt, &req.n, &action_prio);
+			}
+		}
+
+		tail_action->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)tail_action;
+	}
+
+
 	__u32 flowid = filter_opt->classid;
 	addattr32(&req.n, TCA_BUF_MAX, TCA_FW_CLASSID, flowid);
 
@@ -437,13 +492,132 @@ static int install_fw_filter(struct rtnl_handle *rth, int ifindex, struct adv_sh
 
 }
 
-static int install_adv_filter(struct rtnl_handle *rth, int ifindex)
+static int action_pass(struct action_opt *aopt, struct nlmsghdr *n, int *prio)
 {
+	struct rtattr *tail, *tail1;
+
+	struct tc_gact p = {
+		.action = aopt->action,
+	};
+
+	tail = NLMSG_TAIL(n);
+	addattr_l(n, MAX_MSG, *prio, NULL, 0);
+	addattr_l(n, MAX_MSG, TCA_ACT_KIND, "gact", 5);
+
+	tail1 = NLMSG_TAIL(n);
+
+	addattr_l(n, MAX_MSG, TCA_ACT_OPTIONS | NLA_F_NESTED, NULL, 0);
+	addattr_l(n, MAX_MSG, TCA_GACT_PARMS, &p, sizeof(p));
+
+	tail1->rta_len = (void *)NLMSG_TAIL(n) - (void *)tail1;
+
+	tail->rta_len = (void *)NLMSG_TAIL(n) - (void *)tail;
+
+	return 0;
+}
+
+static int action_police(struct action_opt *aopt, struct nlmsghdr *n, int *prio)
+{
+	__u32 rtab[256];
+	struct rtattr *tail1, *tail2;
+	int Rcell_log = -1;
+	unsigned int linklayer  = LINKLAYER_ETHERNET; /* Assume ethernet */
+
+	struct tc_police police = {
+		.action    = aopt->action,
+		.rate.rate = aopt->rate,
+		.rate.mpu  = aopt->mpu,
+		.mtu       = aopt->mtu,
+		.limit     = (double)aopt->rate * conf_latency + aopt->burst,
+		.burst     = tc_calc_xmittime(aopt->rate, aopt->burst),
+	};
+
+	if (tc_calc_rtable(&police.rate, rtab, Rcell_log, aopt->mtu, linklayer) < 0) {
+		log_error("adv_shaper: failed to calculate ceil rate table.\n");
+		return -1;
+	}
+
+	tail1 = NLMSG_TAIL(n);
+	addattr_l(n, MAX_MSG, *prio, NULL, 0);
+	addattr_l(n, MAX_MSG, TCA_ACT_KIND, "police", 7);
+
+	tail2 = NLMSG_TAIL(n);
+	addattr_l(n, MAX_MSG, TCA_ACT_OPTIONS, NULL, 0);
+	addattr_l(n, MAX_MSG, TCA_POLICE_TBF, &police, sizeof(police));
+	addattr_l(n, MAX_MSG, TCA_POLICE_RATE, rtab, 1024);
+	tail2->rta_len = (void *)NLMSG_TAIL(n) - (void *)tail2;
+
+	tail1->rta_len = (void *)NLMSG_TAIL(n) - (void *)tail1;
+
+	return 0;
+}
+
+static int prepare_action_opt(struct adv_shaper_action *action_opt, struct action_opt *opt, int rate, int burst)
+{
+	if (!strcmp(action_opt->kind, "pass")) {
+
+		opt->kind   = "pass";
+		opt->action = action_opt->action;
+
+		opt->action_prepare = action_pass;
+
+	} else if (!strcmp(action_opt->kind, "police")) {
+
+		opt->kind     = "police";
+		opt->rate     = action_opt->rate;
+		opt->burst    = action_opt->burst;
+		opt->mtu      = action_opt->mtu;
+		opt->mpu      = action_opt->mpu;
+		opt->action   = action_opt->action;
+
+		opt->action_prepare = action_police;
+
+		if (!opt->rate) {
+			opt->rate = rate;
+		}
+
+		if (!opt->burst) {
+			opt->burst = burst;
+		}
+
+	} else {
+		return -1;
+	}
+
+	return 0;
+}
+
+static int install_adv_filter(struct rtnl_handle *rth, int ifindex, int rate, int burst, __u8 isdown)
+{
+	LIST_HEAD(adv_shaper_action_for_filter_list);
+	struct action_opt *opt = NULL;
 	struct adv_shaper_filter *filter_opt;
 
 	list_for_each_entry(filter_opt, &conf_adv_shaper_filter_list, entry) {
+		if (filter_opt->isdown != isdown) {
+			continue;
+		}
+
+		struct adv_shaper_action *action_opt;
+
+		list_for_each_entry(action_opt, &conf_adv_shaper_action_list, entry) {
+			if (action_opt->parentid == filter_opt->parentid && action_opt->priority == filter_opt->priority) {
+				opt = _malloc(sizeof(*opt));
+				memset(opt, 0, sizeof(*opt));
+
+				if (prepare_action_opt(action_opt, opt, rate, burst)) {
+					_free(opt);
+					log_error("adv_shaper: install: error while preparing action! (kind %s, parentid 0x%x, priority %u, action %u)\n",
+						action_opt->kind, action_opt->parentid, action_opt->priority, action_opt->action);
+					goto out_error;
+				}
+
+				list_add_tail(&opt->entry, &adv_shaper_action_for_filter_list);
+			}
+		}
+
 		if (filter_opt->kind == ADV_SHAPER_FILTER_NET || filter_opt->kind == ADV_SHAPER_FILTER_NET6 || filter_opt->kind == ADV_SHAPER_FILTER_U32_RAW) {
-			if (install_u32_filter(rth, ifindex, filter_opt)) {
+			if (install_u32_filter(rth, ifindex, filter_opt, &adv_shaper_action_for_filter_list)) {
 				log_error("limiter: adv_shaper: filter: u32: error while installing filter (parent 0x%x, priority %u, classid 0x%x)!\n",
 						filter_opt->parentid, filter_opt->priority, filter_opt->classid);
 
@@ -451,35 +625,49 @@ static int install_adv_filter(struct rtnl_handle *rth, int ifindex)
 					log_error("limiter: adv_shaper: filter: u32: error while installing filter (key %lu: value 0x%x, mask 0x%x, offset %u, offmask 0x%x)!\n",
 						i, filter_opt->keys[i].val, filter_opt->keys[i].mask, filter_opt->keys[i].off, filter_opt->keys[i].offmask);
 				}
-				return -1;
+				goto out_error;
 			}
 		} else if (filter_opt->kind == ADV_SHAPER_FILTER_FW) {
-			if (install_fw_filter(rth, ifindex, filter_opt)) {
+			if (install_fw_filter(rth, ifindex, filter_opt, &adv_shaper_action_for_filter_list)) {
 				log_error("limiter: adv_shaper: filter: fw: error while installing filter (0x%x, %u, %u, 0x%x)!\n",
 						filter_opt->parentid, filter_opt->priority, filter_opt->fwmark, filter_opt->classid);
-				return -1;
+				goto out_error;
 			}
 		} else {
 			log_error("limiter: adv_shaper: filter: Unknown filter kind - (%u)", filter_opt->kind);
 		}
+
+		while (!list_empty(&adv_shaper_action_for_filter_list)) {
+			opt = list_entry(adv_shaper_action_for_filter_list.next, typeof(*opt), entry);
+			list_del(&opt->entry);
+			_free(opt);
+		}
+		continue;
+out_error:
+		while (!list_empty(&adv_shaper_action_for_filter_list)) {
+			opt = list_entry(adv_shaper_action_for_filter_list.next, typeof(*opt), entry);
+			list_del(&opt->entry);
+			_free(opt);
+		}
+		return -1;
 	}
 
 	return 0;
 }
 
 
-static int install_adv_shaper(struct rtnl_handle *rth, int ifindex, int rate, int burst)
+static int install_adv_shaper(struct rtnl_handle *rth, int ifindex, int rate, int burst, __u8 isdown)
 {
 	__u8 res = 0;
 	pthread_rwlock_rdlock(&adv_shaper_lock);
 
-	res = install_adv_root_qdisc(rth, ifindex, rate, burst);
-	if(!res) 
-		res = install_adv_class(rth, ifindex, rate, burst);
-	if(!res) 
-		res = install_adv_leaf_qdisc(rth, ifindex, rate, burst);
-	if(!res) 
-		res = install_adv_filter(rth, ifindex);
+	res = install_adv_root_qdisc(rth, ifindex, rate, burst, isdown);
+	if(!res)
+		res = install_adv_class(rth, ifindex, rate, burst, isdown);
+	if(!res)
+		res = install_adv_leaf_qdisc(rth, ifindex, rate, burst, isdown);
+	if(!res)
+		res = install_adv_filter(rth, ifindex, rate, burst, isdown);
 
 	pthread_rwlock_unlock(&adv_shaper_lock);
 
@@ -797,7 +985,7 @@ int install_limiter(struct ap_session *ses, int down_speed, int down_burst, int 
 		if (conf_down_limiter == LIM_TBF)
 			r = install_tbf(rth, ses->ifindex, down_speed, down_burst);
 		else if (conf_down_limiter == LIM_ADV_SHAPER) {
-			r = install_adv_shaper(rth, ses->ifindex, down_speed, down_burst);
+			r = install_adv_shaper(rth, ses->ifindex, down_speed, down_burst, ADV_SHAPER_DOWNLOAD);
 		} else {
 			r = install_htb(rth, ses->ifindex, down_speed, down_burst);
 			if (r == 0)
@@ -811,7 +999,9 @@ int install_limiter(struct ap_session *ses, int down_speed, int down_burst, int 
 
 		if (conf_up_limiter == LIM_POLICE)
 			r = install_police(rth, ses->ifindex, up_speed, up_burst);
-		else {
+		else if (conf_up_limiter == LIM_ADV_SHAPER) {
+			r = install_adv_shaper(rth, ses->ifindex, up_speed, up_burst, ADV_SHAPER_UPLOAD);
+		} else {
 			r = install_htb_ifb(rth, ses->ifindex, idx, up_speed, up_burst);
 			if (r == 0)
 				r = install_leaf_qdisc(rth, conf_ifb_ifindex, 0x00010000 + idx, idx << 16);
