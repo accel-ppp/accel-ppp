@@ -2756,6 +2756,22 @@ static void set_vlan_timeout(struct ipoe_serv *serv)
 		triton_timer_add(&serv->ctx, &serv->timer, 0);
 }
 
+int ipoe_vlan_mon_servers_check(int ifindex)
+{
+	struct ipoe_serv *serv;
+
+	pthread_mutex_lock(&serv_lock);
+	list_for_each_entry(serv, &serv_list, entry) {
+		if (serv->ifindex == ifindex) {
+			pthread_mutex_unlock(&serv_lock);
+			return 1;
+		}
+	}
+	pthread_mutex_unlock(&serv_lock);
+
+	return 0;
+}
+
 int ipoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char* vlan_ifname, int vlan_ifname_len)
 {
 	struct conf_sect_t *sect = conf_get_section("ipoe");
@@ -3506,7 +3522,7 @@ static void load_vlan_mon(struct conf_sect_t *sect)
 	static int registered = 0;
 
 	if (!registered) {
-		vlan_mon_register_proto(ETH_P_IP, ipoe_vlan_mon_notify);
+		vlan_mon_register_proto(ETH_P_IP, ipoe_vlan_mon_notify, ipoe_vlan_mon_servers_check);
 		registered = 1;
 	}
 }

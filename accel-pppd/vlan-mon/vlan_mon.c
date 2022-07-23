@@ -48,7 +48,11 @@ static struct rtnl_handle rth;
 static struct triton_md_handler_t mc_hnd;
 static int vlan_mon_genl_id;
 
+//Callback for upstream server (ipoe, pppoe)
 static vlan_mon_notify cb[2];
+
+//Callback to check server is exists on vlan
+static vlan_mon_upstream_server_check upstream_checker[2];
 
 static char conf_vlan_name[IFNAMSIZ];
 static int conf_remove_when_no_subscribers = 0;
@@ -90,7 +94,7 @@ uint8_t proto_to_mask(int proto)
 		return VLAN_MON_DEVICE_SERVER_IPOE;
 }
 
-void __export vlan_mon_register_proto(uint16_t proto, vlan_mon_notify func)
+void __export vlan_mon_register_proto(uint16_t proto, vlan_mon_notify func, vlan_mon_upstream_server_check checker_func)
 {
 	log_debug("vlan_mon: registering callback for proto=%04x\n", proto);
 
@@ -100,6 +104,7 @@ void __export vlan_mon_register_proto(uint16_t proto, vlan_mon_notify func)
 		proto = 0;
 
 	cb[proto] = func;
+	upstream_checker[proto] = checker_func;
 
 	struct conf_sect_t *s = conf_get_section("vlan_mon");
 	load_interfaces(s);
@@ -351,6 +356,34 @@ static struct vlan_mon_device* get_vlan_mon_device(int ifindex)
 	return NULL;
 }
 
+int __export vlan_mon_timer_start(struct vlan_mon_device* vl_dev)
+{
+	return 0;
+}
+
+int search_servers_for_other_proto(int ifindex, uint16_t proto)
+{
+	//Get other proto
+	//PPP -> IP
+	//IP  -> PPP
+	uint16_t another_proto = 0;
+	if (proto == ETH_P_PPP_DISC) {
+		another_proto = ETH_P_IP;
+	} else {
+		another_proto = ETH_P_PPP_DISC;
+	}
+
+	int vlan_mon_proto = proto_to_vlan_mon_proto(another_proto);
+
+	if ( upstream_checker[vlan_mon_proto] ) {
+
+		return upstream_checker[vlan_mon_proto](ifindex);
+
+	}
+
+	return 0;
+}
+
 int __export vlan_mon_serv_down(int ifindex, uint16_t vid, uint16_t proto)
 {
 	log_debug("vlan_mon: upstream server down proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
@@ -364,21 +397,31 @@ int __export vlan_mon_serv_down(int ifindex, uint16_t vid, uint16_t proto)
 		vl_dev->serv_mask &= ~proto_to_mask(proto);
 		vlan_mon_add_vid(vl_dev->parent_ifindex, proto, vl_dev->vid);
 
-		if (!vl_dev->serv_mask) {
-			if (conf_remove_when_no_subscribers) {
-				log_info2("vlan_mon: remove vlan interface ifindex=%i vid=%i\n", ifindex, vid);
-				iplink_vlan_del(ifindex);
-
-				log_debug("vlan_mon: remove vlan_mon_device ifindex=%i vid=%i\n", ifindex, vid);
-
-				list_del(&vl_dev->entry);
-				pthread_mutex_unlock(&vl_dev->lock);
-				_free(vl_dev);
-
-				goto out;
-			}
+		//If upstream servers is present in vlan or not need to remove vlan then exit from function
+		if (vl_dev->serv_mask || !conf_remove_when_no_subscribers) {
+			pthread_mutex_unlock(&vl_dev->lock);
+			goto out;
 		}
+
+		//Search upstream servers for other proto. Needed in case when accel-ppp started with created vlans
+		log_debug("vlan_mon: search servers by other proto for proto=%04x\n", proto);
+		if (search_servers_for_other_proto(ifindex, proto)) {
+			log_info2("vlan_mon: servers by other proto EXISTS for proto=%04x\n", proto);
+			pthread_mutex_unlock(&vl_dev->lock);
+			goto out;
+		}
+
+		//If we can remove the interface then we remove it
+		log_info2("vlan_mon: remove vlan interface ifindex=%i vid=%i\n", ifindex, vid);
+		iplink_vlan_del(ifindex);
+
+		log_debug("vlan_mon: remove vlan_mon_device ifindex=%i vid=%i\n", ifindex, vid);
+
+		list_del(&vl_dev->entry);
 		pthread_mutex_unlock(&vl_dev->lock);
+		_free(vl_dev);
+
+		goto out;
 	} else {
 		log_warn("vlan_mon: vlan_mon_device ifindex=%i not found!\n", ifindex);
 		pthread_rwlock_unlock(&vlan_mon_devices_lock);

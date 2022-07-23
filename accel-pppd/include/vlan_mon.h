@@ -15,6 +15,8 @@ struct vlan_mon_device {
 	int ifindex;
 	uint16_t vid;
 	uint8_t serv_mask;
+
+	struct triton_timer_t timer;
 };
 
 extern struct list_head vlan_mon_devices;
@@ -23,8 +25,9 @@ extern pthread_rwlock_t vlan_mon_devices_lock;
 __export extern int conf_vlan_timeout;
 
 typedef int (*vlan_mon_notify)(int ifindex, int svid, int vid, int vlan_ifindex, char* vlan_ifname, int vlan_ifname_len);
+typedef int (*vlan_mon_upstream_server_check)(int ifindex);
 
-void vlan_mon_register_proto(uint16_t proto, vlan_mon_notify cb);
+void vlan_mon_register_proto(uint16_t proto, vlan_mon_notify cb, vlan_mon_upstream_server_check checker_func);
 
 int vlan_mon_add(int ifindex, uint16_t proto, long *mask, int len);
 int vlan_mon_add_vid(int ifindex, uint16_t proto, uint16_t vid);

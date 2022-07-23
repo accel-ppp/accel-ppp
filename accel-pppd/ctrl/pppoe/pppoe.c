@@ -1653,6 +1653,22 @@ static void set_vlan_timeout(struct pppoe_serv_t *serv)
 	}
 }
 
+int pppoe_vlan_mon_servers_check(int ifindex)
+{
+	struct pppoe_serv_t *serv;
+
+	pthread_rwlock_rdlock(&serv_lock);
+	list_for_each_entry(serv, &serv_list, entry) {
+		if (serv->ifindex == ifindex) {
+			pthread_rwlock_unlock(&serv_lock);
+			return 1;
+		}
+	}
+	pthread_rwlock_unlock(&serv_lock);
+
+	return 0;
+}
+
 int pppoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char* vlan_ifname, int vlan_ifname_len)
 {
 	struct conf_sect_t *sect = conf_get_section("pppoe");
@@ -1726,7 +1742,7 @@ static void load_vlan_mon(struct conf_sect_t *sect)
 	static int registered = 0;
 
 	if (!registered) {
-		vlan_mon_register_proto(ETH_P_PPP_DISC, pppoe_vlan_mon_notify);
+		vlan_mon_register_proto(ETH_P_PPP_DISC, pppoe_vlan_mon_notify, pppoe_vlan_mon_servers_check);
 		registered = 1;
 	}
 }
