@@ -219,7 +219,6 @@ static void __ipoe_session_start(struct ipoe_session *ses);
 static int ipoe_rad_send_auth_request(struct rad_plugin_t *rad, struct rad_packet_t *pack);
 static int ipoe_rad_send_acct_request(struct rad_plugin_t *rad, struct rad_packet_t *pack);
 static void ipoe_session_create_auto(struct ipoe_serv *serv);
-static void ipoe_serv_timeout(struct triton_timer_t *t);
 static struct ipoe_session *ipoe_session_create_up(struct ipoe_serv *serv, struct ethhdr *eth, struct iphdr *iph, struct _arphdr *arph);
 static void __terminate(struct ap_session *ses);
 static void ipoe_ipv6_disable(struct ipoe_serv *serv);
@@ -1263,8 +1262,9 @@ static void ipoe_session_finished(struct ap_session *s)
 	pthread_mutex_lock(&ses->serv->lock);
 	list_del(&ses->entry);
 	ses->serv->sess_cnt--;
-	if  ((ses->serv->vlan_mon || ses->serv->need_close) && list_empty(&ses->serv->sessions))
-		triton_context_call(&ses->serv->ctx, (triton_event_func)ipoe_serv_release, ses->serv);
+	if  ((ses->serv->vlan_mon || ses->serv->need_close) && list_empty(&ses->serv->sessions)) {
+		on_vlan_mon_upstream_server_no_clients(ses->serv->ifindex, ses->serv->vid, ETH_P_IP);
+	}
 	pthread_mutex_unlock(&ses->serv->lock);
 
 	triton_context_call(&ses->ctx, (triton_event_func)ipoe_session_free, ses);
@@ -1411,9 +1411,9 @@ static struct ipoe_session *ipoe_session_create_dhcpv4(struct ipoe_serv *serv, s
 	list_add_tail(&ses->entry, &serv->sessions);
 	serv->sess_cnt++;
 	//pthread_mutex_unlock(&serv->lock);
-
-	if (serv->timer.tpd)
-		triton_timer_del(&serv->timer);
+	if (serv->vlan_mon) {
+		on_vlan_mon_upstream_server_have_clients(serv->ifindex, serv->vid, ETH_P_IP);
+	}
 
 	dhcpv4_packet_ref(pack);
 
@@ -1803,8 +1803,10 @@ static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet 
 		return;
 
 	pthread_mutex_lock(&serv->lock);
-	if (serv->timer.tpd)
-		triton_timer_mod(&serv->timer, 0);
+
+	if (serv->vlan_mon) {
+		on_vlan_mon_upstream_server_have_clients(serv->ifindex, serv->vid, ETH_P_IP);
+	}
 
 	if (pack->msg_type == DHCPDISCOVER) {
 		if (check_notify(serv, pack))
@@ -2135,8 +2137,9 @@ static struct ipoe_session *ipoe_session_create_up(struct ipoe_serv *serv, struc
 	list_add_tail(&ses->entry, &serv->sessions);
 	serv->sess_cnt++;
 
-	if (serv->timer.tpd)
-		triton_timer_del(&serv->timer);
+	if (serv->vlan_mon) {
+		on_vlan_mon_upstream_server_have_clients(serv->ifindex, serv->vid, ETH_P_IP);
+	}
 
 	if (arph) {
 		ses->arph = _malloc(sizeof(*arph));
@@ -2556,15 +2559,6 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 		return;
 	}
 
-	if (serv->vlan_mon && !serv->need_close && !ap_shutdown && !serv->opt_auto) {
-		if (serv->timer.tpd)
-			triton_timer_mod(&serv->timer, 0);
-		else
-			triton_timer_add(&serv->ctx, &serv->timer, 0);
-
-		pthread_mutex_unlock(&serv->lock);
-		return;
-	}
 	pthread_mutex_unlock(&serv->lock);
 
 	log_info2("ipoe: stop interface %s\n", serv->ifname);
@@ -2609,14 +2603,11 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 	if (serv->disc_timer.tpd)
 		triton_timer_del(&serv->disc_timer);
 
-	if (serv->timer.tpd)
-		triton_timer_del(&serv->timer);
-
 	if (!serv->opt_auto)
 		ipoe_nl_del_interface(serv->ifindex);
 
 	if (serv->vlan_mon) {
-		vlan_mon_serv_down(serv->ifindex, serv->vid, ETH_P_IP);
+		on_vlan_mon_upstream_server_down(serv->ifindex, serv->vid, ETH_P_IP);
 	}
 
 	triton_context_unregister(&serv->ctx);
@@ -2747,15 +2738,6 @@ static int get_offer_delay()
 	return 0;
 }
 
-static void set_vlan_timeout(struct ipoe_serv *serv)
-{
-	serv->timer.expire = ipoe_serv_timeout;
-	serv->timer.expire_tv.tv_sec = conf_vlan_timeout;
-
-	if (list_empty(&serv->sessions))
-		triton_timer_add(&serv->ctx, &serv->timer, 0);
-}
-
 int ipoe_vlan_mon_servers_check(int ifindex)
 {
 	struct ipoe_serv *serv;
@@ -2769,6 +2751,36 @@ int ipoe_vlan_mon_servers_check(int ifindex)
 	}
 	pthread_mutex_unlock(&serv_lock);
 
+	return 0;
+}
+
+int ipoe_vlan_mon_pre_down(int ifindex)
+{
+	struct ipoe_serv *serv;
+
+	pthread_mutex_lock(&serv_lock);
+	list_for_each_entry(serv, &serv_list, entry) {
+		if (serv->ifindex != ifindex) {
+			continue;
+		}
+		pthread_mutex_lock(&serv->lock);
+
+		if (!serv->vlan_mon) {
+			serv->vlan_mon = 1;
+		}
+		serv->need_close = 1;
+
+		if (serv->sess_cnt) {
+			log_debug("vlan_mon: ipoe: pre_down: session on serv ifindex=%i exists! Drop it.\n", serv->ifindex);
+			ipoe_drop_sessions(serv, NULL);
+		} else {
+			log_debug("vlan_mon: ipoe: pre_down: sessions on serv ifindex=%i not found.\n", serv->ifindex);
+			triton_context_call(&serv->ctx, (triton_event_func)ipoe_serv_release, serv);
+		}
+		pthread_mutex_unlock(&serv->lock);
+		break;
+	}
+	pthread_mutex_unlock(&serv_lock);
 	return 0;
 }
 
@@ -2793,7 +2805,6 @@ int ipoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char*
 		if (serv->ifindex == vlan_ifindex) {
 			if (!serv->vlan_mon) {
 				serv->vlan_mon = 1;
-				set_vlan_timeout(serv);
 			}
 			pthread_mutex_unlock(&serv_lock);
 			return 0;
@@ -2838,15 +2849,6 @@ int ipoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char*
 	}
 
 	return -1;
-}
-
-static void ipoe_serv_timeout(struct triton_timer_t *t)
-{
-	struct ipoe_serv *serv = container_of(t, typeof(*serv), timer);
-
-	serv->need_close = 1;
-
-	ipoe_serv_release(serv);
 }
 
 static void ipoe_ipv6_enable(struct ipoe_serv *serv)
@@ -3199,7 +3201,6 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 
 	if (vlan_mon) {
 		serv->vlan_mon = 1;
-		set_vlan_timeout(serv);
 	}
 
 	if (opt_mtu)
@@ -3521,8 +3522,14 @@ static void load_vlan_mon(struct conf_sect_t *sect)
 {
 	static int registered = 0;
 
+	vlan_mon_callbacks cb = {
+		.notify       = ipoe_vlan_mon_notify,
+		.server_check = ipoe_vlan_mon_servers_check,
+		.pre_down     = ipoe_vlan_mon_pre_down
+	};
+
 	if (!registered) {
-		vlan_mon_register_proto(ETH_P_IP, ipoe_vlan_mon_notify, ipoe_vlan_mon_servers_check);
+		vlan_mon_register_proto(ETH_P_IP, cb);
 		registered = 1;
 	}
 }

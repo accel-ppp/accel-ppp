@@ -45,7 +45,6 @@ struct ipoe_serv {
 	struct list_head arp_list;
 	struct list_head req_list;
 	struct triton_timer_t disc_timer;
-	struct triton_timer_t timer;
 	pthread_mutex_t lock;
 	int parent_ifindex;
 	int vid;

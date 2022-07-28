@@ -138,31 +138,6 @@ static void pppoe_send_PADT(struct pppoe_conn_t *conn);
 void pppoe_server_free(struct pppoe_serv_t *serv);
 static int init_secret(struct pppoe_serv_t *serv);
 static void __pppoe_server_start(const char *ifname, const char *opt, void *cli, int parent_ifindex, int vid, int vlan_mon);
-static void pppoe_serv_timeout(struct triton_timer_t *t);
-static void set_vlan_timeout(struct pppoe_serv_t *serv);
-
-static void pppoe_serv_start_timer(struct pppoe_serv_t *serv)
-{
-	pthread_mutex_lock(&serv->lock);
-	if (serv->conn_cnt) {
-		pthread_mutex_unlock(&serv->lock);
-		return;
-	}
-
-	if (conf_vlan_timeout) {
-		serv->timer.expire = pppoe_serv_timeout;
-		serv->timer.expire_tv.tv_sec = conf_vlan_timeout;
-		if (serv->timer.tpd)
-			triton_timer_mod(&serv->timer, 0);
-		else
-			triton_timer_add(&serv->ctx, &serv->timer, 0);
-		pthread_mutex_unlock(&serv->lock);
-	} else {
-		pthread_mutex_unlock(&serv->lock);
-		pppoe_disc_stop(serv);
-		pppoe_server_free(serv);
-	}
-}
 
 static void disconnect(struct pppoe_conn_t *conn)
 {
@@ -188,7 +163,7 @@ static void disconnect(struct pppoe_conn_t *conn)
 			triton_context_call(&serv->ctx, (triton_event_func)pppoe_server_free, serv);
 			pthread_mutex_unlock(&serv->lock);
 		} else if (serv->vlan_mon) {
-			triton_context_call(&serv->ctx, (triton_event_func)pppoe_serv_start_timer, serv);
+			on_vlan_mon_upstream_server_no_clients(serv->ifindex, serv->vid, ETH_P_PPP_DISC);
 			pthread_mutex_unlock(&conn->serv->lock);
 		} else
 			pthread_mutex_unlock(&serv->lock);
@@ -423,9 +398,10 @@ static struct pppoe_conn_t *allocate_channel(struct pppoe_serv_t *serv, const ui
 
 	pthread_mutex_lock(&serv->lock);
 	list_add_tail(&conn->entry, &serv->conn_list);
-	if (serv->timer.tpd)
-		triton_timer_del(&serv->timer);
 	serv->conn_cnt++;
+	if (serv->vlan_mon) {
+		on_vlan_mon_upstream_server_have_clients(serv->ifindex, serv->vid, ETH_P_PPP_DISC);
+	}
 	pthread_mutex_unlock(&serv->lock);
 
 	return conn;
@@ -1301,22 +1277,6 @@ static void pppoe_serv_close(struct triton_context_t *ctx)
 	pthread_mutex_unlock(&serv->lock);
 }
 
-static void pppoe_serv_timeout(struct triton_timer_t *t)
-{
-	struct pppoe_serv_t *serv = container_of(t, typeof(*serv), timer);
-
-	pthread_mutex_lock(&serv->lock);
-	if (serv->conn_cnt) {
-		pthread_mutex_unlock(&serv->lock);
-		return;
-	}
-	pthread_mutex_unlock(&serv->lock);
-
-	pppoe_disc_stop(serv);
-
-	pppoe_server_free(serv);
-}
-
 static int parse_server(const char *opt, int *padi_limit, struct ap_net **net)
 {
 	char *ptr, *endptr;
@@ -1541,8 +1501,9 @@ static void __pppoe_server_start(const char *ifname, const char *opt, void *cli,
 
 	if (vlan_mon) {
 		serv->vlan_mon = 1;
-		set_vlan_timeout(serv);
 	}
+
+	log_info2("pppoe: start interface %s (%s)\n", ifname, opt ? opt : "");
 
 	pthread_rwlock_wrlock(&serv_lock);
 	list_add_tail(&serv->entry, &serv_list);
@@ -1595,11 +1556,8 @@ void pppoe_server_free(struct pppoe_serv_t *serv)
 		free_delayed_pado(pado);
 	}
 
-	if (serv->timer.tpd)
-		triton_timer_del(&serv->timer);
-
 	if (serv->vlan_mon) {
-		vlan_mon_serv_down(serv->ifindex, serv->vid, ETH_P_PPP_DISC);
+		on_vlan_mon_upstream_server_down(serv->ifindex, serv->vid, ETH_P_PPP_DISC);
 	}
 
 	triton_context_unregister(&serv->ctx);
@@ -1643,16 +1601,6 @@ static int init_secret(struct pppoe_serv_t *serv)
 	return 0;
 }
 
-static void set_vlan_timeout(struct pppoe_serv_t *serv)
-{
-	if (conf_vlan_timeout) {
-		serv->timer.expire = pppoe_serv_timeout;
-		serv->timer.expire_tv.tv_sec = conf_vlan_timeout;
-		if (!serv->conn_cnt)
-			triton_timer_add(&serv->ctx, &serv->timer, 0);
-	}
-}
-
 int pppoe_vlan_mon_servers_check(int ifindex)
 {
 	struct pppoe_serv_t *serv;
@@ -1666,6 +1614,29 @@ int pppoe_vlan_mon_servers_check(int ifindex)
 	}
 	pthread_rwlock_unlock(&serv_lock);
 
+	return 0;
+}
+
+int pppoe_vlan_mon_pre_down(int ifindex)
+{
+	struct pppoe_serv_t *serv;
+
+	pthread_rwlock_rdlock(&serv_lock);
+	list_for_each_entry(serv, &serv_list, entry) {
+		if (serv->ifindex != ifindex) {
+			continue;
+		}
+		pthread_mutex_lock(&serv->lock);
+
+		if (!serv->vlan_mon) {
+			serv->vlan_mon = 1;
+		}
+		triton_context_call(&serv->ctx, (triton_event_func)_server_stop, serv);
+
+		pthread_mutex_unlock(&serv->lock);
+		break;
+	}
+	pthread_rwlock_unlock(&serv_lock);
 	return 0;
 }
 
@@ -1690,7 +1661,6 @@ int pppoe_vlan_mon_notify(int ifindex, int svid, int vid, int vlan_ifindex, char
 		if (serv->ifindex == vlan_ifindex) {
 			if (!serv->vlan_mon) {
 				serv->vlan_mon = 1;
-				set_vlan_timeout(serv);
 			}
 			pthread_rwlock_unlock(&serv_lock);
 			return 0;
@@ -1741,8 +1711,14 @@ static void load_vlan_mon(struct conf_sect_t *sect)
 {
 	static int registered = 0;
 
+	vlan_mon_callbacks cb = {
+		.notify       = pppoe_vlan_mon_notify,
+		.server_check = pppoe_vlan_mon_servers_check,
+		.pre_down     = pppoe_vlan_mon_pre_down
+	};
+
 	if (!registered) {
-		vlan_mon_register_proto(ETH_P_PPP_DISC, pppoe_vlan_mon_notify, pppoe_vlan_mon_servers_check);
+		vlan_mon_register_proto(ETH_P_PPP_DISC, cb);
 		registered = 1;
 	}
 }

@@ -44,15 +44,21 @@ struct iplink_arg {
 LIST_HEAD(vlan_mon_devices);
 pthread_rwlock_t vlan_mon_devices_lock = PTHREAD_RWLOCK_INITIALIZER;
 
+LIST_HEAD(vlan_mon_notify_list);
+pthread_rwlock_t vlan_mon_notify_lock = PTHREAD_RWLOCK_INITIALIZER;
+
 static struct rtnl_handle rth;
 static struct triton_md_handler_t mc_hnd;
 static int vlan_mon_genl_id;
 
-//Callback for upstream server (ipoe, pppoe)
-static vlan_mon_notify cb[2];
+//Callbacks for upstream servers (ipoe, pppoe)
+static vlan_mon_callbacks vlan_mon_cb[2];
 
-//Callback to check server is exists on vlan
-static vlan_mon_upstream_server_check upstream_checker[2];
+static void vlan_mon_ctx_close(struct triton_context_t *);
+static struct triton_context_t vlan_mon_ctx = {
+        .close = vlan_mon_ctx_close,
+        .before_switch = log_switch,
+};
 
 static char conf_vlan_name[IFNAMSIZ];
 static int conf_remove_when_no_subscribers = 0;
@@ -60,7 +66,30 @@ static int conf_remove_when_no_subscribers = 0;
 int conf_vlan_timeout;
 
 static void vlan_mon_init(void);
+static void vlan_mon_timeout(struct triton_timer_t *t);
 static void load_interfaces(struct conf_sect_t *sect);
+
+static void vlan_mon_ctx_close(struct triton_context_t *ctx)
+{
+	log_debug("vlan_mon: vlan_mon_ctx close\n");
+
+	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
+
+	struct vlan_mon_device* vl_dev = NULL;
+
+	list_for_each_entry(vl_dev, &vlan_mon_devices, entry) {
+		pthread_mutex_lock(&vl_dev->lock);
+
+		if (vl_dev->timer.tpd)
+			triton_timer_del(&vl_dev->timer);
+
+		pthread_mutex_unlock(&vl_dev->lock);
+	}
+
+	pthread_rwlock_unlock(&vlan_mon_devices_lock);
+
+	triton_context_unregister(ctx);
+}
 
 int vlan_mon_proto_to_proto(int proto)
 {
@@ -76,6 +105,15 @@ int proto_to_vlan_mon_proto(int proto)
 		return 1;
 	else
 		return 0;
+}
+
+uint16_t get_another_proto(uint16_t proto)
+{
+	if (proto == ETH_P_PPP_DISC) {
+		return ETH_P_IP;
+	} else {
+		return ETH_P_PPP_DISC;
+	}
 }
 
 uint8_t vlan_mon_proto_to_mask(int proto)
@@ -94,17 +132,32 @@ uint8_t proto_to_mask(int proto)
 		return VLAN_MON_DEVICE_SERVER_IPOE;
 }
 
-void __export vlan_mon_register_proto(uint16_t proto, vlan_mon_notify func, vlan_mon_upstream_server_check checker_func)
+struct vlan_mon_upstream_notify* create_vlan_mon_notify(int ifindex, uint16_t vid, uint16_t proto)
 {
-	log_debug("vlan_mon: registering callback for proto=%04x\n", proto);
+	struct vlan_mon_upstream_notify *res = _malloc(sizeof(*res));
+	if (!res)
+		return NULL;
+
+	memset(res, 0, sizeof(*res));
+	res->ifindex = ifindex;
+	res->vid     = vid;
+	res->proto   = proto;
+
+	return res;
+}
+
+void __export vlan_mon_register_proto(uint16_t proto, vlan_mon_callbacks cb)
+{
+	log_debug("vlan_mon: registering callbacks for proto=%04x\n", proto);
 
 	if (proto == ETH_P_PPP_DISC)
 		proto = 1;
 	else
 		proto = 0;
 
-	cb[proto] = func;
-	upstream_checker[proto] = checker_func;
+	vlan_mon_cb[proto].notify       = cb.notify;
+	vlan_mon_cb[proto].server_check = cb.server_check;
+	vlan_mon_cb[proto].pre_down     = cb.pre_down;
 
 	struct conf_sect_t *s = conf_get_section("vlan_mon");
 	load_interfaces(s);
@@ -356,86 +409,357 @@ static struct vlan_mon_device* get_vlan_mon_device(int ifindex)
 	return NULL;
 }
 
-int __export vlan_mon_timer_start(struct vlan_mon_device* vl_dev)
+int search_servers_for_proto(int ifindex, uint16_t proto)
 {
+	int vlan_mon_proto = proto_to_vlan_mon_proto(proto);
+
+	if ( vlan_mon_cb[vlan_mon_proto].server_check ) {
+
+		return vlan_mon_cb[vlan_mon_proto].server_check(ifindex);
+
+	}
+
 	return 0;
 }
 
-int search_servers_for_other_proto(int ifindex, uint16_t proto)
+//====================WARNING==========================
+//=================USE WITH LOCK!======================
+//=====================================================
+static void vlan_mon_start_timer(struct vlan_mon_device *vl_dev)
 {
-	//Get other proto
-	//PPP -> IP
-	//IP  -> PPP
-	uint16_t another_proto = 0;
-	if (proto == ETH_P_PPP_DISC) {
-		another_proto = ETH_P_IP;
+	if (!vlan_mon_ctx.tpd) {
+		log_debug("vlan_mon: start_timer: vlan_mon_ctx tpd is NULL\n");
+		return;
+	}
+
+	vl_dev->timer.expire = vlan_mon_timeout;
+	vl_dev->timer.expire_tv.tv_sec = conf_vlan_timeout;
+	if (vl_dev->timer.tpd) {
+		triton_timer_mod(&vl_dev->timer, 0);
 	} else {
-		another_proto = ETH_P_PPP_DISC;
+		triton_timer_add(&vlan_mon_ctx, &vl_dev->timer, 0);
 	}
+}
 
-	int vlan_mon_proto = proto_to_vlan_mon_proto(another_proto);
-
-	if ( upstream_checker[vlan_mon_proto] ) {
-
-		return upstream_checker[vlan_mon_proto](ifindex);
-
+static int search_servers_on_vlan(int ifindex)
+{
+	for (int i = 0; i < 2; ++i) {
+		int proto = vlan_mon_proto_to_proto(i);
+		log_debug("vlan_mon: search servers for proto=%04x\n", proto);
+		if (search_servers_for_proto(ifindex, proto)) {
+			log_info2("vlan_mon: servers for proto=%04x EXISTS!\n", proto);
+			return 1;
+		}
 	}
 
 	return 0;
 }
 
-int __export vlan_mon_serv_down(int ifindex, uint16_t vid, uint16_t proto)
+static void pre_down_upstream(int ifindex)
 {
-	log_debug("vlan_mon: upstream server down proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
+	for (int i = 0; i < 2; ++i) {
+		if (vlan_mon_cb[i].pre_down) {
+			log_debug("vlan_mon: pre_down proto=%04x ifindex=%i\n", vlan_mon_proto_to_proto(i), ifindex);
+			vlan_mon_cb[i].pre_down(ifindex);
+		}
+	}
+}
 
+static void vlan_mon_timeout(struct triton_timer_t *t)
+{
+	log_debug("vlan_mon: timeout: vlan_mon_timeout\n");
 	pthread_rwlock_wrlock(&vlan_mon_devices_lock);
+	struct vlan_mon_device *vl_dev = container_of(t, typeof(*vl_dev), timer);
+
+	if (!vl_dev) {
+		log_error("vlan_mon: timeout: vl_dev is NULL!\n");
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		return;
+	}
+
+	pthread_mutex_lock(&vl_dev->lock);
+	if (vl_dev->client_mask) {
+		log_error("vlan_mon: timeout: while vlan deleting some client on server exists! ifindex=%i vid=%i\n", vl_dev->ifindex, vl_dev->vid);
+		goto out;
+	}
+
+	struct vlan_mon_upstream_notify *notify;
+
+	pthread_rwlock_rdlock(&vlan_mon_notify_lock);
+	list_for_each_entry(notify, &vlan_mon_notify_list, entry) {
+		if (notify->ifindex != vl_dev->ifindex)
+			continue;
+		pthread_rwlock_unlock(&vlan_mon_notify_lock);
+		log_warn("vlan_mon: timeout: for ifindex=%i vid=%i exists notify. Restarting timer.\n", vl_dev->ifindex, vl_dev->vid);
+		if (vl_dev->timer.tpd) {
+			triton_timer_mod(&vl_dev->timer, 0);
+		}
+		goto out;
+	}
+	pthread_rwlock_unlock(&vlan_mon_notify_lock);
+
+	//Send signal to upstream servers
+	log_info2("vlan_mon: timeout: down upstream servers vlan ifindex=%i vid=%i\n", vl_dev->ifindex, vl_dev->vid);
+	pre_down_upstream(vl_dev->ifindex);
+
+out:
+	pthread_mutex_unlock(&vl_dev->lock);
+	pthread_rwlock_unlock(&vlan_mon_devices_lock);
+}
+
+//====================================
+//========FOR CONTEXT CALLING=========
+//====================================
+static void _on_vlan_mon_upstream_server_have_clients(struct vlan_mon_upstream_notify *notify)
+{
+	log_debug("vlan_mon: ctx: upstream server have clients\n");
+
+	if (!notify) {
+		log_error("vlan_mon: ctx: vlan_mon_upstream_notify is NULL\n");
+		return;
+	}
+
+	int ifindex    = notify->ifindex;
+	uint16_t vid   = notify->vid;
+	uint16_t proto = notify->proto;
+
+	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
+	list_del(&notify->entry);
+	pthread_rwlock_unlock(&vlan_mon_notify_lock);
+
+	//Memory was allocated just for calling function in context
+	_free(notify);
+
+	log_debug("vlan_mon: ctx: upstream server have clients proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
+
+	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
 
 	struct vlan_mon_device* vl_dev = get_vlan_mon_device(ifindex);
-	if (vl_dev) {
-		pthread_mutex_lock(&vl_dev->lock);
-		//Delete protocol from servers
-		vl_dev->serv_mask &= ~proto_to_mask(proto);
-		vlan_mon_add_vid(vl_dev->parent_ifindex, proto, vl_dev->vid);
-
-		//If upstream servers is present in vlan or not need to remove vlan then exit from function
-		if (vl_dev->serv_mask || !conf_remove_when_no_subscribers) {
-			pthread_mutex_unlock(&vl_dev->lock);
-			goto out;
-		}
-
-		//Search upstream servers for other proto. Needed in case when accel-ppp started with created vlans
-		log_debug("vlan_mon: search servers by other proto for proto=%04x\n", proto);
-		if (search_servers_for_other_proto(ifindex, proto)) {
-			log_info2("vlan_mon: servers by other proto EXISTS for proto=%04x\n", proto);
-			pthread_mutex_unlock(&vl_dev->lock);
-			goto out;
-		}
-
-		//If we can remove the interface then we remove it
-		log_info2("vlan_mon: remove vlan interface ifindex=%i vid=%i\n", ifindex, vid);
-		iplink_vlan_del(ifindex);
-
-		log_debug("vlan_mon: remove vlan_mon_device ifindex=%i vid=%i\n", ifindex, vid);
-
-		list_del(&vl_dev->entry);
-		pthread_mutex_unlock(&vl_dev->lock);
-		_free(vl_dev);
-
-		goto out;
-	} else {
-		log_warn("vlan_mon: vlan_mon_device ifindex=%i not found!\n", ifindex);
+	if (!vl_dev) {
+		log_warn("vlan_mon: ctx: have_clients: vlan_mon_device ifindex=%i not found!\n", ifindex);
 		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		return;
+	}
+
+	log_debug("vlan_mon: ctx: have_clients: acquire mutex lock proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
+	pthread_mutex_lock(&vl_dev->lock);
+	//Add client by proto in vlan
+	vl_dev->client_mask |= proto_to_mask(proto);
+
+	if (vl_dev->timer.tpd) {
+		log_debug("vlan_mon: ctx: have_clients: deleting timer ifindex=%i\n", vl_dev->ifindex);
+		triton_timer_del(&vl_dev->timer);
+	}
+
+	pthread_mutex_unlock(&vl_dev->lock);
+	pthread_rwlock_unlock(&vlan_mon_devices_lock);
+}
+
+int __export on_vlan_mon_upstream_server_have_clients(int ifindex, uint16_t vid, uint16_t proto)
+{
+	log_debug("vlan_mon: upstream server have clients proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
+
+	if (!vlan_mon_ctx.tpd) {
+		log_error("vlan_mon: have_clients: vlan_mon_ctx->tpd is NULL\n");
 		return -1;
 	}
 
-out:
-	pthread_rwlock_unlock(&vlan_mon_devices_lock);
+	struct vlan_mon_upstream_notify *notify = create_vlan_mon_notify(ifindex, vid, proto);
+	if (!notify) {
+		log_error("vlan_mon: have_clients: cannot allocate memory for notify\n");
+		return -1;
+	}
+
+	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
+	list_add_tail(&notify->entry, &vlan_mon_notify_list);
+	pthread_rwlock_unlock(&vlan_mon_notify_lock);
+
+	triton_context_call(&vlan_mon_ctx, (triton_event_func)_on_vlan_mon_upstream_server_have_clients, notify);
 
 	return 0;
 }
 
+//====================================
+//========FOR CONTEXT CALLING=========
+//====================================
+static void _on_vlan_mon_upstream_server_no_clients(struct vlan_mon_upstream_notify *notify)
+{
+	log_debug("vlan_mon: ctx: upstream server have no clients\n");
+
+	if (!notify) {
+		log_error("vlan_mon: ctx: vlan_mon_upstream_notify is NULL\n");
+		return;
+	}
+
+	int ifindex    = notify->ifindex;
+	uint16_t vid   = notify->vid;
+	uint16_t proto = notify->proto;
+
+	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
+	list_del(&notify->entry);
+	pthread_rwlock_unlock(&vlan_mon_notify_lock);
+
+	//Memory was allocated just for calling function in context
+	_free(notify);
+
+	log_debug("vlan_mon: ctx: upstream server have no clients proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
+
+	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
+
+	struct vlan_mon_device* vl_dev = get_vlan_mon_device(ifindex);
+	if (!vl_dev) {
+		log_warn("vlan_mon: ctx: have_no_clients: vlan_mon_device ifindex=%i not found!\n", ifindex);
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		return;
+	}
+
+	pthread_mutex_lock(&vl_dev->lock);
+	//Delete client by protocol in vlan
+	vl_dev->client_mask &= ~proto_to_mask(proto);
+
+	//If clients in upstream servers is present in vlan or not need to remove vlan then exit from function
+	if (vl_dev->client_mask || !conf_remove_when_no_subscribers) {
+		log_debug("vlan_mon: ctx: have_no_clients: client exists or not need to remove vlan ifindex=%i vid=%i\n", ifindex, vid);
+		pthread_mutex_unlock(&vl_dev->lock);
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		return;
+	}
+
+	log_debug("vlan_mon: ctx: have_no_clients: start timer on vlan ifindex=%i vid=%i\n", ifindex, vid);
+	vlan_mon_start_timer(vl_dev);
+
+	pthread_mutex_unlock(&vl_dev->lock);
+	pthread_rwlock_unlock(&vlan_mon_devices_lock);
+}
+
+int __export on_vlan_mon_upstream_server_no_clients(int ifindex, uint16_t vid, uint16_t proto)
+{
+	log_debug("vlan_mon: upstream server have no clients proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
+
+	if (!vlan_mon_ctx.tpd) {
+		log_error("vlan_mon: have_no_clients: vlan_mon_ctx->tpd is NULL\n");
+		return -1;
+	}
+
+	struct vlan_mon_upstream_notify *notify = create_vlan_mon_notify(ifindex, vid, proto);
+	if (!notify) {
+		log_error("vlan_mon: have_no_clients: cannot allocate memory for notify\n");
+		return -1;
+	}
+
+	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
+	list_add_tail(&notify->entry, &vlan_mon_notify_list);
+	pthread_rwlock_unlock(&vlan_mon_notify_lock);
+
+	triton_context_call(&vlan_mon_ctx, (triton_event_func)_on_vlan_mon_upstream_server_no_clients, notify);
+
+	return 0;
+}
+
+//====================================
+//========FOR CONTEXT CALLING=========
+//====================================
+static void _on_vlan_mon_upstream_server_down(struct vlan_mon_upstream_notify *notify)
+{
+	log_debug("vlan_mon: ctx: upstream server down\n");
+
+	if (!notify) {
+		log_error("vlan_mon: ctx: vlan_mon_upstream_notify is NULL\n");
+		return;
+	}
+
+	int ifindex    = notify->ifindex;
+	uint16_t vid   = notify->vid;
+	uint16_t proto = notify->proto;
+
+	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
+	list_del(&notify->entry);
+	pthread_rwlock_unlock(&vlan_mon_notify_lock);
+
+	//Memory was allocated just for calling function in context
+	_free(notify);
+
+	log_debug("vlan_mon: ctx: upstream server down proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
+
+	pthread_rwlock_wrlock(&vlan_mon_devices_lock);
+	struct vlan_mon_device* vl_dev = get_vlan_mon_device(ifindex);
+
+	if (!vl_dev) {
+		log_warn("vlan_mon: vlan_mon_device ifindex=%i not found!\n", ifindex);
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		return;
+	}
+
+	pthread_mutex_lock(&vl_dev->lock);
+
+	//Delete server for proto from vlan
+	vl_dev->server_mask &= ~proto_to_mask(proto);
+	vl_dev->client_mask &= ~proto_to_mask(proto);
+
+	log_debug("vlan_mon: ctx: serv_down: search servers on vlan ifindex=%i vid=%i\n", vl_dev->ifindex, vl_dev->vid);
+	if (vl_dev->server_mask || search_servers_on_vlan(vl_dev->ifindex)) {
+		log_info2("vlan_mon: ctx: serv_down: servers on vlan ifindex=%i vid=%i EXISTS!\n", vl_dev->ifindex, vl_dev->vid);
+		vlan_mon_add_vid(vl_dev->parent_ifindex, proto, vl_dev->vid);
+		pthread_mutex_unlock(&vl_dev->lock);
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		return;
+	}
+
+	log_debug("vlan_mon: ctx: serv_down: remove vlan_mon_device from list ifindex=%i vid=%i\n", vl_dev->ifindex, vl_dev->vid);
+	list_del(&vl_dev->entry);
+
+	if (vl_dev->timer.tpd) {
+		log_debug("vlan_mon: ctx: serv_down: deleting timer ifindex=%i\n", vl_dev->ifindex);
+		triton_timer_del(&vl_dev->timer);
+	}
+
+	//If we can remove the interface then we remove it
+	log_info2("vlan_mon: ctx: serv_down: remove vlan interface ifindex=%i vid=%i\n", vl_dev->ifindex, vl_dev->vid);
+	iplink_vlan_del(vl_dev->ifindex);
+
+	//Adding vlans in vlan_mon driver if protocol registered
+	for (int i = 0; i < 2; ++i) {
+		if (vlan_mon_cb[i].notify) {
+			int proto = vlan_mon_proto_to_proto(i);
+			vlan_mon_add_vid(vl_dev->parent_ifindex, proto, vl_dev->vid);
+		}
+	}
+
+	pthread_mutex_unlock(&vl_dev->lock);
+
+	log_debug("vlan_mon: ctx: serv_down: free vlan_mon_device ifindex=%i vid=%i\n", vl_dev->ifindex, vl_dev->vid);
+	_free(vl_dev);
+
+	pthread_rwlock_unlock(&vlan_mon_devices_lock);
+}
+
+int __export on_vlan_mon_upstream_server_down(int ifindex, uint16_t vid, uint16_t proto)
+{
+	log_debug("vlan_mon: upstream server down proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
+
+	if (!vlan_mon_ctx.tpd) {
+		log_error("vlan_mon: serv_down: vlan_mon_ctx->tpd is NULL\n");
+		return -1;
+	}
+
+	struct vlan_mon_upstream_notify *notify = create_vlan_mon_notify(ifindex, vid, proto);
+	if (!notify) {
+		log_error("vlan_mon: serv_down: cannot allocate memory for notify\n");
+		return -1;
+	}
+
+	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
+	list_add_tail(&notify->entry, &vlan_mon_notify_list);
+	pthread_rwlock_unlock(&vlan_mon_notify_lock);
+
+	triton_context_call(&vlan_mon_ctx, (triton_event_func)_on_vlan_mon_upstream_server_down, notify);
+
+	return 0;
+}
+
+
 //Create a vlan interface and then make an ipoe or pppoe callback
-static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
+static void vlan_mon_driver_callback(int proto, int ifindex, int vid, int vlan_ifindex)
 {
 	struct ifreq ifr;
 	int svid, r, len;
@@ -538,19 +862,19 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 	//ifname       - interface name of new vlan interface
 	//len          - length of ifname
 	//Return 0 if success, not 0 else
-	if (cb[proto]) {
-		if (!cb[proto](ifindex, svid, vid, vlan_ifindex, ifname, len)) {
+	if (vlan_mon_cb[proto].notify) {
+		if (!vlan_mon_cb[proto].notify(ifindex, svid, vid, vlan_ifindex, ifname, len)) {
 			log_debug("vlan_mon: vlan %s started\n", ifname);
 
 			//Searching vlan_mon_device by ifindex
 			struct vlan_mon_device* vl_dev = get_vlan_mon_device(vlan_ifindex);
 			if (vl_dev) {
 				pthread_mutex_lock(&vl_dev->lock);
-				vl_dev->serv_mask |= vlan_mon_proto_to_mask(proto);
+				vl_dev->server_mask |= vlan_mon_proto_to_mask(proto);
 				pthread_mutex_unlock(&vl_dev->lock);
 
 				log_debug("vlan_mon: added proto in vlan_mon_device parent_ifindex=%i ifindex=%i serv_mask=%i vid=%i\n", 
-						vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->serv_mask, vl_dev->vid);
+						vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->server_mask, vl_dev->vid);
 			} else {
 				vl_dev = _malloc(sizeof(struct vlan_mon_device));
 				if (!vl_dev) {
@@ -558,16 +882,21 @@ static void vlan_mon_cb(int proto, int ifindex, int vid, int vlan_ifindex)
 					goto out;
 				}
 
+				memset(vl_dev, 0, sizeof(*vl_dev));
+
 				vl_dev->parent_ifindex = ifindex;
 				vl_dev->ifindex = vlan_ifindex;
-				vl_dev->serv_mask = vlan_mon_proto_to_mask(proto);
+				vl_dev->server_mask = vlan_mon_proto_to_mask(proto);
 				vl_dev->vid = vid;
 				pthread_mutex_init(&vl_dev->lock, NULL);
 
 				log_debug("vlan_mon: creating vlan_mon_device parent_ifindex=%i ifindex=%i serv_mask=%i vid=%i\n", 
-						vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->serv_mask, vl_dev->vid);
+						vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->server_mask, vl_dev->vid);
 
 				list_add_tail(&vl_dev->entry, &vlan_mon_devices);
+
+				log_debug("vlan_mon: vlan_mon_driver_callback: start timer\n");
+				vlan_mon_start_timer(vl_dev);
 			}
 
 		} else {
@@ -645,7 +974,7 @@ static void vlan_mon_handler(const struct sockaddr_nl *addr, struct nlmsghdr *h)
 		else
 			proto = 0;
 
-		vlan_mon_cb(proto, ifindex, vid, vlan_ifindex);
+		vlan_mon_driver_callback(proto, ifindex, vid, vlan_ifindex);
 
 	}
 }
@@ -997,7 +1326,7 @@ static void show_vlan_help(char * const *fields, int fields_cnt, void *client)
 
 static int show_vlan_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
 {
-	cli_sendv(client, "%-16s %-16s %-16s %-16s %-8s %-8s %-8s\r\n", "parent_if", "parent_ifindex", "interface", "ifindex", "vlan_id", "pppoe", "ipoe");
+	cli_sendv(client, "%-16s %-16s %-16s %-16s %-8s %-12s %-12s\r\n", "parent_if", "parent_ifindex", "interface", "ifindex", "vlan_id", "pppoe s/c", "ipoe s/c");
 
 	LIST_HEAD(vl_dev_list);
 	struct vlan_mon_device* vl_dev = NULL;
@@ -1050,11 +1379,14 @@ static int show_vlan_exec(const char *cmd, char * const *fields, int fields_cnt,
 		}
 		parent_ifname[IFNAMSIZ-1] = 0;
 
-		uint8_t pppoe_present = vl_dev->serv_mask & VLAN_MON_DEVICE_SERVER_PPPOE ? 1 : 0;
-		uint8_t ipoe_present  = vl_dev->serv_mask & VLAN_MON_DEVICE_SERVER_IPOE ? 1 : 0;
+		uint8_t pppoe_server_present = vl_dev->server_mask & VLAN_MON_DEVICE_SERVER_PPPOE ? 1 : 0;
+		uint8_t ipoe_server_present  = vl_dev->server_mask & VLAN_MON_DEVICE_SERVER_IPOE ? 1 : 0;
 
-		cli_sendv(client, "%-16s %-16u %-16s %-16u %-8u %-8u %-8u\r\n", parent_ifname, vl_dev->parent_ifindex,
-					ifname, vl_dev->ifindex, vl_dev->vid, pppoe_present, ipoe_present);
+		uint8_t pppoe_client_present = vl_dev->client_mask & VLAN_MON_DEVICE_SERVER_PPPOE ? 1 : 0;
+		uint8_t ipoe_client_present  = vl_dev->client_mask & VLAN_MON_DEVICE_SERVER_IPOE ? 1 : 0;
+
+		cli_sendv(client, "%-16s %-16u %-16s %-16u %-8u %u/%-10u %u/%-10u\r\n", parent_ifname, vl_dev->parent_ifindex,
+					ifname, vl_dev->ifindex, vl_dev->vid, pppoe_server_present, pppoe_client_present, ipoe_server_present, ipoe_client_present);
 	}
 
 	//Free local copy
@@ -1110,6 +1442,9 @@ static void vlan_mon_init(void)
 
 	vlan_mon_clean();
 	load_config(NULL);
+
+	triton_context_register(&vlan_mon_ctx, NULL);
+	triton_context_wakeup(&vlan_mon_ctx);
 
 	fcntl(rth.fd, F_SETFL, O_NONBLOCK);
 	fcntl(rth.fd, F_SETFD, fcntl(rth.fd, F_GETFD) | FD_CLOEXEC);
