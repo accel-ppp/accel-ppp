@@ -61,13 +61,13 @@ static struct triton_context_t vlan_mon_ctx = {
 };
 
 static char conf_vlan_name[IFNAMSIZ];
-static int conf_remove_when_no_subscribers = 0;
+static int conf_remove_no_clients = 1;
 
-int conf_vlan_timeout;
+static int conf_vlan_timeout;
 
 static void vlan_mon_init(void);
 static void vlan_mon_timeout(struct triton_timer_t *t);
-static void load_interfaces(struct conf_sect_t *sect);
+static void reload_interfaces();
 
 static void vlan_mon_ctx_close(struct triton_context_t *ctx)
 {
@@ -159,8 +159,7 @@ void __export vlan_mon_register_proto(uint16_t proto, vlan_mon_callbacks cb)
 	vlan_mon_cb[proto].server_check = cb.server_check;
 	vlan_mon_cb[proto].pre_down     = cb.pre_down;
 
-	struct conf_sect_t *s = conf_get_section("vlan_mon");
-	load_interfaces(s);
+	reload_interfaces();
 }
 
 int __export vlan_mon_add(int ifindex, uint16_t proto, long *mask, int len)
@@ -618,7 +617,7 @@ static void _on_vlan_mon_upstream_server_no_clients(struct vlan_mon_upstream_not
 	vl_dev->client_mask &= ~proto_to_mask(proto);
 
 	//If clients in upstream servers is present in vlan or not need to remove vlan then exit from function
-	if (vl_dev->client_mask || !conf_remove_when_no_subscribers) {
+	if (vl_dev->client_mask || !conf_remove_no_clients) {
 		log_debug("vlan_mon: ctx: have_no_clients: client exists or not need to remove vlan ifindex=%i vid=%i\n", ifindex, vid);
 		pthread_mutex_unlock(&vl_dev->lock);
 		pthread_rwlock_unlock(&vlan_mon_devices_lock);
@@ -1248,14 +1247,17 @@ static void add_vlan_mon(const char *opt, long *mask)
 	vlan_mon_add(ifindex, ETH_P_IP, mask1, sizeof(mask1));
 }
 
+static void clean_interfaces()
+{
+	//Clean all interfaces
+	vlan_mon_del(-1, ETH_P_PPP_DISC);
+	vlan_mon_del(-1, ETH_P_IP);
+}
+
 static void load_interfaces(struct conf_sect_t *sect)
 {
 	struct conf_option_t *opt;
 	long mask[4096/8/sizeof(long)];
-
-	//Clean all interfaces
-	vlan_mon_del(-1, ETH_P_PPP_DISC);
-	vlan_mon_del(-1, ETH_P_IP);
 
 	list_for_each_entry(opt, &sect->items, entry) {
 		if (strcmp(opt->name, "vlan-mon"))
@@ -1267,8 +1269,6 @@ static void load_interfaces(struct conf_sect_t *sect)
 		if (parse_vlan_mon(opt->val, mask))
 			continue;
 
-		log_debug("vlan_mon: vlan-mon=(%s)\n", opt->val);
-
 		if (strlen(opt->val) > 3 && !memcmp(opt->val, "re:", 3)) {
 			load_vlan_mon_re(opt->val, mask, sizeof(mask));
 		} else {
@@ -1277,17 +1277,80 @@ static void load_interfaces(struct conf_sect_t *sect)
 	}
 }
 
-static void load_config(void *data)
+static void reload_interfaces()
 {
+	clean_interfaces();
+
+	struct conf_sect_t *s = conf_get_section("pppoe");
+	if (s) {
+		load_interfaces(s);
+	}
+
+	s = conf_get_section("ipoe");
+	if (s) {
+		load_interfaces(s);
+	}
+
+	s = conf_get_section("vlan-mon");
+	if (s) {
+		clean_interfaces();
+		load_interfaces(s);
+	}
+}
+
+//For backward compatibility
+static void load_deprecated_sect(char* sect_name)
+{
+#define log_deprecated() \
+	log_warn("vlan_mon: configuring vlan-mon from the pppoe or ipoe section is deprecated\n")
+
+	log_debug("vlan_mon: loading %s section\n", sect_name);
+
 	char *opt;
-	struct conf_sect_t *s = conf_get_section("vlan_mon");
+	struct conf_sect_t *s = conf_get_section(sect_name);
 
 	if (!s) {
-		log_debug("vlan_mon: section \"vlan_mon\" not found!\n");
 		return;
 	}
 
-	opt = conf_get_opt("vlan_mon", "vlan-name");
+	opt = conf_get_opt(sect_name, "vlan-name");
+	if (opt) {
+		log_deprecated();
+		strncpy(conf_vlan_name, opt, IFNAMSIZ);
+		conf_vlan_name[IFNAMSIZ-1] = 0;
+	}
+
+	opt = conf_get_opt(sect_name, "vlan-timeout");
+	if (opt) {
+		log_deprecated();
+		if (atoi(opt) > 0) {
+			conf_vlan_timeout = atoi(opt);
+		}
+	}
+
+	opt = conf_get_opt(sect_name, "vlan-mon");
+	if (opt) {
+		log_deprecated();
+		load_interfaces(s);
+	}
+#undef log_deprecated
+}
+
+static void load_config(void *data)
+{
+	clean_interfaces();
+	load_deprecated_sect("pppoe");
+	load_deprecated_sect("ipoe");
+
+	char *opt;
+	struct conf_sect_t *s = conf_get_section("vlan-mon");
+
+	if (!s) {
+		log_debug("vlan_mon: section \"vlan-mon\" not found!\n");
+		return;
+	}
+
+	opt = conf_get_opt("vlan-mon", "vlan-name");
 	if (opt) {
 		strncpy(conf_vlan_name, opt, IFNAMSIZ);
 	} else {
@@ -1300,7 +1363,7 @@ static void load_config(void *data)
 	//Loading vlan-timeout if specified
 	//If there is an error in the value, then conf_vlan_timeout=60
 	//If no value is specified, then conf_vlan_timeout=60
-	opt = conf_get_opt("vlan_mon", "vlan-timeout");
+	opt = conf_get_opt("vlan-mon", "vlan-timeout");
 	if (opt && atoi(opt) > 0) {
 		conf_vlan_timeout = atoi(opt);
 	} else {
@@ -1308,14 +1371,15 @@ static void load_config(void *data)
 	}
 	log_debug("vlan_mon: vlan-timeout=(%i)\n", conf_vlan_timeout);
 
-	opt = conf_get_opt("vlan_mon", "remove-when-no-subscribers");
+	opt = conf_get_opt("vlan-mon", "remove-no-clients");
 	if (opt) {
-		conf_remove_when_no_subscribers = atoi(opt);
+		conf_remove_no_clients = atoi(opt);
 	} else {
-		conf_remove_when_no_subscribers = 0;
+		conf_remove_no_clients = 1;
 	}
-	log_debug("vlan_mon: remove-when-no-subscribers=(%i)\n", conf_remove_when_no_subscribers);
+	log_debug("vlan_mon: remove-no-clients=(%i)\n", conf_remove_no_clients);
 
+	clean_interfaces();
 	load_interfaces(s);
 }
 
