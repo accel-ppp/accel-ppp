@@ -1263,7 +1263,10 @@ static void ipoe_session_finished(struct ap_session *s)
 	list_del(&ses->entry);
 	ses->serv->sess_cnt--;
 	if  ((ses->serv->vlan_mon || ses->serv->need_close) && list_empty(&ses->serv->sessions)) {
-		on_vlan_mon_upstream_server_no_clients(ses->serv->ifindex, ses->serv->vid, ETH_P_IP);
+		//If error received from vlan_mon then release serv
+		if ( on_vlan_mon_upstream_server_no_clients(ses->serv->ifindex, ses->serv->vid, ETH_P_IP) ) {
+			triton_context_call(&ses->serv->ctx, (triton_event_func)ipoe_serv_release, ses->serv);
+		}
 	}
 	pthread_mutex_unlock(&ses->serv->lock);
 
