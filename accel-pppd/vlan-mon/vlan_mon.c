@@ -148,8 +148,6 @@ struct vlan_mon_upstream_notify* create_vlan_mon_notify(int ifindex, uint16_t vi
 
 void __export vlan_mon_register_proto(uint16_t proto, vlan_mon_callbacks cb)
 {
-	log_debug("vlan_mon: registering callbacks for proto=%04x\n", proto);
-
 	if (proto == ETH_P_PPP_DISC)
 		proto = 1;
 	else
@@ -444,7 +442,6 @@ static int search_servers_on_vlan(int ifindex)
 {
 	for (int i = 0; i < 2; ++i) {
 		int proto = vlan_mon_proto_to_proto(i);
-		log_debug("vlan_mon: search servers for proto=%04x\n", proto);
 		if (search_servers_for_proto(ifindex, proto)) {
 			log_info2("vlan_mon: servers for proto=%04x EXISTS!\n", proto);
 			return 1;
@@ -458,7 +455,6 @@ static void pre_down_upstream(int ifindex)
 {
 	for (int i = 0; i < 2; ++i) {
 		if (vlan_mon_cb[i].pre_down) {
-			log_debug("vlan_mon: pre_down proto=%04x ifindex=%i\n", vlan_mon_proto_to_proto(i), ifindex);
 			vlan_mon_cb[i].pre_down(ifindex);
 		}
 	}
@@ -466,7 +462,6 @@ static void pre_down_upstream(int ifindex)
 
 static void vlan_mon_timeout(struct triton_timer_t *t)
 {
-	log_debug("vlan_mon: timeout: vlan_mon_timeout\n");
 	pthread_rwlock_wrlock(&vlan_mon_devices_lock);
 	struct vlan_mon_device *vl_dev = container_of(t, typeof(*vl_dev), timer);
 
@@ -478,7 +473,7 @@ static void vlan_mon_timeout(struct triton_timer_t *t)
 
 	pthread_mutex_lock(&vl_dev->lock);
 	if (vl_dev->client_mask) {
-		log_error("vlan_mon: timeout: while vlan deleting some client on server exists! ifindex=%i vid=%i\n", vl_dev->ifindex, vl_dev->vid);
+		log_warn("vlan_mon: timeout: while vlan deleting some client on server exists! ifindex=%i vid=%i\n", vl_dev->ifindex, vl_dev->vid);
 		goto out;
 	}
 
@@ -498,7 +493,6 @@ static void vlan_mon_timeout(struct triton_timer_t *t)
 	pthread_rwlock_unlock(&vlan_mon_notify_lock);
 
 	//Send signal to upstream servers
-	log_info2("vlan_mon: timeout: down upstream servers vlan ifindex=%i vid=%i\n", vl_dev->ifindex, vl_dev->vid);
 	pre_down_upstream(vl_dev->ifindex);
 
 out:
@@ -511,8 +505,6 @@ out:
 //====================================
 static void _on_vlan_mon_upstream_server_have_clients(struct vlan_mon_upstream_notify *notify)
 {
-	log_debug("vlan_mon: ctx: upstream server have clients\n");
-
 	if (!notify) {
 		log_error("vlan_mon: ctx: vlan_mon_upstream_notify is NULL\n");
 		return;
@@ -529,8 +521,6 @@ static void _on_vlan_mon_upstream_server_have_clients(struct vlan_mon_upstream_n
 	//Memory was allocated just for calling function in context
 	_free(notify);
 
-	log_debug("vlan_mon: ctx: upstream server have clients proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
-
 	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
 
 	struct vlan_mon_device* vl_dev = get_vlan_mon_device(ifindex);
@@ -540,13 +530,11 @@ static void _on_vlan_mon_upstream_server_have_clients(struct vlan_mon_upstream_n
 		return;
 	}
 
-	log_debug("vlan_mon: ctx: have_clients: acquire mutex lock proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
 	pthread_mutex_lock(&vl_dev->lock);
 	//Add client by proto in vlan
 	vl_dev->client_mask |= proto_to_mask(proto);
 
 	if (vl_dev->timer.tpd) {
-		log_debug("vlan_mon: ctx: have_clients: deleting timer ifindex=%i\n", vl_dev->ifindex);
 		triton_timer_del(&vl_dev->timer);
 	}
 
@@ -556,8 +544,6 @@ static void _on_vlan_mon_upstream_server_have_clients(struct vlan_mon_upstream_n
 
 int __export on_vlan_mon_upstream_server_have_clients(int ifindex, uint16_t vid, uint16_t proto)
 {
-	log_debug("vlan_mon: upstream server have clients proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
-
 	if (!vlan_mon_ctx.tpd) {
 		log_error("vlan_mon: have_clients: vlan_mon_ctx->tpd is NULL\n");
 		return -1;
@@ -583,8 +569,6 @@ int __export on_vlan_mon_upstream_server_have_clients(int ifindex, uint16_t vid,
 //====================================
 static void _on_vlan_mon_upstream_server_no_clients(struct vlan_mon_upstream_notify *notify)
 {
-	log_debug("vlan_mon: ctx: upstream server have no clients\n");
-
 	if (!notify) {
 		log_error("vlan_mon: ctx: vlan_mon_upstream_notify is NULL\n");
 		return;
@@ -601,8 +585,6 @@ static void _on_vlan_mon_upstream_server_no_clients(struct vlan_mon_upstream_not
 	//Memory was allocated just for calling function in context
 	_free(notify);
 
-	log_debug("vlan_mon: ctx: upstream server have no clients proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
-
 	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
 
 	struct vlan_mon_device* vl_dev = get_vlan_mon_device(ifindex);
@@ -618,13 +600,11 @@ static void _on_vlan_mon_upstream_server_no_clients(struct vlan_mon_upstream_not
 
 	//If clients in upstream servers is present in vlan or not need to remove vlan then exit from function
 	if (vl_dev->client_mask || !conf_remove_no_clients) {
-		log_debug("vlan_mon: ctx: have_no_clients: client exists or not need to remove vlan ifindex=%i vid=%i\n", ifindex, vid);
 		pthread_mutex_unlock(&vl_dev->lock);
 		pthread_rwlock_unlock(&vlan_mon_devices_lock);
 		return;
 	}
 
-	log_debug("vlan_mon: ctx: have_no_clients: start timer on vlan ifindex=%i vid=%i\n", ifindex, vid);
 	vlan_mon_start_timer(vl_dev);
 
 	pthread_mutex_unlock(&vl_dev->lock);
@@ -633,8 +613,6 @@ static void _on_vlan_mon_upstream_server_no_clients(struct vlan_mon_upstream_not
 
 int __export on_vlan_mon_upstream_server_no_clients(int ifindex, uint16_t vid, uint16_t proto)
 {
-	log_debug("vlan_mon: upstream server have no clients proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
-
 	if (!vlan_mon_ctx.tpd) {
 		log_error("vlan_mon: have_no_clients: vlan_mon_ctx->tpd is NULL\n");
 		return -1;
@@ -660,8 +638,6 @@ int __export on_vlan_mon_upstream_server_no_clients(int ifindex, uint16_t vid, u
 //====================================
 static void _on_vlan_mon_upstream_server_down(struct vlan_mon_upstream_notify *notify)
 {
-	log_debug("vlan_mon: ctx: upstream server down\n");
-
 	if (!notify) {
 		log_error("vlan_mon: ctx: vlan_mon_upstream_notify is NULL\n");
 		return;
@@ -678,8 +654,6 @@ static void _on_vlan_mon_upstream_server_down(struct vlan_mon_upstream_notify *n
 	//Memory was allocated just for calling function in context
 	_free(notify);
 
-	log_debug("vlan_mon: ctx: upstream server down proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
-
 	pthread_rwlock_wrlock(&vlan_mon_devices_lock);
 	struct vlan_mon_device* vl_dev = get_vlan_mon_device(ifindex);
 
@@ -695,20 +669,17 @@ static void _on_vlan_mon_upstream_server_down(struct vlan_mon_upstream_notify *n
 	vl_dev->server_mask &= ~proto_to_mask(proto);
 	vl_dev->client_mask &= ~proto_to_mask(proto);
 
-	log_debug("vlan_mon: ctx: serv_down: search servers on vlan ifindex=%i vid=%i\n", vl_dev->ifindex, vl_dev->vid);
 	if (vl_dev->server_mask || search_servers_on_vlan(vl_dev->ifindex)) {
-		log_info2("vlan_mon: ctx: serv_down: servers on vlan ifindex=%i vid=%i EXISTS!\n", vl_dev->ifindex, vl_dev->vid);
+		log_warn("vlan_mon: ctx: serv_down: servers on vlan ifindex=%i vid=%i EXISTS!\n", vl_dev->ifindex, vl_dev->vid);
 		vlan_mon_add_vid(vl_dev->parent_ifindex, proto, vl_dev->vid);
 		pthread_mutex_unlock(&vl_dev->lock);
 		pthread_rwlock_unlock(&vlan_mon_devices_lock);
 		return;
 	}
 
-	log_debug("vlan_mon: ctx: serv_down: remove vlan_mon_device from list ifindex=%i vid=%i\n", vl_dev->ifindex, vl_dev->vid);
 	list_del(&vl_dev->entry);
 
 	if (vl_dev->timer.tpd) {
-		log_debug("vlan_mon: ctx: serv_down: deleting timer ifindex=%i\n", vl_dev->ifindex);
 		triton_timer_del(&vl_dev->timer);
 	}
 
@@ -726,7 +697,6 @@ static void _on_vlan_mon_upstream_server_down(struct vlan_mon_upstream_notify *n
 
 	pthread_mutex_unlock(&vl_dev->lock);
 
-	log_debug("vlan_mon: ctx: serv_down: free vlan_mon_device ifindex=%i vid=%i\n", vl_dev->ifindex, vl_dev->vid);
 	_free(vl_dev);
 
 	pthread_rwlock_unlock(&vlan_mon_devices_lock);
@@ -734,8 +704,6 @@ static void _on_vlan_mon_upstream_server_down(struct vlan_mon_upstream_notify *n
 
 int __export on_vlan_mon_upstream_server_down(int ifindex, uint16_t vid, uint16_t proto)
 {
-	log_debug("vlan_mon: upstream server down proto=%04x ifindex=%i vid=%i\n", proto, ifindex, vid);
-
 	if (!vlan_mon_ctx.tpd) {
 		log_error("vlan_mon: serv_down: vlan_mon_ctx->tpd is NULL\n");
 		return -1;
@@ -763,8 +731,6 @@ static void vlan_mon_driver_callback(int proto, int ifindex, int vid, int vlan_i
 	struct ifreq ifr;
 	int svid, r, len;
 	char ifname[IFNAMSIZ];
-
-//	log_debug("vlan_mon: vlan_mon_cb(proto=%i, ifindex=%i, vid=%i, vlan_ifindex=%i)\n", proto, ifindex, vid, vlan_ifindex);
 
 	memset(&ifr, 0, sizeof(ifr));
 	ifr.ifr_ifindex = ifindex;
@@ -842,7 +808,6 @@ static void vlan_mon_driver_callback(int proto, int ifindex, int vid, int vlan_i
 	}
 
 	if (!(ifr.ifr_flags & IFF_UP)) {
-		log_debug("vlan_mon: interface ifindex=%i is DOWN. Enabling it...\n", vlan_ifindex);
 		ifr.ifr_flags |= IFF_UP;
 
 		if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr, sizeof(ifr))) {
@@ -871,9 +836,6 @@ static void vlan_mon_driver_callback(int proto, int ifindex, int vid, int vlan_i
 				pthread_mutex_lock(&vl_dev->lock);
 				vl_dev->server_mask |= vlan_mon_proto_to_mask(proto);
 				pthread_mutex_unlock(&vl_dev->lock);
-
-				log_debug("vlan_mon: added proto in vlan_mon_device parent_ifindex=%i ifindex=%i serv_mask=%i vid=%i\n", 
-						vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->server_mask, vl_dev->vid);
 			} else {
 				vl_dev = _malloc(sizeof(struct vlan_mon_device));
 				if (!vl_dev) {
@@ -889,12 +851,8 @@ static void vlan_mon_driver_callback(int proto, int ifindex, int vid, int vlan_i
 				vl_dev->vid = vid;
 				pthread_mutex_init(&vl_dev->lock, NULL);
 
-				log_debug("vlan_mon: creating vlan_mon_device parent_ifindex=%i ifindex=%i serv_mask=%i vid=%i\n", 
-						vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->server_mask, vl_dev->vid);
-
 				list_add_tail(&vl_dev->entry, &vlan_mon_devices);
 
-				log_debug("vlan_mon: vlan_mon_driver_callback: start timer\n");
 				vlan_mon_start_timer(vl_dev);
 			}
 
