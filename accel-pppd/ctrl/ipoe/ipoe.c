@@ -2774,10 +2774,8 @@ int ipoe_vlan_mon_pre_down(int ifindex)
 		serv->need_close = 1;
 
 		if (serv->sess_cnt) {
-			log_debug("vlan_mon: ipoe: pre_down: session on serv ifindex=%i exists! Drop it.\n", serv->ifindex);
 			ipoe_drop_sessions(serv, NULL);
 		} else {
-			log_debug("vlan_mon: ipoe: pre_down: sessions on serv ifindex=%i not found.\n", serv->ifindex);
 			triton_context_call(&serv->ctx, (triton_event_func)ipoe_serv_release, serv);
 		}
 		pthread_mutex_unlock(&serv->lock);

@@ -163,7 +163,9 @@ static void disconnect(struct pppoe_conn_t *conn)
 			triton_context_call(&serv->ctx, (triton_event_func)pppoe_server_free, serv);
 			pthread_mutex_unlock(&serv->lock);
 		} else if (serv->vlan_mon) {
-			on_vlan_mon_upstream_server_no_clients(serv->ifindex, serv->vid, ETH_P_PPP_DISC);
+			if ( on_vlan_mon_upstream_server_no_clients(serv->ifindex, serv->vid, ETH_P_PPP_DISC) ) {
+				triton_context_call(&serv->ctx, (triton_event_func)pppoe_server_free, serv);
+			}
 			pthread_mutex_unlock(&conn->serv->lock);
 		} else
 			pthread_mutex_unlock(&serv->lock);
