@@ -730,7 +730,7 @@ static int __init vlan_mon_init(void)
 	int i;
 #endif
 
-	printk("vlan-mon driver v1.11\n");
+	printk("vlan-mon driver %s\n", ACCEL_PPP_VERSION);
 
 	INIT_WORK(&vlan_notify_work, vlan_do_notify);
 
@@ -822,6 +822,7 @@ static void __exit vlan_mon_fini(void)
 
 module_init(vlan_mon_init);
 module_exit(vlan_mon_fini);
+MODULE_VERSION(ACCEL_PPP_VERSION);
 MODULE_LICENSE("GPL");
 module_param(autoclean, int, 0);
 //MODULE_PARAM_DESC(autoclean, "automaticaly remove created vlan interfaces on restart");
