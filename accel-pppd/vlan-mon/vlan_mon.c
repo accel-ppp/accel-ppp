@@ -61,9 +61,8 @@ static struct triton_context_t vlan_mon_ctx = {
 };
 
 static char conf_vlan_name[IFNAMSIZ];
-static int conf_remove_no_clients = 1;
 
-static int conf_vlan_timeout;
+static int conf_vlan_timeout = 60;
 
 static void vlan_mon_init(void);
 static void vlan_mon_timeout(struct triton_timer_t *t);
@@ -511,7 +510,6 @@ static void _on_vlan_mon_upstream_server_have_clients(struct vlan_mon_upstream_n
 	}
 
 	int ifindex    = notify->ifindex;
-	uint16_t vid   = notify->vid;
 	uint16_t proto = notify->proto;
 
 	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
@@ -575,7 +573,6 @@ static void _on_vlan_mon_upstream_server_no_clients(struct vlan_mon_upstream_not
 	}
 
 	int ifindex    = notify->ifindex;
-	uint16_t vid   = notify->vid;
 	uint16_t proto = notify->proto;
 
 	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
@@ -599,7 +596,7 @@ static void _on_vlan_mon_upstream_server_no_clients(struct vlan_mon_upstream_not
 	vl_dev->client_mask &= ~proto_to_mask(proto);
 
 	//If clients in upstream servers is present in vlan or not need to remove vlan then exit from function
-	if (vl_dev->client_mask || !conf_remove_no_clients) {
+	if (vl_dev->client_mask || !conf_vlan_timeout) {
 		pthread_mutex_unlock(&vl_dev->lock);
 		pthread_rwlock_unlock(&vlan_mon_devices_lock);
 		return;
@@ -644,7 +641,6 @@ static void _on_vlan_mon_upstream_server_down(struct vlan_mon_upstream_notify *n
 	}
 
 	int ifindex    = notify->ifindex;
-	uint16_t vid   = notify->vid;
 	uint16_t proto = notify->proto;
 
 	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
@@ -853,7 +849,8 @@ static void vlan_mon_driver_callback(int proto, int ifindex, int vid, int vlan_i
 
 				list_add_tail(&vl_dev->entry, &vlan_mon_devices);
 
-				vlan_mon_start_timer(vl_dev);
+				if (conf_vlan_timeout)
+					vlan_mon_start_timer(vl_dev);
 			}
 
 		} else {
@@ -1323,13 +1320,6 @@ static void load_config(void *data)
 			conf_vlan_timeout = 60;
 	} else {
 		conf_vlan_timeout = 60;
-	}
-
-	opt = conf_get_opt("vlan-mon", "remove-no-clients");
-	if (opt) {
-		conf_remove_no_clients = atoi(opt);
-	} else {
-		conf_remove_no_clients = 1;
 	}
 
 	log_debug("vlan-mon: vlan-name=%s vlan-timeout=%i\n", conf_vlan_name, conf_vlan_timeout);
