@@ -1273,9 +1273,10 @@ static void load_deprecated_sect(char* sect_name)
 	opt = conf_get_opt(sect_name, "vlan-timeout");
 	if (opt) {
 		deprecated = 1;
-		if (atoi(opt) > 0) {
-			conf_vlan_timeout = atoi(opt);
-		}
+		char *p = NULL;
+		conf_vlan_timeout = strtol(opt, &p, 10);
+		if (*p)
+			conf_vlan_timeout = 60;
 	}
 
 	opt = conf_get_opt(sect_name, "vlan-mon");
@@ -1297,35 +1298,35 @@ static void load_config(void *data)
 	char *opt;
 	struct conf_sect_t *s = conf_get_section("vlan-mon");
 
-	if (!s)
-		return;
+	if (s) {
 
-	opt = conf_get_opt("vlan-mon", "vlan-name");
-	if (opt) {
-		strncpy(conf_vlan_name, opt, IFNAMSIZ);
-	} else {
-		strncpy(conf_vlan_name, "%I.%N", IFNAMSIZ);
-	}
-	//Make string null-terminated
-	conf_vlan_name[IFNAMSIZ-1] = 0;
+		opt = conf_get_opt("vlan-mon", "vlan-name");
+		if (opt) {
+			strncpy(conf_vlan_name, opt, IFNAMSIZ);
+		} else {
+			strncpy(conf_vlan_name, "%I.%N", IFNAMSIZ);
+		}
+		//Make string null-terminated
+		conf_vlan_name[IFNAMSIZ-1] = 0;
 
-	//Loading vlan-timeout if specified
-	//If there is an error in the value, then conf_vlan_timeout=60
-	//If no value is specified, then conf_vlan_timeout=60
-	opt = conf_get_opt("vlan-mon", "vlan-timeout");
-	if (opt) {
-		char *p = NULL;
-		conf_vlan_timeout = strtol(opt, &p, 10);
-		if (p)
+		//Loading vlan-timeout if specified
+		//If there is an error in the value, then conf_vlan_timeout=60
+		//If no value is specified, then conf_vlan_timeout=60
+		opt = conf_get_opt("vlan-mon", "vlan-timeout");
+		if (opt) {
+			char *p = NULL;
+			conf_vlan_timeout = strtol(opt, &p, 10);
+			if (*p)
+				conf_vlan_timeout = 60;
+		} else {
 			conf_vlan_timeout = 60;
-	} else {
-		conf_vlan_timeout = 60;
+		}
+
+		clean_interfaces();
+		load_interfaces(s);
 	}
 
 	log_debug("vlan-mon: vlan-name=%s vlan-timeout=%i\n", conf_vlan_name, conf_vlan_timeout);
-
-	clean_interfaces();
-	load_interfaces(s);
 }
 
 static void show_vlan_help(char * const *fields, int fields_cnt, void *client)
