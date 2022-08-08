@@ -1415,7 +1415,7 @@ static struct ipoe_session *ipoe_session_create_dhcpv4(struct ipoe_serv *serv, s
 	serv->sess_cnt++;
 	//pthread_mutex_unlock(&serv->lock);
 	if (serv->vlan_mon) {
-		on_vlan_mon_upstream_server_have_clients(serv->ifindex, serv->vid, ETH_P_IP);
+		on_vlan_mon_upstream_server_have_clients(serv->ifindex, serv->vid+100, ETH_P_IP);
 	}
 
 	dhcpv4_packet_ref(pack);
@@ -2556,9 +2556,12 @@ static int ipoe_rad_send_auth_request(struct rad_plugin_t *rad, struct rad_packe
 
 static void ipoe_serv_release(struct ipoe_serv *serv)
 {
+	log_info2("ipoe: release serv interface %s\n", serv->ifname);
+
 	pthread_mutex_lock(&serv->lock);
 	if (!list_empty(&serv->sessions)) {
 		pthread_mutex_unlock(&serv->lock);
+		log_info2("ipoe: session exists %s\n", serv->ifname);
 		return;
 	}
 
@@ -2570,8 +2573,12 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 	list_del(&serv->entry);
 	pthread_mutex_unlock(&serv_lock);
 
+	log_info2("ipoe: stop interface after lock %s\n", serv->ifname);
+
 	if (serv->dhcpv4)
 		dhcpv4_free(serv->dhcpv4);
+
+	log_info2("ipoe: stop interface after dhcpv4 free %s\n", serv->ifname);
 
 	if (serv->dhcpv4_relay)
 		dhcpv4_relay_free(serv->dhcpv4_relay, &serv->ctx);
@@ -2609,9 +2616,13 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 	if (!serv->opt_auto)
 		ipoe_nl_del_interface(serv->ifindex);
 
+	log_info2("ipoe: stop interface before upstream server down %s\n", serv->ifname);
+
 	if (serv->vlan_mon) {
 		on_vlan_mon_upstream_server_down(serv->ifindex, serv->vid, ETH_P_IP);
 	}
+
+	log_info2("ipoe: stop interface after upstream server down %s\n", serv->ifname);
 
 	triton_context_unregister(&serv->ctx);
 
@@ -2621,16 +2632,20 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 static void ipoe_serv_close(struct triton_context_t *ctx)
 {
 	struct ipoe_serv *serv = container_of(ctx, typeof(*serv), ctx);
+	log_debug("ipoe: ipoe_serv_close ifindex=%i vlan-id=%i\n", serv->ifindex, serv->vid);
 
 	pthread_mutex_lock(&serv->lock);
 	serv->need_close = 1;
 	if (!list_empty(&serv->sessions)) {
 		pthread_mutex_unlock(&serv->lock);
+		log_debug("ipoe: ipoe_serv_close have sessions ifindex=%i vlan-id=%i\n", serv->ifindex, serv->vid);
 		return;
 	}
 	pthread_mutex_unlock(&serv->lock);
 
+	log_debug("ipoe: ipoe_serv_close before release ifindex=%i vlan-id=%i\n", serv->ifindex, serv->vid);
 	ipoe_serv_release(serv);
+	log_debug("ipoe: ipoe_serv_close after release ifindex=%i vlan-id=%i\n", serv->ifindex, serv->vid);
 }
 
 static void l4_redirect_ctx_close(struct triton_context_t *ctx)
