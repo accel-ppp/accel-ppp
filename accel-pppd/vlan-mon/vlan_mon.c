@@ -549,7 +549,6 @@ static void _on_vlan_mon_upstream_server_have_clients(struct vlan_mon_upstream_n
 
 int __export on_vlan_mon_upstream_server_have_clients(int ifindex, uint16_t vid, uint16_t proto)
 {
-	log_debug("vlan-mon: have_clients: ifindex=%i vlan-id=%i ethertype=%04x\n", ifindex, vid, proto);
 	pthread_rwlock_rdlock(&vlan_mon_ctx_lock);
 	if (!vlan_mon_ctx.tpd) {
 		log_error("vlan-mon: have_clients: vlan_mon_ctx->tpd is NULL ifindex=%i vlan-id=%i ethertype=%04x\n", ifindex, vid, proto);
@@ -621,7 +620,6 @@ static void _on_vlan_mon_upstream_server_no_clients(struct vlan_mon_upstream_not
 
 int __export on_vlan_mon_upstream_server_no_clients(int ifindex, uint16_t vid, uint16_t proto)
 {
-	log_debug("vlan-mon: have_no_clients: ifindex=%i vlan-id=%i ethertype=%04x\n", ifindex, vid, proto);
 	pthread_rwlock_rdlock(&vlan_mon_ctx_lock);
 	if (!vlan_mon_ctx.tpd) {
 		log_error("vlan-mon: have_no_clients: vlan_mon_ctx->tpd is NULL ifindex=%i vlan-id=%i ethertype=%04x\n", ifindex, vid, proto);
@@ -716,7 +714,6 @@ static void _on_vlan_mon_upstream_server_down(struct vlan_mon_upstream_notify *n
 
 int __export on_vlan_mon_upstream_server_down(int ifindex, uint16_t vid, uint16_t proto)
 {
-	log_debug("vlan-mon: serv_down: ifindex=%i vlan-id=%i ethertype=%04x\n", ifindex, vid, proto);
 	pthread_rwlock_rdlock(&vlan_mon_ctx_lock);
 	if (!vlan_mon_ctx.tpd) {
 		log_error("vlan-mon: serv_down: vlan_mon_ctx->tpd is NULL ifindex=%i vlan-id=%i ethertype=%04x\n", ifindex, vid, proto);
