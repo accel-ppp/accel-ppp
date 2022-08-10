@@ -49,6 +49,8 @@ pthread_rwlock_t vlan_mon_ctx_lock = PTHREAD_RWLOCK_INITIALIZER;
 LIST_HEAD(vlan_mon_notify_list);
 pthread_rwlock_t vlan_mon_notify_lock = PTHREAD_RWLOCK_INITIALIZER;
 
+int vlan_mon_need_close = 0;
+
 static struct rtnl_handle rth;
 static struct triton_md_handler_t mc_hnd;
 static int vlan_mon_genl_id;
@@ -74,6 +76,7 @@ static void reload_interfaces();
 static void vlan_mon_ctx_close(struct triton_context_t *ctx)
 {
 	log_debug("vlan-mon: vlan_mon_ctx close\n");
+	vlan_mon_need_close = 1;
 
 	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
 
@@ -90,10 +93,29 @@ static void vlan_mon_ctx_close(struct triton_context_t *ctx)
 		pthread_mutex_unlock(&vl_dev->lock);
 	}
 
+	if (!list_empty(&vlan_mon_devices)) {
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		log_debug("vlan-mon: vlan_mon_ctx vlan_mon_devices not empty\n");
+
+		list_for_each_entry(vl_dev, &vlan_mon_devices, entry) {
+			pthread_mutex_lock(&vl_dev->lock);
+
+			log_debug("vlan-mon: vlan_mon_devices: parent-ifindex=%i ifindex=%i vlan-id=%i clients=%i/%i\n", vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->vid, vl_dev-> server_mask, vl_dev->client_mask);
+
+			pthread_mutex_unlock(&vl_dev->lock);
+		}
+
+		return;
+	}
+
 	pthread_rwlock_unlock(&vlan_mon_devices_lock);
 
 	pthread_rwlock_wrlock(&vlan_mon_ctx_lock);
-	triton_context_unregister(ctx);
+	if (ctx->tpd) {
+		log_debug("vlan-mon: vlan_mon_ctx unregistering\n");
+		triton_context_unregister(ctx);
+		log_debug("vlan-mon: vlan_mon_ctx unregistered\n");
+	}
 	pthread_rwlock_unlock(&vlan_mon_ctx_lock);
 }
 
@@ -693,15 +715,19 @@ static void _on_vlan_mon_upstream_server_down(struct vlan_mon_upstream_notify *n
 		triton_timer_del(&vl_dev->timer);
 	}
 
-	//If we can remove the interface then we remove it
-	log_info2("vlan-mon: ctx: serv_down: remove vlan interface ifindex=%i vlan-id=%i\n", vl_dev->ifindex, vl_dev->vid);
-	iplink_vlan_del(vl_dev->ifindex);
+	if (conf_vlan_timeout) {
+		//If we can remove the interface then we remove it
+		log_info2("vlan-mon: ctx: serv_down: remove vlan interface ifindex=%i vlan-id=%i\n", vl_dev->ifindex, vl_dev->vid);
+		iplink_vlan_del(vl_dev->ifindex);
+	}
 
-	//Adding vlans in vlan_mon driver if protocol registered
-	for (int i = 0; i < 2; ++i) {
-		if (vlan_mon_cb[i].notify) {
-			int proto = vlan_mon_proto_to_proto(i);
-			vlan_mon_add_vid(vl_dev->parent_ifindex, proto, vl_dev->vid);
+	if (!vlan_mon_need_close) {
+		//Adding vlans in vlan_mon driver if protocol registered
+		for (int i = 0; i < 2; ++i) {
+			if (vlan_mon_cb[i].notify) {
+				int proto = vlan_mon_proto_to_proto(i);
+				vlan_mon_add_vid(vl_dev->parent_ifindex, proto, vl_dev->vid);
+			}
 		}
 	}
 
@@ -709,6 +735,11 @@ static void _on_vlan_mon_upstream_server_down(struct vlan_mon_upstream_notify *n
 
 	_free(vl_dev);
 
+	if (list_empty(&vlan_mon_devices)) {
+		log_debug("vlan-mon: ctx: serv_down: vlan_mon_devices EMPTY! calling vlan_mon_ctx_close\n");
+		triton_context_call(&vlan_mon_ctx, (triton_event_func)vlan_mon_ctx_close, &vlan_mon_ctx);
+		log_debug("vlan-mon: ctx: serv_down: vlan_mon_devices called vlan_mon_ctx_close!\n");
+	}
 	pthread_rwlock_unlock(&vlan_mon_devices_lock);
 }
 
@@ -767,6 +798,13 @@ static void vlan_mon_driver_callback(int proto, int ifindex, int vid, int vlan_i
 	}
 
 	pthread_rwlock_wrlock(&vlan_mon_devices_lock);
+
+	if (vlan_mon_need_close) {
+		log_debug("vlan-mon: daemon is in closing state\n");
+//		vlan_mon_add_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		return;
+	}
 
 	if (vlan_ifindex) {
 		log_info2("vlan-mon: using vlan %s parent %s\n", ifname, ifr.ifr_name);
@@ -1472,6 +1510,7 @@ static void vlan_mon_init(void)
 	load_config(NULL);
 
 	triton_context_register(&vlan_mon_ctx, NULL);
+//	triton_context_set_priority(&vlan_mon_ctx, 0);
 	triton_context_wakeup(&vlan_mon_ctx);
 
 	fcntl(rth.fd, F_SETFL, O_NONBLOCK);
