@@ -735,7 +735,7 @@ static void _on_vlan_mon_upstream_server_down(struct vlan_mon_upstream_notify *n
 
 	_free(vl_dev);
 
-	if (list_empty(&vlan_mon_devices)) {
+	if ( vlan_mon_need_close && list_empty(&vlan_mon_devices) ) {
 		log_debug("vlan-mon: ctx: serv_down: vlan_mon_devices EMPTY! calling vlan_mon_ctx_close\n");
 		triton_context_call(&vlan_mon_ctx, (triton_event_func)vlan_mon_ctx_close, &vlan_mon_ctx);
 		log_debug("vlan-mon: ctx: serv_down: vlan_mon_devices called vlan_mon_ctx_close!\n");
