@@ -36,6 +36,7 @@ static char *conf_ip_up;
 static char *conf_ip_pre_up;
 static char *conf_ip_down;
 static char *conf_ip_change;
+static char *conf_interim_update;
 static char *conf_radattr_prefix;
 static int conf_verbose = 0;
 static int conf_fork_limit;
@@ -54,6 +55,7 @@ struct pppd_compat_pd
 	struct list_head entry;
 	struct sigchld_handler_t hnd;
 	struct sigchld_handler_t ip_up_hnd;
+	struct sigchld_handler_t interim_update_hnd;
 #ifdef RADIUS
 	char *tmp_fname;
 	unsigned int radattr_saved:1;
@@ -175,6 +177,22 @@ static void ip_change_handler(struct sigchld_handler_t *h, int status)
 	if (conf_verbose) {
 		log_switch(NULL, pd->ses);
 		log_ppp_info2("pppd_compat: ip-change finished (%i)\n", status);
+	}
+
+	pd->res = status;
+
+	triton_context_wakeup(pd->ses->ctrl->ctx);
+}
+
+static void interim_update_handler(struct sigchld_handler_t *h, int status)
+{
+	struct pppd_compat_pd *pd = container_of(h, typeof(*pd), hnd);
+
+	fork_queue_wakeup();
+
+	if (conf_verbose) {
+		log_switch(NULL, pd->ses);
+		log_ppp_info2("pppd_compat: interim-update finished (%i)\n", status);
 	}
 
 	pd->res = status;
@@ -358,6 +376,15 @@ static void ev_ses_finished(struct ap_session *ses)
 		pthread_mutex_unlock(&pd->ip_up_hnd.lock);
 	}
 
+	if (pd->interim_update_hnd.pid) {
+		pthread_mutex_lock(&pd->interim_update_hnd.lock);
+		if (pd->interim_update_hnd.pid) {
+			log_ppp_warn("pppd_compat: force-interim-update is not yet finished, terminating it ...\n");
+			kill(pd->interim_update_hnd.pid, SIGTERM);
+		}
+		pthread_mutex_unlock(&pd->interim_update_hnd.lock);
+	}
+
 	if (pd->started && conf_ip_down) {
 		argv[4] = ipaddr;
 		argv[5] = peer_ipaddr;
@@ -418,6 +445,62 @@ static void ev_ses_finished(struct ap_session *ses)
 
 	list_del(&pd->pd.entry);
 	_free(pd);
+}
+
+static void ev_interim_update(struct ap_session *ses)
+{
+	pid_t pid;
+	char *argv[8];
+	char *env[ENV_MAX];
+	char env_mem[ENV_MEM];
+	char ipaddr[17];
+	char peer_ipaddr[17];
+	struct pppd_compat_pd *pd = find_pd(ses);
+
+	if (!pd)
+		return;
+
+	if (!pd->started || !conf_interim_update)
+		return;
+
+	argv[4] = ipaddr;
+	argv[5] = peer_ipaddr;
+	fill_argv(argv, pd, conf_interim_update);
+
+	fill_env(env, env_mem, pd);
+
+	check_fork_limit(pd, &queue1);
+
+	sigchld_lock();
+	pid = fork();
+	if (pid > 0) {
+		pd->hnd.pid = pid;
+		pd->hnd.handler = interim_update_handler;
+		sigchld_register_handler(&pd->hnd);
+		if (conf_verbose)
+			log_ppp_info2("pppd_compat: interim-update started (pid %i)\n", pid);
+		sigchld_unlock();
+
+		triton_context_schedule();
+
+		pthread_mutex_lock(&pd->hnd.lock);
+		pthread_mutex_unlock(&pd->hnd.lock);
+	} else if (pid == 0) {
+		sigset_t set;
+		sigfillset(&set);
+		pthread_sigmask(SIG_UNBLOCK, &set, NULL);
+
+		net->enter_ns();
+		execve(conf_interim_update, argv, env);
+		net->exit_ns();
+
+		log_emerg("pppd_compat: exec '%s': %s\n", conf_interim_update, strerror(errno));
+		_exit(EXIT_FAILURE);
+	} else {
+		sigchld_unlock();
+		fork_queue_wakeup();
+		log_error("pppd_compat: fork: %s\n", strerror(errno));
+	}
 }
 
 #ifdef RADIUS
@@ -750,6 +833,12 @@ static void load_config()
 		conf_ip_change = NULL;
 	}
 
+	conf_interim_update = conf_get_opt("pppd-compat", "interim-update");
+	if (conf_interim_update && access(conf_interim_update, R_OK | X_OK)) {
+		log_error("pppd_compat: %s: %s\n", conf_interim_update, strerror(errno));
+		conf_interim_update = NULL;
+	}
+
 	conf_radattr_prefix = conf_get_opt("pppd-compat", "radattr-prefix");
 
 	opt = conf_get_opt("pppd-compat", "verbose");
@@ -773,6 +862,7 @@ static void init(void)
 	triton_event_register_handler(EV_SES_PRE_UP, (triton_event_func)ev_ses_pre_up);
 	triton_event_register_handler(EV_SES_STARTED, (triton_event_func)ev_ses_started);
 	triton_event_register_handler(EV_SES_PRE_FINISHED, (triton_event_func)ev_ses_finished);
+	triton_event_register_handler(EV_FORCE_INTERIM_UPDATE, (triton_event_func)ev_interim_update);
 	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 #ifdef RADIUS
 	if (triton_module_loaded("radius")) {
