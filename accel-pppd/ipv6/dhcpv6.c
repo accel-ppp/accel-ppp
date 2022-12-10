@@ -214,19 +214,41 @@ static void insert_status(struct dhcpv6_packet *pkt, struct dhcpv6_option *opt, 
 	status->code = htons(code);
 }
 
-static void insert_oro(struct dhcpv6_packet *reply, struct dhcpv6_option *opt)
+static void insert_oro(struct dhcpv6_packet *reply, struct dhcpv6_option *opt, struct ap_session *ses)
 {
 	struct dhcpv6_option *opt1;
-	int i, j;
+	int i = 0, j = 0, k = 0;
 	uint16_t *ptr;
 	struct in6_addr addr, *addr_ptr;
+	struct ipv6db_addr_t *dns;
 
 	for (i = ntohs(opt->hdr->len) / 2, ptr = (uint16_t *)opt->hdr->data; i; i--, ptr++) {
 		if (ntohs(*ptr) == D6_OPTION_DNS_SERVERS) {
-			if (conf_dns_count) {
-				opt1 = dhcpv6_option_alloc(reply, D6_OPTION_DNS_SERVERS, conf_dns_count * sizeof(addr));
-				for (j = 0, addr_ptr = (struct in6_addr *)opt1->hdr->data; j < conf_dns_count; j++, addr_ptr++)
-					memcpy(addr_ptr, conf_dns + j, sizeof(addr));
+			if (ses->ipv6_dns && !list_empty(&ses->ipv6_dns->addr_list)) {
+				list_for_each_entry(dns, &ses->ipv6_dns->addr_list, entry) {
+					j++;
+				}
+				if (j >= 3) {
+					j = 3;
+				}
+				opt1 = dhcpv6_option_alloc(reply, D6_OPTION_DNS_SERVERS, j * sizeof(addr));
+				addr_ptr = (struct in6_addr *)opt1->hdr->data;
+				list_for_each_entry(dns, &ses->ipv6_dns->addr_list, entry) {
+					if (k < j) {
+						memcpy(addr_ptr, &dns->addr, sizeof(addr));
+						k++;
+						addr_ptr++;
+					} else {
+						break;
+					}
+				}
+
+			} else {
+				if (conf_dns_count) {
+					opt1 = dhcpv6_option_alloc(reply, D6_OPTION_DNS_SERVERS, conf_dns_count * sizeof(addr));
+					for (j = 0, addr_ptr = (struct in6_addr *)opt1->hdr->data; j < conf_dns_count; j++, addr_ptr++)
+						memcpy(addr_ptr, conf_dns + j, sizeof(addr));
+				}
 			}
 		} else if (ntohs(*ptr) == D6_OPTION_DOMAIN_LIST) {
 			if (conf_dnssl_size) {
@@ -434,7 +456,10 @@ static void dhcpv6_send_reply(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, i
 
 		// Option Request
 		} else if (ntohs(opt->hdr->code) == D6_OPTION_ORO) {
-			insert_oro(reply, opt);
+			if (ses->ipv6_dns &&!list_empty(&ses->ipv6_dns->addr_list)) {
+				log_ppp_info2("User specific IPv6 DNS entries\n");
+			} 
+			insert_oro(reply, opt, ses);
 
 		} else if (ntohs(opt->hdr->code) == D6_OPTION_RAPID_COMMIT) {
 			if (req->hdr->type == D6_SOLICIT)
@@ -594,7 +619,7 @@ static void dhcpv6_send_reply2(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, 
 			}
 		// Option Request
 		} else if (ntohs(opt->hdr->code) == D6_OPTION_ORO)
-			insert_oro(reply, opt);
+			insert_oro(reply, opt, ses);
 	}
 
 	opt1 = dhcpv6_option_alloc(reply, D6_OPTION_PREFERENCE, 1);

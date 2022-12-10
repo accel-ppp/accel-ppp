@@ -65,6 +65,7 @@ struct radius_pd_t {
 	struct ipv4db_item_t ipv4_addr;
 	struct ipv6db_item_t ipv6_addr;
 	struct ipv6db_prefix_t ipv6_dp;
+	struct ipv6db_item_t ipv6_dns;
 	int acct_interim_interval;
 	int acct_interim_jitter;
 
