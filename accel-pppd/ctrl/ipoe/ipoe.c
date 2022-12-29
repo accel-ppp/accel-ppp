@@ -1453,7 +1453,12 @@ static struct ipoe_session *ipoe_session_create_dhcpv4(struct ipoe_serv *serv, s
 
 		relay->dhcpv4_relay = dhcpv4_relay_create(relay->str_addr,
 				relay->giaddr, &serv->ctx,
-				(triton_event_func)ipoe_recv_dhcpv4_relay);
+				(triton_event_func)ipoe_recv_dhcpv4_relay
+#ifdef HAVE_VRF
+					, serv->vrf_name);
+#else
+					);
+#endif
 	}
 
 	if (!serv->opt_shared)
@@ -3174,7 +3179,12 @@ static void ipoe_dhcpv4_list_update(struct ipoe_serv *serv, struct list_head *cr
 		}
 
 		if (!relay->dhcpv4_relay && serv->opt_dhcpv4)
-			relay->dhcpv4_relay = dhcpv4_relay_create(relay->str_addr, relay->giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay);
+			relay->dhcpv4_relay = dhcpv4_relay_create(relay->str_addr, relay->giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay
+#ifdef HAVE_VRF
+					, serv->vrf_name);
+#else
+					);
+#endif
 	}
 
 	/* Remove old relay servers */
