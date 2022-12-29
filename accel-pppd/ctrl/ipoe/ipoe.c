@@ -3178,7 +3178,12 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		}
 
 		if (!serv->dhcpv4_relay && serv->opt_dhcpv4 && opt_relay)
-			serv->dhcpv4_relay = dhcpv4_relay_create(opt_relay, opt_giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay);
+			serv->dhcpv4_relay = dhcpv4_relay_create(opt_relay, opt_giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay
+#ifdef HAVE_VRF
+					, serv->vrf_name);
+#else
+					);
+#endif
 
 		if (serv->arp && !opt_arp) {
 			arpd_stop(serv->arp);
@@ -3323,7 +3328,12 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 			serv->dhcpv4->recv = ipoe_recv_dhcpv4;
 
 		if (opt_relay)
-			serv->dhcpv4_relay = dhcpv4_relay_create(opt_relay, opt_giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay);
+			serv->dhcpv4_relay = dhcpv4_relay_create(opt_relay, opt_giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay
+#ifdef HAVE_VRF
+					, serv->vrf_name);
+#else
+					);
+#endif
 	}
 
 	if (serv->opt_arp)
