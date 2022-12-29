@@ -86,6 +86,7 @@ struct ipoe_session {
 	struct dhcpv4_option *relay_agent;
 	uint8_t *agent_circuit_id;
 	uint8_t *agent_remote_id;
+	uint8_t *link_selection;
 	uint32_t xid;
 	uint32_t giaddr;
 	uint32_t yiaddr;

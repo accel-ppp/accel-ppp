@@ -173,6 +173,7 @@ static int conf_renew_time = LEASE_TIME/2;
 static int conf_rebind_time = LEASE_TIME/2 + LEASE_TIME/4 + LEASE_TIME/8;
 static int conf_verbose;
 static const char *conf_agent_remote_id;
+static const char *conf_link_selection;
 static int conf_proto;
 static LIST_HEAD(conf_offer_delay);
 static const char *conf_vlan_name;
@@ -258,6 +259,7 @@ static struct ipoe_session *ipoe_session_lookup(struct ipoe_serv *serv, struct d
 
 	uint8_t *agent_circuit_id = NULL;
 	uint8_t *agent_remote_id = NULL;
+	uint8_t *link_selection = NULL;
 	int opt82_match;
 
 	if (opt82_ses)
@@ -274,9 +276,10 @@ static struct ipoe_session *ipoe_session_lookup(struct ipoe_serv *serv, struct d
 		return ses;
 	}
 
-	if (!conf_check_mac_change || (pack->relay_agent && dhcpv4_parse_opt82(pack->relay_agent, &agent_circuit_id, &agent_remote_id))) {
+	if (!conf_check_mac_change || (pack->relay_agent && dhcpv4_parse_opt82(pack->relay_agent, &agent_circuit_id, &agent_remote_id, &link_selection))) {
 		agent_circuit_id = NULL;
 		agent_remote_id = NULL;
+		link_selection = NULL;
 	}
 
 	list_for_each_entry(ses, &serv->sessions, entry) {
@@ -288,10 +291,16 @@ static struct ipoe_session *ipoe_session_lookup(struct ipoe_serv *serv, struct d
 		if (opt82_match && agent_remote_id && !ses->agent_remote_id)
 			opt82_match = 0;
 
+		if (opt82_match && link_selection && !ses->link_selection)
+			opt82_match = 0;
+
 		if (opt82_match && !agent_circuit_id && ses->agent_circuit_id)
 			opt82_match = 0;
 
 		if (opt82_match && !agent_remote_id && ses->agent_remote_id)
+			opt82_match = 0;
+
+		if (opt82_match && !link_selection && ses->link_selection)
 			opt82_match = 0;
 
 		if (opt82_match && agent_circuit_id) {
@@ -307,6 +316,14 @@ static struct ipoe_session *ipoe_session_lookup(struct ipoe_serv *serv, struct d
 				opt82_match = 0;
 
 			if (memcmp(agent_remote_id + 1, ses->agent_remote_id + 1, *agent_remote_id))
+				opt82_match = 0;
+		}
+
+		if (opt82_match && link_selection) {
+			if (*link_selection != *ses->link_selection)
+				opt82_match = 0;
+
+			if (memcmp(link_selection + 1, ses->link_selection + 1, *link_selection))
 				opt82_match = 0;
 		}
 
@@ -350,10 +367,16 @@ static struct ipoe_session *ipoe_session_lookup(struct ipoe_serv *serv, struct d
 		if (opt82_match && agent_remote_id && !ses->agent_remote_id)
 			continue;
 
+		if (opt82_match && link_selection && !ses->link_selection)
+			continue;
+
 		if (opt82_match && !agent_circuit_id && ses->agent_circuit_id)
 			continue;
 
 		if (opt82_match && !agent_remote_id && ses->agent_remote_id)
+			continue;
+
+		if (opt82_match && !link_selection && ses->link_selection)
 			continue;
 
 		if (opt82_match && agent_circuit_id) {
@@ -369,6 +392,14 @@ static struct ipoe_session *ipoe_session_lookup(struct ipoe_serv *serv, struct d
 				continue;
 
 			if (memcmp(agent_remote_id + 1, ses->agent_remote_id + 1, *agent_remote_id))
+				continue;
+		}
+
+		if (opt82_match && link_selection) {
+			if (*link_selection != *ses->link_selection)
+				continue;
+
+			if (memcmp(link_selection + 1, ses->link_selection + 1, *link_selection))
 				continue;
 		}
 
@@ -417,7 +448,7 @@ static void ipoe_relay_timeout(struct triton_timer_t *t)
 
 		ap_session_terminate(&ses->ses, TERM_LOST_CARRIER, 1);
 	} else
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 }
 
 
@@ -684,7 +715,7 @@ cont:
 	ap_session_set_ifindex(&ses->ses);
 
 	if (ses->dhcpv4_request && ses->serv->dhcpv4_relay) {
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 
 		ses->timer.expire = ipoe_relay_timeout;
 		ses->timer.period = conf_relay_timeout * 1000;
@@ -1077,7 +1108,7 @@ static void ipoe_session_activate(struct dhcpv4_packet *pack)
 	ses->dhcpv4_request = pack;
 
 	if (ses->serv->dhcpv4_relay)
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 	else
 		__ipoe_session_activate(ses);
 }
@@ -1097,7 +1128,7 @@ static void ipoe_session_keepalive(struct dhcpv4_packet *pack)
 	ses->xid = ses->dhcpv4_request->hdr->xid;
 
 	if (/*ses->ses.state == AP_STATE_ACTIVE &&*/ ses->serv->dhcpv4_relay) {
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 		return;
 	}
 
@@ -1121,7 +1152,7 @@ static void ipoe_session_decline(struct dhcpv4_packet *pack)
 	}
 
 	if (pack->msg_type == DHCPDECLINE && ses->serv->dhcpv4_relay)
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0, ses->serv->ifname, conf_agent_remote_id);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 
 	dhcpv4_packet_free(pack);
 
@@ -1233,7 +1264,7 @@ static void ipoe_session_finished(struct ap_session *s)
 		dhcpv4_put_ip(ses->serv->dhcpv4, ses->yiaddr);
 
 	if (ses->relay_addr && ses->serv->dhcpv4_relay)
-		dhcpv4_relay_send_release(ses->serv->dhcpv4_relay, ses->hwaddr, ses->xid, ses->yiaddr, ses->client_id, ses->relay_agent, ses->serv->ifname, conf_agent_remote_id);
+		dhcpv4_relay_send_release(ses->serv->dhcpv4_relay, ses->hwaddr, ses->xid, ses->yiaddr, ses->client_id, ses->relay_agent, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 
 	if (ses->dhcpv4)
 		dhcpv4_free(ses->dhcpv4);
@@ -1382,7 +1413,7 @@ static struct ipoe_session *ipoe_session_create_dhcpv4(struct ipoe_serv *serv, s
 		ses->relay_agent->data = (uint8_t *)(ses->relay_agent + 1);
 		memcpy(ses->relay_agent->data, pack->relay_agent->data, pack->relay_agent->len);
 		ptr += sizeof(struct dhcpv4_option) + pack->relay_agent->len;
-		if (dhcpv4_parse_opt82(ses->relay_agent, &ses->agent_circuit_id, &ses->agent_remote_id))
+		if (dhcpv4_parse_opt82(ses->relay_agent, &ses->agent_circuit_id, &ses->agent_remote_id, &ses->link_selection))
 			ses->relay_agent = NULL;
 	}
 
@@ -1440,6 +1471,7 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 	int opt82_match;
 	uint8_t *agent_circuit_id = NULL;
 	uint8_t *agent_remote_id = NULL;
+	uint8_t *link_selection = NULL;
 
 	if (conf_verbose) {
 		log_ppp_info2("recv ");
@@ -1453,9 +1485,10 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 		return;
 	}
 
-	if (pack->relay_agent && dhcpv4_parse_opt82(pack->relay_agent, &agent_circuit_id, &agent_remote_id)) {
+	if (pack->relay_agent && dhcpv4_parse_opt82(pack->relay_agent, &agent_circuit_id, &agent_remote_id, &link_selection)) {
 		agent_circuit_id = NULL;
 		agent_remote_id = NULL;
+		link_selection = NULL;
 	}
 
 	opt82_match = pack->relay_agent != NULL;
@@ -1515,7 +1548,7 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 			if (pack->server_id == ses->siaddr)
 				dhcpv4_send_nak(dhcpv4, pack, "Wrong session");
 			else if (ses->serv->dhcpv4_relay)
-				dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0, ses->serv->ifname, conf_agent_remote_id);
+				dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 
 			triton_context_call(ses->ctrl.ctx, (triton_event_func)__ipoe_session_terminate, &ses->ses);
 		} else {
@@ -3802,6 +3835,7 @@ static void load_config(void)
 	const char *opt;
 	struct conf_sect_t *s = conf_get_section("ipoe");
 	struct conf_option_t *opt1;
+	struct in_addr dummy;
 
 	if (!s)
 		return;
@@ -3968,6 +4002,10 @@ static void load_config(void)
 		conf_agent_remote_id = opt;
 	else
 		conf_agent_remote_id = NULL;
+
+	opt = conf_get_opt("ipoe", "link-selection");
+	if (opt && inet_pton(AF_INET, opt, &dummy) > 0)
+		conf_link_selection = opt;
 
 	opt = conf_get_opt("ipoe", "ipv6");
 	if (opt)
