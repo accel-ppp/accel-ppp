@@ -52,7 +52,7 @@ struct ipoe_serv {
 #ifdef HAVE_VRF
 	int vrf_ifindex;
 	char vrf_name[IFNAMSIZ];
-	uint8_t table_id;
+	uint32_t table_id;
 #endif /* HAVE_VRF */
 	int vid;
 	int parent_vid;
