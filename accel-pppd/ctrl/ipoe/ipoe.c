@@ -1104,10 +1104,18 @@ static void __ipoe_session_activate(struct ipoe_session *ses)
 
 	if (ses->ifindex == -1 && !serv->opt_ifcfg) {
 		if (!serv->opt_ip_unnumbered)
-			iproute_add(serv->ifindex, ses->router, ses->yiaddr, 0, conf_proto, ses->mask, 0);
+			iproute_add(serv->ifindex, ses->router, ses->yiaddr, 0, conf_proto, ses->mask, 0
+#ifdef HAVE_VRF
+					, serv->table_id
+#endif
+					);
 		else
-			iproute_add(serv->ifindex, serv->opt_src ?: ses->router, ses->yiaddr, 0, conf_proto, 32, 0);
-	}
+			iproute_add(serv->ifindex, serv->opt_src ?: ses->router, ses->yiaddr, 0, conf_proto, 32, 0
+#ifdef HAVE_VRF
+					, serv->table_id
+#endif
+					);
+        }
 
 	if (ses->l4_redirect)
 		ipoe_change_l4_redirect(ses, 0);
@@ -1211,8 +1219,11 @@ static void ipoe_session_started(struct ap_session *s)
 
 	if (ses->ses.ipv4->peer_addr != ses->yiaddr)
 		//ipaddr_add_peer(ses->ses.ifindex, ses->router, ses->yiaddr); // breaks quagga
-		iproute_add(ses->ses.ifindex, ses->router, ses->yiaddr, 0, conf_proto, 32, 0);
-
+		iproute_add(ses->ses.ifindex, ses->router, ses->yiaddr, 0, conf_proto, 32, 0
+#ifdef HAVE_VRF
+                            , ses->serv->table_id
+#endif
+                            );
 	if (ses->ifindex != -1 && ses->xid) {
 		ses->dhcpv4 = dhcpv4_create(ses->ctrl.ctx, ses->ses.ifname, "");
 		if (!ses->dhcpv4) {
@@ -1296,9 +1307,17 @@ static void ipoe_session_finished(struct ap_session *s)
 	} else if (ses->started) {
 		if (!serv->opt_ifcfg) {
 			if (!serv->opt_ip_unnumbered)
-				iproute_del(serv->ifindex, ses->router, ses->yiaddr, 0, conf_proto, ses->mask, 0);
+				iproute_del(serv->ifindex, ses->router, ses->yiaddr, 0, conf_proto, ses->mask, 0
+#ifdef HAVE_VRF
+						, serv->table_id
+#endif
+						);
 			else
-				iproute_del(serv->ifindex, serv->opt_src ?: ses->router, ses->yiaddr, 0, conf_proto, 32, 0);
+				iproute_del(serv->ifindex, serv->opt_src ?: ses->router, ses->yiaddr, 0, conf_proto, 32, 0
+#ifdef HAVE_VRF
+						, serv->table_id
+#endif
+						);
 		}
 	}
 
