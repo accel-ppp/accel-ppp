@@ -314,7 +314,7 @@ int __export iplink_vlan_get_vid(int ifindex, int *iflink)
 
 	parse_rtattr_nested(tb, IFLA_MAX, tb[IFLA_LINKINFO]);
 
-	if (strcmp(RTA_DATA(tb[IFLA_INFO_KIND]), "vlan"))
+	if (!tb[IFLA_INFO_KIND] || strcmp(RTA_DATA(tb[IFLA_INFO_KIND]), "vlan"))
 		goto out;
 
 	parse_rtattr_nested(tb, IFLA_MAX, tb[IFLA_INFO_DATA]);
