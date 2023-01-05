@@ -117,6 +117,7 @@ static int conf_up;
 static int conf_auto;
 static int conf_mode;
 static int conf_shared = 1;
+static int conf_ipoe_interface = 1;
 static int conf_ifcfg = 1;
 static int conf_nat;
 static int conf_arp;
@@ -707,12 +708,14 @@ cont:
 	if (ses->serv->opt_nat)
 		ses->ses.ipv4 = ipdb_get_ipv4(&ses->ses);
 
-	if (ses->serv->opt_shared == 0 && ses->ses.ipv4 && ses->ses.ipv4->peer_addr != ses->yiaddr) {
-		if (ipoe_create_interface(ses))
-			return;
-	}
+	if (ses->serv->opt_ipoe_interface) {
+		if (ses->serv->opt_shared == 0 && ses->ses.ipv4 && ses->ses.ipv4->peer_addr != ses->yiaddr) {
+			if (ipoe_create_interface(ses))
+				return;
+		}
 
-	ap_session_set_ifindex(&ses->ses);
+		ap_session_set_ifindex(&ses->ses);
+	}
 
 	if (ses->dhcpv4_request && ses->serv->dhcpv4_relay) {
 		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
@@ -761,7 +764,7 @@ static void ipoe_session_start(struct ipoe_session *ses)
 
 	ap_session_starting(&ses->ses);
 
-	if (ses->serv->opt_shared && ipoe_create_interface(ses))
+	if (ses->serv->opt_shared && ses->serv->opt_ipoe_interface && ipoe_create_interface(ses))
 		return;
 
 	if (conf_noauth)
@@ -2975,6 +2978,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	int end;
 	struct ipoe_serv *serv;
 	int opt_shared = conf_shared;
+	int opt_ipoe_interface = conf_ipoe_interface;
 	int opt_dhcpv4 = 0;
 	int opt_up = 0;
 	int opt_mode = conf_mode;
@@ -3031,6 +3035,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 					goto parse_err;
 			} else if (strcmp(str, "shared") == 0) {
 				opt_shared = atoi(ptr1);
+			} else if (strcmp(str, "ipoe-interface") == 0) {
+				opt_ipoe_interface = atoi(ptr1);
 			} else if (strcmp(str, "mode") == 0) {
 				if (!strcmp(ptr1, "L2"))
 					opt_mode = MODE_L2;
@@ -3121,9 +3127,12 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->active = 1;
 		serv->ifindex = ifindex;
 
-		if ((opt_shared && !serv->opt_shared) || (!opt_shared && serv->opt_shared)) {
+		if ((opt_shared && !serv->opt_shared) || (!opt_shared && serv->opt_shared)
+		    || (opt_ipoe_interface && !serv->opt_ipoe_interface)
+			|| (!opt_ipoe_interface && serv->opt_ipoe_interface)) {
 			ipoe_drop_sessions(serv, NULL);
 			serv->opt_shared = opt_shared;
+			serv->opt_ipoe_interface = opt_ipoe_interface;
 		}
 
 		if (opt_dhcpv4 && !serv->dhcpv4) {
@@ -3240,6 +3249,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	strcpy(serv->ifname, ifname);
 	serv->ifindex = ifindex;
 	serv->opt_shared = opt_shared;
+	serv->opt_ipoe_interface = opt_ipoe_interface;
 	serv->opt_dhcpv4 = opt_dhcpv4;
 	serv->opt_up = opt_up;
 	serv->opt_auto = opt_auto;
@@ -3942,6 +3952,12 @@ static void load_config(void)
 		conf_shared = atoi(opt);
 	else
 		conf_shared = 1;
+
+	opt = conf_get_opt("ipoe", "ipoe-interface");
+	if (opt)
+		conf_ipoe_interface = atoi(opt);
+	else
+		conf_ipoe_interface = 1;
 
 	opt = conf_get_opt("ipoe", "ifcfg");
 	if (opt)
