@@ -383,6 +383,13 @@ If ip-unnumbered=1 accel-ppp will always assign /32 mask.
 .br
 Default value is 1.
 .TP
+.BI "agent-remote-id=" string
+Specifies the DCHP option 82 sub-option 2 to be inserted by the DHCP Relay.
+.br
+The purpose of the sub-option is documented in section 3.2 of RFC3046.
+.br
+If not configured, the option 82 is not appended.
+.TP
 .BI "interface=" [re:]name[,mode=L2|L3][,shared=0|1][,start=dhcpv4|up|auto]
 .BI "" [,range=x.x.x.x/mask][,ifcfg=0|1]
 .BI "" [,relay=x.x.x.x]
