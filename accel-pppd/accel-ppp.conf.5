@@ -388,7 +388,18 @@ Specifies the DCHP option 82 sub-option 2 to be inserted by the DHCP Relay.
 .br
 The purpose of the sub-option is documented in section 3.2 of RFC3046.
 .br
-If not configured, the option 82 is not appended.
+If neither the
+.B link-selection
+option nor this option is present, option 82 is not inserted by the DCHP Relay Agent.
+.TP
+.BI "link-selection=" ipv4_address
+Specifies option 82 sub-option 5 as per RFC3527 to be added by dhcp relay. The value stands for the subnet to be selected by the DHCP server to associate the request to a specific subnet.
+.br
+The purpose of the sub-option is documented in RFC3527.
+.br
+If neither the
+.B agent-remote-id
+option nor this option is present, option 82 is not inserted by the DCHP Relay Agent.
 .TP
 .BI "interface=" [re:]name[,mode=L2|L3][,shared=0|1][,start=dhcpv4|up|auto]
 .BI "" [,range=x.x.x.x/mask][,ifcfg=0|1]
