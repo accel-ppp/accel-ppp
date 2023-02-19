@@ -4103,6 +4103,46 @@ static struct triton_timer_t l4_redirect_timer = {
 	.expire = l4_redirect_list_timer,
 };
 
+static int reload_interfaces(const char *cmd, char * const *fields, int fields_cnt, void *client)
+{
+	struct conf_sect_t *s = conf_get_section("ipoe");
+	load_interfaces(s);
+	return CLI_CMD_OK;
+}
+
+static void intf_help(char * const *f, int f_cnt, void *cli)
+{
+	cli_send(cli, "ipoe interface add <name> - add ipoe interface\r\n");
+}
+
+static int intf_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
+{
+	if (fields_cnt == 2)
+		goto help;
+
+	if (fields_cnt != 4)
+		goto help;
+
+	if (!strcmp(fields[2], "add")) {
+		int ifindex = if_nametoindex(fields[3]);
+		if(ifindex>0)
+			add_interface(fields[3], ifindex, "", 0, 0, 0);
+		else
+			cli_send(client, "interface not exists\r\n");
+	} else
+		goto help;
+
+	return CLI_CMD_OK;
+help:
+	intf_help(fields, fields_cnt, client);
+	return CLI_CMD_OK;
+}
+
+static void reload_interfaces_help(char * const *f, int f_cnt, void *cli)
+{
+	cli_send(cli, "ipoe reload interfaces - reload interfaces from config\r\n");
+}
+
 static void ipoe_init(void)
 {
 	ses_pool = mempool_create(sizeof(struct ipoe_session));
@@ -4120,6 +4160,8 @@ static void ipoe_init(void)
 		ipset_flush(conf_l4_redirect_ipset);
 
 	cli_register_simple_cmd2(show_stat_exec, NULL, 2, "show", "stat");
+	cli_register_simple_cmd2(intf_exec, intf_help, 2, "ipoe", "interface");
+	cli_register_simple_cmd2(reload_interfaces, reload_interfaces_help, 3, "ipoe", "reload", "interfaces");
 	cli_show_ses_register("ipoe-type", "IPoE session type", print_session_type);
 
 	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
