@@ -92,7 +92,6 @@ char *conf_service_name[255];
 int conf_accept_any_service;
 int conf_accept_blank_service;
 char *conf_ac_name;
-int conf_ifname_in_sid;
 char *conf_pado_delay;
 int conf_tr101 = 1;
 int conf_padi_limit = 0;
@@ -104,6 +103,7 @@ static const char *conf_dpv6_pool;
 static const char *conf_ifname;
 enum {CSID_MAC, CSID_IFNAME, CSID_IFNAME_MAC};
 static int conf_called_sid;
+static int conf_calling_sid;
 static int conf_cookie_timeout;
 static const char *conf_vlan_name;
 static int conf_vlan_timeout = 60;
@@ -275,6 +275,26 @@ static void pppoe_conn_ctx_switch(struct triton_context_t *ctx, void *arg)
 	log_switch(ctx, &conn->ppp.ses);
 }
 
+static char* create_callid(uint8_t *hwaddr, char *ifname, int uppercase) {
+	char mac[19] = {0};
+	int offset = 0;
+	char *callid = _malloc(IFNAMSIZ + 19);
+	memset(callid, 0, IFNAMSIZ + 19);
+
+	if (ifname) {
+		if (hwaddr)
+			offset = sprintf(callid, "%s:", ifname);
+		else
+			offset = sprintf(callid, "%s", ifname);
+	}
+	if (hwaddr) {
+		uppercase == 1 ? sprintf(mac, "%02X:%02X:%02X:%02X:%02X:%02X", hwaddr[0], hwaddr[1], hwaddr[2], hwaddr[3], hwaddr[4], hwaddr[5]) : \
+			sprintf(mac, "%02x:%02x:%02x:%02x:%02x:%02x", hwaddr[0], hwaddr[1], hwaddr[2], hwaddr[3], hwaddr[4], hwaddr[5]);
+		sprintf(callid + offset, "%s", mac);
+	}
+	return callid;
+}
+
 static struct pppoe_conn_t *allocate_channel(struct pppoe_serv_t *serv, const uint8_t *addr, const struct pppoe_tag *host_uniq, const struct pppoe_tag *relay_sid, const struct pppoe_tag *service_name, const struct pppoe_tag *tr101, const uint8_t *cookie, uint16_t ppp_max_payload)
 {
 	struct pppoe_conn_t *conn;
@@ -357,59 +377,10 @@ static struct pppoe_conn_t *allocate_channel(struct pppoe_serv_t *serv, const ui
 	if (ppp_max_payload > ETH_DATA_LEN - 8)
 		conn->ctrl.max_mtu = min(ppp_max_payload, serv->mtu - 8);
 
-	if (conf_called_sid == CSID_IFNAME)
-		conn->ctrl.called_station_id = _strdup(serv->ifname);
-	else if (conf_called_sid == CSID_IFNAME_MAC) {
-		conn->ctrl.called_station_id = _malloc(IFNAMSIZ + 19);
-		if (conf_sid_uppercase)
-		    sprintf(conn->ctrl.called_station_id, "%s:%02X:%02X:%02X:%02X:%02X:%02X", serv->ifname,
-			serv->hwaddr[0], serv->hwaddr[1], serv->hwaddr[2], serv->hwaddr[3], serv->hwaddr[4], serv->hwaddr[5]);
-		else
-		    sprintf(conn->ctrl.called_station_id, "%s:%02x:%02x:%02x:%02x:%02x:%02x", serv->ifname,
-			serv->hwaddr[0], serv->hwaddr[1], serv->hwaddr[2], serv->hwaddr[3], serv->hwaddr[4], serv->hwaddr[5]);
-
-	} else {
-		conn->ctrl.called_station_id = _malloc(IFNAMSIZ + 19);
-		if (conf_ifname_in_sid == 2 || conf_ifname_in_sid == 3)
-			if (conf_sid_uppercase)
-			    sprintf(conn->ctrl.called_station_id, "%s:%02X:%02X:%02X:%02X:%02X:%02X", serv->ifname,
-				serv->hwaddr[0], serv->hwaddr[1], serv->hwaddr[2], serv->hwaddr[3], serv->hwaddr[4], serv->hwaddr[5]);
-			else
-			    sprintf(conn->ctrl.called_station_id, "%s:%02x:%02x:%02x:%02x:%02x:%02x", serv->ifname,
-				serv->hwaddr[0], serv->hwaddr[1], serv->hwaddr[2], serv->hwaddr[3], serv->hwaddr[4], serv->hwaddr[5]);
-
-		else
-			if (conf_sid_uppercase)
-			    sprintf(conn->ctrl.called_station_id, "%02X:%02X:%02X:%02X:%02X:%02X",
-				serv->hwaddr[0], serv->hwaddr[1], serv->hwaddr[2], serv->hwaddr[3], serv->hwaddr[4], serv->hwaddr[5]);
-			else
-			    sprintf(conn->ctrl.called_station_id, "%02x:%02x:%02x:%02x:%02x:%02x",
-				serv->hwaddr[0], serv->hwaddr[1], serv->hwaddr[2], serv->hwaddr[3], serv->hwaddr[4], serv->hwaddr[5]);
-
-	}
-
-	conn->ctrl.calling_station_id = _malloc(IFNAMSIZ + 19);
-
-	conn->ctrl.service_name = _malloc(256);
-	memset(conn->ctrl.service_name, 0x0, 256);
-
-	if (service_name && ntohs(service_name->tag_len) < 256 && ntohs(service_name->tag_len) > 0)
-		memcpy(conn->ctrl.service_name, service_name->tag_data, ntohs(service_name->tag_len));
-
-	if (conf_ifname_in_sid == 1 || conf_ifname_in_sid == 3)
-		if (conf_sid_uppercase)
-		    sprintf(conn->ctrl.calling_station_id, "%s:%02X:%02X:%02X:%02X:%02X:%02X", serv->ifname,
-			addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
-		else
-		    sprintf(conn->ctrl.calling_station_id, "%s:%02x:%02x:%02x:%02x:%02x:%02x", serv->ifname,
-			addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
-	else
-		if (conf_sid_uppercase)
-		    sprintf(conn->ctrl.calling_station_id, "%02X:%02X:%02X:%02X:%02X:%02X",
-			addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
-		else
-		    sprintf(conn->ctrl.calling_station_id, "%02x:%02x:%02x:%02x:%02x:%02x",
-			addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+	conn->ctrl.called_station_id = create_callid((conf_called_sid == CSID_MAC || conf_called_sid == CSID_IFNAME_MAC) ? serv->hwaddr : NULL,
+				  (conf_called_sid == CSID_IFNAME || conf_called_sid == CSID_IFNAME_MAC) ? serv->ifname : NULL, conf_sid_uppercase);
+	conn->ctrl.calling_station_id = create_callid((conf_calling_sid == CSID_MAC || conf_calling_sid == CSID_IFNAME_MAC) ? addr : NULL,
+				  (conf_calling_sid == CSID_IFNAME || conf_calling_sid == CSID_IFNAME_MAC) ? serv->ifname : NULL, conf_sid_uppercase);
 
 	ppp_init(&conn->ppp);
 
@@ -1953,6 +1924,20 @@ static void load_vlan_mon(struct conf_sect_t *sect)
 	}
 }
 
+static int parse_sid(char *opt) {
+		// no option, default
+		if (!opt)
+			return CSID_MAC;
+
+		if (!strcmp(opt, "mac"))
+			return(CSID_MAC);
+		else if (!strcmp(opt, "ifname"))
+			return(CSID_IFNAME);
+		else if (!strcmp(opt, "ifname:mac"))
+			return(CSID_IFNAME_MAC);
+		else
+			return -1;
+}
 
 static void load_config(void)
 {
@@ -2004,18 +1989,6 @@ static void load_config(void)
 		_free(conf_service_name_string);
 	}
 
-	opt = conf_get_opt("pppoe", "ifname-in-sid");
-	if (opt) {
-		if (!strcmp(opt, "calling-sid"))
-			conf_ifname_in_sid = 1;
-		else if (!strcmp(opt, "called-sid"))
-			conf_ifname_in_sid = 2;
-		else if (!strcmp(opt, "both"))
-			conf_ifname_in_sid = 3;
-		else if (atoi(opt) >= 0)
-			conf_ifname_in_sid = atoi(opt);
-	}
-
 	opt = conf_get_opt("pppoe", "pado-delay");
 	if (!opt)
 		opt = conf_get_opt("pppoe", "PADO-Delay");
@@ -2064,17 +2037,36 @@ static void load_config(void)
 	conf_dpv6_pool = conf_get_opt("pppoe", "ipv6-pool-delegate");
 	conf_ifname = conf_get_opt("pppoe", "ifname");
 
-	conf_called_sid = CSID_MAC;
 	opt = conf_get_opt("pppoe", "called-sid");
-	if (opt) {
-		if (!strcmp(opt, "mac"))
-			conf_called_sid = CSID_MAC;
-		else if (!strcmp(opt, "ifname"))
-			conf_called_sid = CSID_IFNAME;
-		else if (!strcmp(opt, "ifname:mac"))
-			conf_called_sid = CSID_IFNAME_MAC;
-		else
+	conf_called_sid = parse_sid(opt);
+	if (conf_called_sid == -1) {
 			log_error("pppoe: unknown called-sid type\n");
+			conf_called_sid = CSID_MAC;
+	}
+
+	opt = conf_get_opt("pppoe", "calling-sid");
+	conf_calling_sid = parse_sid(opt);
+	if (conf_calling_sid == -1) {
+			log_error("pppoe: unknown calling-sid type\n");
+			conf_calling_sid = CSID_MAC;
+	}
+
+	// If this option requests interface to be present and we have just MAC,
+	// add interface name
+	opt = conf_get_opt("pppoe", "ifname-in-sid");
+	if (opt) {
+		if (strcmp(opt, "called-sid") == 0 && conf_called_sid == CSID_MAC)
+			conf_called_sid = CSID_IFNAME_MAC;
+		else if (strcmp(opt, "calling-sid") == 0 && conf_calling_sid == CSID_MAC)
+			conf_calling_sid = CSID_IFNAME_MAC;
+		else if (strcmp(opt, "both") == 0) {
+			if (conf_called_sid == CSID_MAC)
+				conf_called_sid = CSID_IFNAME_MAC;
+			if (conf_calling_sid == CSID_MAC)
+				conf_calling_sid = CSID_IFNAME_MAC;
+		}
+		if (conf_verbose)
+			log_info2("pppoe: config(): ifname-in-sid, conf_called_sid: %d, conf_calling_sid: %d\n", conf_called_sid, conf_calling_sid);
 	}
 
 	opt = conf_get_opt("pppoe", "vlan-name");
