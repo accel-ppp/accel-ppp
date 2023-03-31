@@ -87,7 +87,6 @@ jobs:
             "debian:10",
             "debian:11",
             "debian:bookworm",
-            "ubuntu:18.04",
             "ubuntu:20.04",
             "ubuntu:22.04",
           ]
@@ -105,7 +104,6 @@ jobs:
           debian:10) CPACK_TYPE=Debian10 ;;
           ubuntu:22.04) CPACK_TYPE=Ubuntu22 ; HEADERS_SUFFIX=generic ;;
           ubuntu:20.04) CPACK_TYPE=Ubuntu20 ; HEADERS_SUFFIX=generic ;;
-          ubuntu:18.04) CPACK_TYPE=Ubuntu18 ; HEADERS_SUFFIX=generic ;;
           esac;
           echo HEADERS_SUFFIX=$HEADERS_SUFFIX >> $GITHUB_ENV;
           echo DISTRO=$DISTRO >> $GITHUB_ENV;
