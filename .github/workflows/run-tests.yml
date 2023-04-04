@@ -26,11 +26,6 @@ jobs:
             untar: false
             format: qcow2
 
-          - distro: Ubuntu-18.04
-            image: https://cloud-images.ubuntu.com/bionic/current/bionic-server-cloudimg-amd64.img
-            untar: false
-            format: qcow2
-
           - distro: Debian12
             image: https://cloud.debian.org/images/cloud/bookworm/daily/latest/debian-12-generic-amd64-daily.tar.xz
             untar: true
@@ -119,7 +114,7 @@ jobs:
           git build-essential cmake gcc linux-headers-\`uname -r\` 
           libpcre3-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
           iproute2 ppp pppoe isc-dhcp-client timelimit && 
-          sudo pip3 install pytest pytest-dependency gcovr"
+          (sudo pip3 install pytest pytest-dependency gcovr || sudo pip3 install --break-system-packages pytest pytest-dependency gcovr)"
       - name: Copy source code to target OS
         run: |
           tar -Jcf accel-ppp.tar.xz accel-ppp
