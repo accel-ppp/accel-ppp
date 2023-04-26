@@ -765,7 +765,8 @@ static inline int dhcpv4_packet_add_opt_u32(struct dhcpv4_packet *pack, int type
 
 int dhcpv4_send_reply(int msg_type, struct dhcpv4_serv *serv, struct dhcpv4_packet *req,
 	uint32_t yiaddr, uint32_t siaddr, uint32_t router, uint32_t mask,
-	int lease_time, int renew_time, int rebind_time, struct dhcpv4_packet *relay)
+	int lease_time, int renew_time, int rebind_time, struct dhcpv4_packet *relay,
+	bool opt_send_dhcp_opt82_to_client)
 {
 	struct dhcpv4_packet *pack;
 	struct dhcpv4_option *opt;
@@ -845,7 +846,9 @@ int dhcpv4_send_reply(int msg_type, struct dhcpv4_serv *serv, struct dhcpv4_pack
 			goto out_err;
 	}
 
-	if (req->relay_agent && dhcpv4_packet_add_opt(pack, 82, req->relay_agent->data, req->relay_agent->len))
+	if (opt_send_dhcp_opt82_to_client
+			&& req->relay_agent
+			&& dhcpv4_packet_add_opt(pack, 82, req->relay_agent->data, req->relay_agent->len))
 		goto out_err;
 
 	*pack->ptr++ = 255;
@@ -872,7 +875,8 @@ out_err:
 	return -1;
 }
 
-int dhcpv4_send_nak(struct dhcpv4_serv *serv, struct dhcpv4_packet *req, const char *err)
+int dhcpv4_send_nak(struct dhcpv4_serv *serv, struct dhcpv4_packet *req, const char *err,
+		bool opt_send_dhcp_opt82_to_client)
 {
 	struct dhcpv4_packet *pack;
 	int val, r;
@@ -899,7 +903,9 @@ int dhcpv4_send_nak(struct dhcpv4_serv *serv, struct dhcpv4_packet *req, const c
 	if (server_id && dhcpv4_packet_add_opt(pack, 54, &server_id, 4))
 		goto out_err;
 
-	if (req->relay_agent && dhcpv4_packet_add_opt(pack, 82, req->relay_agent->data, req->relay_agent->len))
+	if (opt_send_dhcp_opt82_to_client
+			&& req->relay_agent
+			&& dhcpv4_packet_add_opt(pack, 82, req->relay_agent->data, req->relay_agent->len))
 		goto out_err;
 
 	if (err && dhcpv4_packet_add_opt(pack, 56, err, strlen(err)))

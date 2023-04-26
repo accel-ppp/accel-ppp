@@ -70,6 +70,7 @@ struct ipoe_serv {
 	unsigned int need_close:1;
 	unsigned int active:1;
 	unsigned int vlan_mon:1;
+	unsigned int opt_send_dhcp_opt82_to_client:1;
 };
 
 struct ipoe_session {

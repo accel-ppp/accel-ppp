@@ -174,6 +174,7 @@ static int conf_rebind_time = LEASE_TIME/2 + LEASE_TIME/4 + LEASE_TIME/8;
 static int conf_verbose;
 static const char *conf_agent_remote_id;
 static const char *conf_link_selection;
+static int conf_send_dhcp_opt82_to_client = 1;
 static int conf_proto;
 static LIST_HEAD(conf_offer_delay);
 static const char *conf_vlan_name;
@@ -939,7 +940,8 @@ static void __ipoe_session_start(struct ipoe_session *ses)
 			ses->ses.ipv4->addr = ses->siaddr;
 
 		dhcpv4_send_reply(DHCPOFFER, ses->serv->dhcpv4, ses->dhcpv4_request, ses->yiaddr, ses->siaddr, ses->router, ses->mask,
-				  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply);
+				  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply,
+				  ses->serv->opt_send_dhcp_opt82_to_client);
 
 		dhcpv4_packet_free(ses->dhcpv4_request);
 		ses->dhcpv4_request = NULL;
@@ -1078,9 +1080,9 @@ static void __ipoe_session_activate(struct ipoe_session *ses)
 	if (ses->dhcpv4_request) {
 		if (ses->ses.state == AP_STATE_ACTIVE)
 			dhcpv4_send_reply(DHCPACK, ses->dhcpv4 ?: ses->serv->dhcpv4, ses->dhcpv4_request, ses->yiaddr, ses->siaddr, ses->router, ses->mask,
-					  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply);
+					  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply, serv->opt_send_dhcp_opt82_to_client);
 		else
-			dhcpv4_send_nak(ses->serv->dhcpv4, ses->dhcpv4_request, SESSION_TERMINATED);
+			dhcpv4_send_nak(ses->serv->dhcpv4, ses->dhcpv4_request, SESSION_TERMINATED, serv->opt_send_dhcp_opt82_to_client);
 
 		dhcpv4_packet_free(ses->dhcpv4_request);
 		ses->dhcpv4_request = NULL;
@@ -1134,9 +1136,9 @@ static void ipoe_session_keepalive(struct dhcpv4_packet *pack)
 
 	if (ses->ses.state == AP_STATE_ACTIVE) {
 		dhcpv4_send_reply(DHCPACK, ses->dhcpv4 ?: ses->serv->dhcpv4, ses->dhcpv4_request, ses->yiaddr, ses->siaddr, ses->router, ses->mask,
-				  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply);
+				  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply, ses->serv->opt_send_dhcp_opt82_to_client);
 	} else
-		dhcpv4_send_nak(ses->dhcpv4 ?: ses->serv->dhcpv4, ses->dhcpv4_request, SESSION_TERMINATED);
+		dhcpv4_send_nak(ses->dhcpv4 ?: ses->serv->dhcpv4, ses->dhcpv4_request, SESSION_TERMINATED, ses->serv->opt_send_dhcp_opt82_to_client);
 
 	dhcpv4_packet_free(ses->dhcpv4_request);
 	ses->dhcpv4_request = NULL;
@@ -1321,7 +1323,7 @@ static void ipoe_session_terminated_pkt(struct dhcpv4_packet *pack)
 		dhcpv4_print_packet(pack, 0, log_ppp_info2);
 	}
 
-	dhcpv4_send_nak(ses->serv->dhcpv4, pack, SESSION_TERMINATED);
+	dhcpv4_send_nak(ses->serv->dhcpv4, pack, SESSION_TERMINATED, ses->serv->opt_send_dhcp_opt82_to_client);
 
 	dhcpv4_packet_free(pack);
 
@@ -1480,7 +1482,7 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 
 	if (ses->terminate) {
 		if (pack->msg_type != DHCPDISCOVER)
-			dhcpv4_send_nak(dhcpv4, pack, SESSION_TERMINATED);
+			dhcpv4_send_nak(dhcpv4, pack, SESSION_TERMINATED, ses->serv->opt_send_dhcp_opt82_to_client);
 		triton_context_call(ses->ctrl.ctx, (triton_event_func)ipoe_session_terminated, ses);
 		return;
 	}
@@ -1524,7 +1526,7 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 	if (conf_check_mac_change && pack->relay_agent && !opt82_match) {
 		log_ppp_info2("port change detected\n");
 		if (pack->msg_type == DHCPREQUEST)
-			dhcpv4_send_nak(dhcpv4, pack, SESSION_TERMINATED);
+			dhcpv4_send_nak(dhcpv4, pack, SESSION_TERMINATED, ses->serv->opt_send_dhcp_opt82_to_client);
 		triton_context_call(ses->ctrl.ctx, (triton_event_func)__ipoe_session_terminate, &ses->ses);
 		return;
 	}
@@ -1536,7 +1538,8 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 				ipoe_session_keepalive(pack);
 			} else
 				dhcpv4_send_reply(DHCPOFFER, dhcpv4, pack, ses->yiaddr, ses->siaddr, ses->router, ses->mask,
-						  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply);
+						  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply,
+						  ses->serv->opt_send_dhcp_opt82_to_client);
 		}
 	} else if (pack->msg_type == DHCPREQUEST) {
 		ses->xid = pack->hdr->xid;
@@ -1546,7 +1549,7 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 			(pack->hdr->ciaddr && (pack->hdr->xid != ses->xid || pack->hdr->ciaddr != ses->yiaddr))) {
 
 			if (pack->server_id == ses->siaddr)
-				dhcpv4_send_nak(dhcpv4, pack, "Wrong session");
+				dhcpv4_send_nak(dhcpv4, pack, "Wrong session", ses->serv->opt_send_dhcp_opt82_to_client);
 			else if (ses->serv->dhcpv4_relay)
 				dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 
@@ -1572,7 +1575,8 @@ static void ipoe_ses_recv_dhcpv4_discover(struct dhcpv4_packet *pack)
 
 	if (ses->yiaddr)
 		dhcpv4_send_reply(DHCPOFFER, ses->dhcpv4 ?: ses->serv->dhcpv4, pack, ses->yiaddr, ses->siaddr, ses->router, ses->mask,
-				  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply);
+				  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply,
+				  ses->serv->opt_send_dhcp_opt82_to_client);
 
 	dhcpv4_packet_free(pack);
 }
@@ -1592,7 +1596,7 @@ static void ipoe_ses_recv_dhcpv4_request(struct dhcpv4_packet *pack)
 		(pack->hdr->ciaddr && (pack->hdr->ciaddr != ses->yiaddr))) {
 
 		if (pack->server_id == ses->siaddr)
-			dhcpv4_send_nak(ses->serv->dhcpv4, pack, "Wrong session");
+			dhcpv4_send_nak(ses->serv->dhcpv4, pack, "Wrong session", ses->serv->opt_send_dhcp_opt82_to_client);
 
 		ap_session_terminate(&ses->ses, TERM_USER_REQUEST, 1);
 
@@ -1909,13 +1913,15 @@ static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet 
 			}
 
 			if (pack->src_addr) {
-				dhcpv4_send_nak(dhcpv4, pack, "Session dosn't exist");
+				dhcpv4_send_nak(dhcpv4, pack, "Session dosn't exist",
+						serv->opt_send_dhcp_opt82_to_client);
 				goto out;
 			}
 
 			if (pack->server_id) {
 				if (check_server_id(pack->server_id)) {
-					dhcpv4_send_nak(dhcpv4, pack, "Wrong server id");
+					dhcpv4_send_nak(dhcpv4, pack, "Wrong server id",
+							serv->opt_send_dhcp_opt82_to_client);
 					goto out;
 				}
 			}
@@ -1931,7 +1937,7 @@ static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet 
 				goto out;
 
 			if (ipoe_serv_request_check(serv, pack->hdr->xid))
-				dhcpv4_send_nak(dhcpv4, pack, "Session doesn't exist");
+				dhcpv4_send_nak(dhcpv4, pack, "Session doesn't exist", serv->opt_send_dhcp_opt82_to_client);
 		} else {
 			if (ses->terminate) {
 				dhcpv4_packet_ref(pack);
@@ -2045,16 +2051,16 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 			__ipoe_session_start(ses);
 		} else
 			dhcpv4_send_reply(DHCPOFFER, ses->dhcpv4 ?: ses->serv->dhcpv4, ses->dhcpv4_request, ses->yiaddr, ses->siaddr, ses->router, ses->mask,
-					  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply);
+					  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply, ses->serv->opt_send_dhcp_opt82_to_client);
 	} else if (pack->msg_type == DHCPACK) {
 		if (ses->ses.state == AP_STATE_STARTING)
 			__ipoe_session_activate(ses);
 		else
 			dhcpv4_send_reply(DHCPACK, ses->dhcpv4 ?: ses->serv->dhcpv4, ses->dhcpv4_request, ses->yiaddr, ses->siaddr, ses->router, ses->mask,
-					  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply);
+					  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply, ses->serv->opt_send_dhcp_opt82_to_client);
 
 	} else if (pack->msg_type == DHCPNAK) {
-		dhcpv4_send_nak(ses->dhcpv4 ?: ses->serv->dhcpv4, ses->dhcpv4_request, "Session is terminated");
+		dhcpv4_send_nak(ses->dhcpv4 ?: ses->serv->dhcpv4, ses->dhcpv4_request, "Session is terminated", ses->serv->opt_send_dhcp_opt82_to_client);
 		ap_session_terminate(&ses->ses, TERM_NAS_REQUEST, 1);
 		return;
 	}
@@ -3166,6 +3172,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->opt_ipv6 = opt_ipv6;
 		serv->opt_weight = opt_weight;
 		serv->opt_ip_unnumbered = opt_ip_unnumbered;
+		serv->opt_send_dhcp_opt82_to_client = conf_send_dhcp_opt82_to_client;
 #ifdef USE_LUA
 		if (serv->opt_lua_username_func && (!opt_lua_username_func || strcmp(serv->opt_lua_username_func, opt_lua_username_func))) {
 			_free(serv->opt_lua_username_func);
@@ -3253,6 +3260,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	serv->opt_mtu = opt_mtu;
 	serv->opt_weight = opt_weight;
 	serv->opt_ip_unnumbered = opt_ip_unnumbered;
+	serv->opt_send_dhcp_opt82_to_client = conf_send_dhcp_opt82_to_client;
 #ifdef USE_LUA
 	serv->opt_lua_username_func = opt_lua_username_func;
 #endif
@@ -4006,6 +4014,12 @@ static void load_config(void)
 	opt = conf_get_opt("ipoe", "link-selection");
 	if (opt && inet_pton(AF_INET, opt, &dummy) > 0)
 		conf_link_selection = opt;
+
+	opt = conf_get_opt("ipoe", "send-dhcp-opt82-to-client");
+	if (opt)
+		conf_send_dhcp_opt82_to_client = atoi(opt);
+	else
+		conf_send_dhcp_opt82_to_client = 1;
 
 	opt = conf_get_opt("ipoe", "ipv6");
 	if (opt)

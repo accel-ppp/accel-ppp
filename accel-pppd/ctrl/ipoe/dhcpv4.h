@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <endian.h>
+#include <stdbool.h>
 #include "list.h"
 
 #include "triton.h"
@@ -122,8 +123,10 @@ int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint3
         const char *link_selection);
 int dhcpv4_send_reply(int msg_type, struct dhcpv4_serv *serv, struct dhcpv4_packet *req,
 	uint32_t yiaddr, uint32_t siaddr, uint32_t router, uint32_t mask,
-	int lease_time, int renew_time, int rebind_time, struct dhcpv4_packet *relay_reply);
-int dhcpv4_send_nak(struct dhcpv4_serv *serv, struct dhcpv4_packet *req, const char *err);
+	int lease_time, int renew_time, int rebind_time, struct dhcpv4_packet *relay_reply,
+	bool opt_send_dhcp_opt82_to_client);
+int dhcpv4_send_nak(struct dhcpv4_serv *serv, struct dhcpv4_packet *req, const char *err,
+		bool opt_send_dhcp_opt82_to_client);
 
 void dhcpv4_send_notify(struct dhcpv4_serv *serv, struct dhcpv4_packet *req, unsigned int weight);
 
