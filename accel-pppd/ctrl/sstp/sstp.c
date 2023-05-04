@@ -992,6 +992,10 @@ static int ppp_allocate_pty(int *master, int *slave, int flags)
 		flags &= ~O_CLOEXEC;
 	}
 
+	if (tcgetattr(sfd, &tios) < 0) {
+		log_ppp_error("sstp: ppp: get pty attributes: %s\n", strerror(errno));
+		goto error;
+	}
 	tios.c_cflag &= ~(CSIZE | CSTOPB | PARENB);
 	tios.c_cflag |= CS8 | CREAD | CLOCAL;
 	tios.c_iflag  = IGNBRK | IGNPAR;
@@ -1000,7 +1004,7 @@ static int ppp_allocate_pty(int *master, int *slave, int flags)
 	tios.c_cc[VMIN] = 1;
 	tios.c_cc[VTIME] = 0;
 	if (tcsetattr(sfd, TCSAFLUSH, &tios) < 0) {
-		log_ppp_warn("sstp: ppp: set pty attributes: %s\n", strerror(errno));
+		log_ppp_error("sstp: ppp: set pty attributes: %s\n", strerror(errno));
 		goto error;
 	}
 
