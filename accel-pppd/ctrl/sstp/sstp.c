@@ -79,7 +79,7 @@ struct sockaddr_t {
 		struct sockaddr_in6 sin6;
 		struct sockaddr_un sun;
 	} u;
-} __attribute__((packed));
+};
 
 struct hash_t {
 	unsigned int len;
@@ -284,7 +284,7 @@ static int _vstrsep(char *buf, const char *sep, ...)
 	return n;
 }
 
-static in_addr_t sockaddr_ipv4(struct sockaddr_t *addr)
+static in_addr_t sockaddr_ipv4(const struct sockaddr_t *addr)
 {
 	switch (addr->u.sa.sa_family) {
 	case AF_INET:
@@ -298,9 +298,10 @@ static in_addr_t sockaddr_ipv4(struct sockaddr_t *addr)
 	}
 }
 
-static int sockaddr_ntop(struct sockaddr_t *addr, char *dst, socklen_t size, int flags)
+static int sockaddr_ntop(const struct sockaddr_t *addr, char *dst, socklen_t size, int flags)
 {
-	char ipv6_buf[INET6_ADDRSTRLEN], *path, sign;
+	char ipv6_buf[INET6_ADDRSTRLEN], sign;
+	const char *path;
 
 	switch (addr->u.sa.sa_family) {
 	case AF_INET:
@@ -588,7 +589,7 @@ error:
 
 /* proxy */
 
-static int proxy_parse(struct buffer_t *buf, struct sockaddr_t *peer, struct sockaddr_t *addr)
+static int proxy_parse(const struct buffer_t *buf, struct sockaddr_t *peer, struct sockaddr_t *addr)
 {
 	static const uint8_t proxy_sig[] = PROXY_SIG;
 	struct proxy_hdr *hdr;
@@ -647,7 +648,7 @@ error:
 	return -1;
 }
 
-static int proxy_parse_v2(struct buffer_t *buf, struct sockaddr_t *peer, struct sockaddr_t *addr)
+static int proxy_parse_v2(const struct buffer_t *buf, struct sockaddr_t *peer, struct sockaddr_t *addr)
 {
 	static const uint8_t proxy2_sig[] = PROXY2_SIG;
 	struct proxy2_hdr *hdr;
