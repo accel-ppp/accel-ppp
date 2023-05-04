@@ -286,15 +286,12 @@ static int _vstrsep(char *buf, const char *sep, ...)
 
 static in_addr_t sockaddr_ipv4(struct sockaddr_t *addr)
 {
-	struct in6_addr inaddr6;
-
 	switch (addr->u.sa.sa_family) {
 	case AF_INET:
 		return addr->u.sin.sin_addr.s_addr;
 	case AF_INET6:
-		inaddr6 = addr->u.sin6.sin6_addr;
-		if (IN6_IS_ADDR_V4MAPPED(&inaddr6))
-			return inaddr6.s6_addr32[3];
+		if (IN6_IS_ADDR_V4MAPPED(&addr->u.sin6.sin6_addr))
+			return addr->u.sin6.sin6_addr.s6_addr32[3];
 		/* fall through */
 	default:
 		return INADDR_ANY;
@@ -304,22 +301,22 @@ static in_addr_t sockaddr_ipv4(struct sockaddr_t *addr)
 static int sockaddr_ntop(struct sockaddr_t *addr, char *dst, socklen_t size, int flags)
 {
 	char ipv6_buf[INET6_ADDRSTRLEN], *path, sign;
-	struct sockaddr_in6 sin6 = addr->u.sin6;
-	struct in6_addr inaddr6 = sin6.sin6_addr;
 
 	switch (addr->u.sa.sa_family) {
 	case AF_INET:
 		return snprintf(dst, size, (flags & FLAG_NOPORT) ? "%s" : "%s:%d",
 				inet_ntoa(addr->u.sin.sin_addr), ntohs(addr->u.sin.sin_port));
 	case AF_INET6:
-		if (IN6_IS_ADDR_V4MAPPED(&inaddr6)) {
-			inet_ntop(AF_INET, &inaddr6.s6_addr32[3], ipv6_buf, sizeof(ipv6_buf));
+		if (IN6_IS_ADDR_V4MAPPED(&addr->u.sin6.sin6_addr)) {
+			inet_ntop(AF_INET, &addr->u.sin6.sin6_addr.s6_addr32[3],
+					ipv6_buf, sizeof(ipv6_buf));
 			return snprintf(dst, size, (flags & FLAG_NOPORT) ? "%s" : "%s:%d",
-					ipv6_buf, ntohs(sin6.sin6_port));
+					ipv6_buf, ntohs(addr->u.sin6.sin6_port));
 		} else {
-			inet_ntop(AF_INET6, &inaddr6, ipv6_buf, sizeof(ipv6_buf));
+			inet_ntop(AF_INET6, &addr->u.sin6.sin6_addr,
+					ipv6_buf, sizeof(ipv6_buf));
 			return snprintf(dst, size, (flags & FLAG_NOPORT) ? "%s" : "[%s]:%d",
-					ipv6_buf, ntohs(sin6.sin6_port));
+					ipv6_buf, ntohs(addr->u.sin6.sin6_port));
 		}
 	case AF_UNIX:
 		if (addr->len <= offsetof(typeof(addr->u.sun), sun_path)) {
@@ -2283,14 +2280,12 @@ static int sstp_connect(struct triton_md_handler_t *h)
 	struct sstp_conn_t *conn;
 	struct sockaddr_t addr;
 	char addr_buf[ADDRSTR_MAXLEN];
-	socklen_t addrlen;
 	in_addr_t ip;
 	int sock, value;
 
 	while (1) {
-		addrlen = sizeof(addr.u);
-		sock = accept(h->fd, &addr.u.sa, &addrlen);
-		addr.len = addrlen;
+		addr.len = sizeof(addr.u);
+		sock = accept(h->fd, &addr.u.sa, &addr.len);
 		if (sock < 0) {
 			if (errno == EAGAIN)
 				return 0;
@@ -2417,8 +2412,8 @@ static int sstp_connect(struct triton_md_handler_t *h)
 		sockaddr_ntop(&addr, addr_buf, sizeof(addr_buf), FLAG_NOPORT);
 		conn->ctrl.calling_station_id = _strdup(addr_buf);
 
-		addrlen = sizeof(addr.u);
-		getsockname(sock, &addr.u.sa, &addrlen);
+		addr.len = sizeof(addr.u);
+		getsockname(sock, &addr.u.sa, &addr.len);
 		sockaddr_ntop(&addr, addr_buf, sizeof(addr_buf), FLAG_NOPORT);
 		conn->ctrl.called_station_id = _strdup(addr_buf);
 
