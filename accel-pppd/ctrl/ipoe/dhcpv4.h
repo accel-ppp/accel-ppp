@@ -137,7 +137,7 @@ void dhcpv4_print_options(struct dhcpv4_packet *, void (*)(const char *, ...));
 
 void dhcpv4_print_packet(struct dhcpv4_packet *pack, int relay, void (*print)(const char *fmt, ...));
 
-int dhcpv4_parse_opt82(struct dhcpv4_option *opt, uint8_t **agent_circuit_id, uint8_t **agent_remote_id);
+int dhcpv4_parse_opt82(struct dhcpv4_option *opt, uint8_t **agent_circuit_id, uint8_t **agent_remote_id, uint8_t **subscriber_id);
 
 int dhcpv4_get_ip(struct dhcpv4_serv *serv, uint32_t *yiaddr, uint32_t *siaddr, int *mask);
 void dhcpv4_put_ip(struct dhcpv4_serv *serv, uint32_t ip);

@@ -33,6 +33,7 @@ static int packet4_option(lua_State *L);
 static int packet4_options(lua_State *L);
 static int packet4_agent_circuit_id(lua_State *L);
 static int packet4_agent_remote_id(lua_State *L);
+static int packet4_subscriber_id(lua_State *L);
 static int packet4_vlan(lua_State *L);
 static int packet4_hwaddr(lua_State *L);
 static int packet4_ipaddr(lua_State *L);
@@ -44,6 +45,7 @@ static const struct luaL_Reg packet4_lib [] = {
 	{"options", packet4_options},
 	{"agent_circuit_id", packet4_agent_circuit_id},
 	{"agent_remote_id", packet4_agent_remote_id},
+	{"subscriber_id", packet4_subscriber_id},
 	{"vlan", packet4_vlan},
 	{"hwaddr", packet4_hwaddr},
 	{"ipaddr", packet4_ipaddr},
@@ -169,6 +171,21 @@ static int packet4_agent_remote_id(lua_State *L)
 
 	if (ses->agent_remote_id)
 		lua_pushlstring(L, (char *)(ses->agent_remote_id + 1), *ses->agent_remote_id);
+	else
+		lua_pushnil(L);
+
+	return 1;
+}
+
+static int packet4_subscriber_id(lua_State *L)
+{
+	struct ipoe_session *ses = luaL_checkudata(L, 1, IPOE_PACKET4);
+
+	if (!ses || !ses->dhcpv4_request)
+		return 0;
+
+	if (ses->subscriber_id)
+		lua_pushlstring(L, (char *)(ses->subscriber_id + 1), *ses->subscriber_id);
 	else
 		lua_pushnil(L);
 

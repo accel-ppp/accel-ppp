@@ -430,7 +430,7 @@ void dhcpv4_packet_free(struct dhcpv4_packet *pack)
 	mempool_free(pack);
 }
 
-int dhcpv4_parse_opt82(struct dhcpv4_option *opt, uint8_t **agent_circuit_id, uint8_t **agent_remote_id)
+int dhcpv4_parse_opt82(struct dhcpv4_option *opt, uint8_t **agent_circuit_id, uint8_t **agent_remote_id, uint8_t **subscriber_id)
 {
 	uint8_t *ptr = opt->data;
 	uint8_t *endptr = ptr + opt->len;
@@ -450,6 +450,8 @@ int dhcpv4_parse_opt82(struct dhcpv4_option *opt, uint8_t **agent_circuit_id, ui
 			*agent_circuit_id = ptr - 1;
 		else if (type == 2)
 			*agent_remote_id = ptr - 1;
+		else if (type == 6)
+			*subscriber_id = ptr - 1;
 
 		ptr += len;
 	}
