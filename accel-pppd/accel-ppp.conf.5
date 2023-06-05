@@ -341,6 +341,9 @@ If specified then if radius rejects access and session is DHCP then ip will be a
 .BI "gw-ip-address="x.x.x.x/mask
 Specifies address to be used as server ip address if radius can assign only client address. In such case if client address is matched network and mask then specified address and mask will be used. You can specify multiple such options.
 .TP
+.BI "ipoe-interface=" 0|1
+If set to 0, do not create a special ipoe interface (default: 1).
+.TP
 .BI "shared=" 0|1
 Specifies default value for per-interface
 .B shared
