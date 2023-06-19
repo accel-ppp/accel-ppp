@@ -5,6 +5,7 @@ SET(sources
 	dhcpv4.c
 	dhcpv4_options.c
 	ipoe_netlink.c
+	ipoe_netlink_link_monitor.c
 #	backup.c
 	arp.c
 )
