@@ -46,5 +46,9 @@ enum {
 #define IPOE_GENL_MCG_PKT		"Packet"
 #define IPOE_GENL_VERSION	  0x02
 
+typedef void (*interface_mon_notify)(int ifindex, const char *ifname, bool add);
+
+void ipoe_netlink_mon_register(interface_mon_notify func);
+
 #endif
 

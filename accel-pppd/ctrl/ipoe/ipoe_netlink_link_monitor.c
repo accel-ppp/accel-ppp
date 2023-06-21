@@ -11,10 +11,16 @@
 #include "libnetlink.h"
 
 #include "ipoe.h"
-
+#include "if_ipoe.h"
 
 static struct rtnl_handle rth;
 static struct triton_md_handler_t mc_hnd;
+static interface_mon_notify cb = NULL;
+
+void __export ipoe_netlink_mon_register(interface_mon_notify func)
+{
+		cb = func;
+}
 
 static int ipoe_mc_read_handler(const struct sockaddr_nl *nladdr,
 		      struct nlmsghdr *hdr, void *arg)
@@ -34,6 +40,10 @@ static int ipoe_mc_read_handler(const struct sockaddr_nl *nladdr,
 	log_debug("ipoe: netlink message RTM_%sLINK for interface %s index %d\n",
 			hdr->nlmsg_type == RTM_NEWLINK ? "NEW" : "DEL",
 			strlen(ifname) ? ifname : "<unknown>", ifi->ifi_index);
+
+	if (cb && strlen(ifname))
+		/* notify ipoe of the event using the callback function */
+		cb(ifi->ifi_index, ifname, hdr->nlmsg_type == RTM_NEWLINK);
 
 	return 0;
 }
