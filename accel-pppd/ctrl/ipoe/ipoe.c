@@ -226,6 +226,7 @@ static void ipoe_serv_timeout(struct triton_timer_t *t);
 static struct ipoe_session *ipoe_session_create_up(struct ipoe_serv *serv, struct ethhdr *eth, struct iphdr *iph, struct _arphdr *arph);
 static void __terminate(struct ap_session *ses);
 static void ipoe_ipv6_disable(struct ipoe_serv *serv);
+static struct conf_option_t *ipoe_find_opt(const char *name);
 
 static void ipoe_ctx_switch(struct triton_context_t *ctx, void *arg)
 {
@@ -2761,6 +2762,62 @@ struct ipoe_serv *ipoe_find_serv(const char *ifname)
 	list_for_each_entry(serv, &serv_list, entry) {
 		if (strcmp(serv->ifname, ifname) == 0)
 			return serv;
+	}
+
+	return NULL;
+}
+
+static struct conf_option_t *ipoe_find_opt(const char *ifname)
+{
+	struct conf_sect_t *sect = conf_get_section("ipoe");
+	struct conf_option_t *opt;
+	const char *pcre_err;
+	struct ifreq ifr;
+	int pcre_offset;
+	const char *ptr;
+	pcre *re = NULL;
+	char *pattern;
+
+	list_for_each_entry(opt, &sect->items, entry) {
+		if (strcmp(opt->name, "interface"))
+			continue;
+		if (!opt->val)
+			continue;
+
+		for (ptr = opt->val; *ptr && *ptr != ','; ptr++);
+
+		if (strlen(opt->val) > 3 && memcmp(opt->val, "re:", 3) == 0) {
+			pattern = _malloc(ptr - (opt->val + 3) + 1);
+			memcpy(pattern, opt->val + 3, ptr - (opt->val + 3));
+			pattern[ptr - (opt->val + 3)] = 0;
+
+			re = pcre_compile2(pattern, 0, NULL, &pcre_err, &pcre_offset, NULL);
+
+			_free(pattern);
+
+			if (!re) {
+				log_error("ipoe: '%s': %s at %i\r\n", pattern, pcre_err, pcre_offset);
+				pcre_free(re);
+				continue;
+			}
+
+			if (pcre_exec(re, NULL, ifname, strlen(ifname), 0, 0, NULL, 0) < 0) {
+				pcre_free(re);
+				continue;
+			}
+
+			pcre_free(re);
+		} else {
+			if (ptr - opt->val >= sizeof(ifr.ifr_name))
+				continue;
+
+			memcpy(ifr.ifr_name, opt->val, ptr - opt->val);
+			ifr.ifr_name[ptr - opt->val] = 0;
+
+			if (strcmp(ifr.ifr_name, ifname) != 0)
+				continue;
+		}
+		return opt;
 	}
 
 	return NULL;
