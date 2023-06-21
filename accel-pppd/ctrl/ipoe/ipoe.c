@@ -1357,6 +1357,7 @@ static void ipoe_session_close(struct triton_context_t *ctx)
 
 static struct ipoe_session *ipoe_session_create_dhcpv4(struct ipoe_serv *serv, struct dhcpv4_packet *pack)
 {
+	struct conf_option_t *opt;
 	struct ipoe_session *ses;
 	int dlen = 0;
 	uint8_t *ptr = NULL;
@@ -1376,6 +1377,13 @@ static struct ipoe_session *ipoe_session_create_dhcpv4(struct ipoe_serv *serv, s
 
 	ses->serv = serv;
 	ses->dhcpv4_request = pack;
+
+	if (ses->serv->dhcpv4_relay == NULL || ses->serv->dhcpv4_relay->hnd.read == NULL) {
+		log_error("%s: no socket to the DHCPv4 server. Trying again to connect\n", ses->serv->ifname);
+		opt = ipoe_find_opt(serv->ifname);
+		if (opt)
+			add_interface(serv->ifname, serv->ifindex, opt->val, 0, 0, 0);
+	}
 
 	if (!serv->opt_shared)
 		strncpy(ses->ses.ifname, serv->ifname, AP_IFNAME_LEN);
