@@ -460,7 +460,7 @@ int __export rtnl_listen(struct rtnl_handle *rtnl,
 		}
 		if (msg.msg_namelen != sizeof(nladdr)) {
 			log_debug("libnetlink: ""Sender address length == %d\n", msg.msg_namelen);
-			exit(1);
+			return -1;
 		}
 		for (h = (struct nlmsghdr*)buf; status >= sizeof(*h); ) {
 			int err;
@@ -473,7 +473,7 @@ int __export rtnl_listen(struct rtnl_handle *rtnl,
 					return -1;
 				}
 				log_debug("libnetlink: ""!!!malformed message: len=%d\n", len);
-				exit(1);
+				return -1;
 			}
 
 			err = handler(&nladdr, h, jarg);
@@ -489,7 +489,7 @@ int __export rtnl_listen(struct rtnl_handle *rtnl,
 		}
 		if (status) {
 			log_debug("libnetlink: ""!!!Remnant of size %d\n", status);
-			exit(1);
+			return -1;
 		}
 	}
 
