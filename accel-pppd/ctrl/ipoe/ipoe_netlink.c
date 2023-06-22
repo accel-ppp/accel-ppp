@@ -518,11 +518,23 @@ static void ipoe_up_handler(const struct sockaddr_nl *addr, struct nlmsghdr *h)
 	}
 }
 
+static int ipoe_mc_read_handler(const struct sockaddr_nl *nladdr,
+		      struct nlmsghdr *hdr, void *arg)
+{
+	struct genlmsghdr *ghdr;
+
+	ghdr = NLMSG_DATA(hdr);
+
+	if (ghdr->cmd == IPOE_REP_PKT)
+		ipoe_up_handler(nladdr, hdr);
+
+	return 0;
+}
+
 static int ipoe_mc_read(struct triton_md_handler_t *h)
 {
 	int status;
 	struct nlmsghdr *hdr;
-	struct genlmsghdr *ghdr;
 	struct sockaddr_nl nladdr;
 	struct iovec iov;
 	struct msghdr msg = {
@@ -575,10 +587,7 @@ static int ipoe_mc_read(struct triton_md_handler_t *h)
 				continue;
 			}
 
-			ghdr = NLMSG_DATA(hdr);
-
-			if (ghdr->cmd == IPOE_REP_PKT)
-				ipoe_up_handler(&nladdr, hdr);
+			ipoe_mc_read_handler(&nladdr, hdr, NULL);
 
 			status -= NLMSG_ALIGN(len);
 			hdr = (struct nlmsghdr*)((char*)hdr + NLMSG_ALIGN(len));
