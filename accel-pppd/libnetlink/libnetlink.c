@@ -492,6 +492,8 @@ int __export rtnl_listen(struct rtnl_handle *rtnl,
 			exit(1);
 		}
 	}
+
+	return 0;
 }
 
 int __export addattr32(struct nlmsghdr *n, int maxlen, int type, __u32 data)
