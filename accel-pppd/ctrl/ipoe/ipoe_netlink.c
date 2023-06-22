@@ -564,7 +564,7 @@ static int ipoe_mc_read(struct triton_md_handler_t *h)
 
 		for (hdr = (struct nlmsghdr*)buf; status >= sizeof(*hdr); ) {
 			int len = hdr->nlmsg_len;
-			int l = len - sizeof(*h);
+			int l = len - sizeof(*hdr);
 
 			if (l<0 || len>status) {
 				if (msg.msg_flags & MSG_TRUNC) {
