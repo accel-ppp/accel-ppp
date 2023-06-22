@@ -447,7 +447,7 @@ int __export rtnl_listen(struct rtnl_handle *rtnl,
 
 		if (status < 0) {
 			if (errno == EINTR || errno == EAGAIN)
-				continue;
+				break;
 			log_debug("libnetlink: ""netlink receive error %s (%d)\n",
 				strerror(errno), errno);
 			if (errno == ENOBUFS)
