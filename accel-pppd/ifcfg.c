@@ -349,6 +349,16 @@ int __export ap_session_rename(struct ap_session *ses, const char *ifname, int l
 #ifdef HAVE_VRF
 int __export ap_session_vrf(struct ap_session *ses, const char *vrf_name, int len)
 {
+	if (ses->ifindex < 1) {
+		/* no accel-ppp interface */
+
+		if (!len) {
+			_free(ses->vrf_name);
+			ses->vrf_name = NULL;
+		}
+		return 0;
+	}
+
 	if (len == -1)
 		len = strlen(vrf_name);
 
