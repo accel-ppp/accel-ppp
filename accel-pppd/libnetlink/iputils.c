@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <time.h>
 #include <sys/uio.h>
+#include <linux/if.h>
 //#include <linux/if_link.h>
 //#include <linux/if_addr.h>
 //#include <linux/rtnetlink.h>
@@ -326,6 +327,143 @@ out:
 	return r;
 }
 
+
+#ifdef HAVE_VRF
+int __export iplink_get_vrf_ifindex(int ifindex)
+{
+	struct iplink_req {
+		struct nlmsghdr n;
+		struct ifinfomsg i;
+		char buf[4096];
+	} req;
+	struct ifinfomsg *ifi;
+	int len;
+	struct rtattr *tb[IFLA_MAX + 1];
+	struct rtattr *linkinfo[IFLA_MAX + 1];
+	struct rtnl_handle *rth = net->rtnl_get();
+	int vrf_ifindex = 0;
+
+	if (!rth)
+		return -1;
+
+	memset(&req, 0, sizeof(req) - 4096);
+
+	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+	req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+	req.n.nlmsg_type = RTM_GETLINK;
+	req.i.ifi_family = AF_PACKET;
+	req.i.ifi_index = ifindex;
+
+	if (rtnl_talk(rth, &req.n, 0, 0, &req.n, NULL, NULL, 0) < 0)
+		goto out;
+
+	if (req.n.nlmsg_type != RTM_NEWLINK)
+		goto out;
+
+	ifi = NLMSG_DATA(&req.n);
+
+	len = req.n.nlmsg_len;
+
+	len -= NLMSG_LENGTH(sizeof(*ifi));
+	if (len < 0)
+		goto out;
+
+	parse_rtattr(tb, IFLA_MAX, IFLA_RTA(ifi), len);
+
+	if (!tb[IFLA_LINKINFO])
+		goto out;
+
+	parse_rtattr_nested(linkinfo, IFLA_INFO_MAX, tb[IFLA_LINKINFO]);
+
+	if (!linkinfo[IFLA_INFO_SLAVE_KIND])
+		goto out;
+
+	if (strcmp(RTA_DATA(linkinfo[IFLA_INFO_SLAVE_KIND]), "vrf"))
+		goto out;
+
+	if (!tb[IFLA_MASTER])
+		goto out;
+
+	vrf_ifindex =  *(uint32_t *)RTA_DATA(tb[IFLA_MASTER]);
+
+out:
+	net->rtnl_put(rth);
+
+	return vrf_ifindex;
+}
+
+int __export iplink_get_vrf_info(int vrf_ifindex, char **vrf_name, uint8_t *table_id)
+{
+	struct iplink_req {
+		struct nlmsghdr n;
+		struct ifinfomsg i;
+		char buf[4096];
+	} req;
+	struct ifinfomsg *ifi;
+	int len;
+	struct rtattr *tb[IFLA_MAX + 1];
+	struct rtattr *vrf_attr[IFLA_VRF_MAX + 1];
+	struct rtattr *linkinfo[IFLA_MAX + 1];
+	struct rtnl_handle *rth = net->rtnl_get();
+	int r = 0;
+
+	if (!rth)
+		return -1;
+
+	memset(&req, 0, sizeof(req) - 4096);
+
+	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+	req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+	req.n.nlmsg_type = RTM_GETLINK;
+	req.i.ifi_family = AF_PACKET;
+	req.i.ifi_index = vrf_ifindex;
+
+	if (rtnl_talk(rth, &req.n, 0, 0, &req.n, NULL, NULL, 0) < 0)
+		goto out;
+
+	if (req.n.nlmsg_type != RTM_NEWLINK)
+		goto out;
+
+	ifi = NLMSG_DATA(&req.n);
+
+	len = req.n.nlmsg_len;
+
+	len -= NLMSG_LENGTH(sizeof(*ifi));
+	if (len < 0)
+		goto out;
+
+	parse_rtattr(tb, IFLA_MAX, IFLA_RTA(ifi), len);
+
+	if (!tb[IFLA_LINKINFO])
+		goto out;
+
+	parse_rtattr_nested(linkinfo, IFLA_INFO_MAX, tb[IFLA_LINKINFO]);
+
+	if (!linkinfo[IFLA_INFO_KIND])
+		goto out;
+
+	if (strcmp(RTA_DATA(linkinfo[IFLA_INFO_KIND]), "vrf"))
+		goto out;
+
+	if (!linkinfo[IFLA_INFO_DATA])
+		goto out;
+
+	parse_rtattr_nested(vrf_attr, IFLA_VRF_MAX, linkinfo[IFLA_INFO_DATA]);
+	if (!vrf_attr[IFLA_VRF_TABLE])
+		goto out;
+
+	if (!tb[IFLA_IFNAME] || strlen(RTA_DATA(tb[IFLA_IFNAME])) >= IFNAMSIZ)
+		goto out;
+
+	*table_id = *(uint32_t *)RTA_DATA(vrf_attr[IFLA_VRF_TABLE]);
+	*vrf_name = RTA_DATA(tb[IFLA_IFNAME]);
+
+out:
+	net->rtnl_put(rth);
+
+	return r;
+}
+#endif /* HAVE_VRF */
 
 int __export ipaddr_add(int ifindex, in_addr_t addr, int mask)
 {
