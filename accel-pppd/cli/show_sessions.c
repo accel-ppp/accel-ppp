@@ -395,7 +395,7 @@ static void print_vrf(struct ap_session *ses, char *buf)
 
 static void print_ifname(struct ap_session *ses, char *buf)
 {
-	snprintf(buf, CELL_SIZE, "%s", ses->ifname);
+	snprintf(buf, CELL_SIZE, "%s", strlen(ses->ifname) ? ses->ifname : ses->serv_ifname);
 }
 
 static void print_username(struct ap_session *ses, char *buf)

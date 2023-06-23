@@ -764,6 +764,8 @@ static void ipoe_session_start(struct ipoe_session *ses)
 
 	ap_session_starting(&ses->ses);
 
+	strncpy(ses->ses.serv_ifname, ses->serv->ifname, sizeof(ses->ses.serv_ifname));
+
 	if (ses->serv->opt_shared && ses->serv->opt_ipoe_interface && ipoe_create_interface(ses))
 		return;
 
