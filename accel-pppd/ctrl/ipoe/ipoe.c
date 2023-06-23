@@ -761,6 +761,13 @@ static void ipoe_session_start(struct ipoe_session *ses)
 
 	ap_session_starting(&ses->ses);
 
+#ifdef HAVE_VRF
+	if (strlen(ses->serv->vrf_name)) {
+		ses->ses.vrf_name = _malloc(strlen(ses->serv->vrf_name) + 1);
+		strncpy(ses->ses.vrf_name, ses->serv->vrf_name, strlen(ses->serv->vrf_name) + 1);
+	}
+#endif /* HAVE_VRF */
+
 	if (ses->serv->opt_shared && ipoe_create_interface(ses))
 		return;
 
