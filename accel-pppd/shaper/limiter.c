@@ -545,7 +545,7 @@ int init_ifb(const char *name)
 	memset(&ifr, 0, sizeof(ifr));
 	strcpy(ifr.ifr_name, name);
 
-	if (ioctl(sock_fd, SIOCGIFINDEX, &ifr)) {
+	if (ioctl(sock_fd, SIOCGIFINDEX, &ifr) < 0) {
 		log_emerg("shaper: ioctl(SIOCGIFINDEX): %s\n", strerror(errno));
 		close(sock_fd);
 		return -1;
@@ -555,7 +555,7 @@ int init_ifb(const char *name)
 
 	ifr.ifr_flags |= IFF_UP;
 
-	if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr)) {
+	if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr) < 0) {
 		log_emerg("shaper: ioctl(SIOCSIFINDEX): %s\n", strerror(errno));
 		close(sock_fd);
 		return -1;
