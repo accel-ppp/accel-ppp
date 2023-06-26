@@ -1637,13 +1637,13 @@ static int sstp_recv_msg_call_connected(struct sstp_conn_t *conn, struct sstp_ct
 		if (conn->ppp.ses.ipv4) {
 			np.protocol = PPP_IP;
 			np.mode = conn->ctrl.ppp_npmode;
-			if (net->ppp_ioctl(conn->ppp.unit_fd, PPPIOCSNPMODE, &np))
+			if (net->ppp_ioctl(conn->ppp.unit_fd, PPPIOCSNPMODE, &np) < 0)
 				log_ppp_error("failed to set NP (IPv4) mode: %s\n", strerror(errno));
 		}
 		if (conn->ppp.ses.ipv6) {
 			np.protocol = PPP_IPV6;
 			np.mode = conn->ctrl.ppp_npmode;
-			if (net->ppp_ioctl(conn->ppp.unit_fd, PPPIOCSNPMODE, &np))
+			if (net->ppp_ioctl(conn->ppp.unit_fd, PPPIOCSNPMODE, &np) < 0)
 				log_ppp_error("failed to set NP (IPv6) mode: %s\n", strerror(errno));
 		}
 		break;
