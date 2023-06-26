@@ -163,7 +163,7 @@ static int log_tcp_connect(struct triton_md_handler_t *h)
 {
 	struct tcp_target_t *t = container_of(h, typeof(*t), hnd);
 
-	if (connect(t->hnd.fd, &t->addr, sizeof(t->addr))) {
+	if (connect(t->hnd.fd, &t->addr, sizeof(t->addr)) < 0) {
 		if (errno == EAGAIN)
 			return 0;
 		if (errno == EINPROGRESS)
@@ -216,7 +216,7 @@ static void start_connect(struct tcp_target_t *t)
     return;
 	}
 
-	if (connect(t->hnd.fd, &t->addr, sizeof(t->addr))) {
+	if (connect(t->hnd.fd, &t->addr, sizeof(t->addr)) < 0) {
 		if (errno != EINPROGRESS) {
 			log_emerg("log-tcp: connect: %s\n", strerror(errno));
 			close(t->hnd.fd);
