@@ -115,7 +115,7 @@ static int setup_mppe_key(int fd, int transmit, uint8_t *key)
 	data.length = sizeof(buf);
 	data.transmit = transmit;
 
-	if (net->ppp_ioctl(fd, PPPIOCSCOMPRESS, &data)) {
+	if (net->ppp_ioctl(fd, PPPIOCSCOMPRESS, &data) < 0) {
 		log_ppp_warn("mppe: MPPE requested but not supported by kernel\n");
 		return -1;
 	}
@@ -129,14 +129,14 @@ static int decrease_mtu(struct ppp_t *ppp)
 
 	strcpy(ifr.ifr_name, ppp->ses.ifname);
 
-	if (net->sock_ioctl(SIOCGIFMTU, &ifr)) {
+	if (net->sock_ioctl(SIOCGIFMTU, &ifr) < 0) {
 		log_ppp_error("mppe: failed to get MTU: %s\n", strerror(errno));
 		return -1;
 	}
 
 	ifr.ifr_mtu -= MPPE_PAD;
 
-	if (net->sock_ioctl(SIOCSIFMTU, &ifr)) {
+	if (net->sock_ioctl(SIOCSIFMTU, &ifr) < 0) {
 		log_ppp_error("mppe: failed to set MTU: %s\n", strerror(errno));
 		return -1;
 	}

@@ -190,7 +190,7 @@ int __export connect_ppp_channel(struct ppp_t *ppp)
 
 	memset(&ifr, 0, sizeof(ifr));
 	strcpy(ifr.ifr_name, ppp->ses.ifname);
-	if (net->sock_ioctl(SIOCGIFINDEX, &ifr)) {
+	if (net->sock_ioctl(SIOCGIFINDEX, &ifr) < 0) {
 		log_ppp_error("ioctl(SIOCGIFINDEX): %s\n", strerror(errno));
 		goto exit_close_unit;
 	}
@@ -238,18 +238,18 @@ static int setup_ppp_mru(struct ppp_t *ppp)
 		memset(&ifr, 0, sizeof(ifr));
 		strcpy(ifr.ifr_name, ppp->ses.ifname);
 		ifr.ifr_mtu = ppp->mtu;
-		if (net->sock_ioctl(SIOCSIFMTU, &ifr)) {
+		if (net->sock_ioctl(SIOCSIFMTU, &ifr) < 0) {
 			log_ppp_error("failed to set MTU: %s\n", strerror(errno));
 			return -1;
 		}
 	}
 
 	if (ppp->mru) {
-		if (net->ppp_ioctl(ppp->unit_fd, PPPIOCSMRU, &ppp->mru)) {
+		if (net->ppp_ioctl(ppp->unit_fd, PPPIOCSMRU, &ppp->mru) < 0) {
 			log_ppp_error("failed to set unit MRU: %s\n", strerror(errno));
 			return -1;
 		}
-		if (net->ppp_ioctl(ppp->chan_fd, PPPIOCSMRU, &ppp->mru) &&
+		if (net->ppp_ioctl(ppp->chan_fd, PPPIOCSMRU, &ppp->mru) < 0 &&
 		    errno != EIO && errno != ENOTTY) {
 			log_ppp_error("lcp:mru: failed to set channel MRU: %s\n", strerror(errno));
 			return -1;
@@ -286,7 +286,7 @@ static void destablish_ppp(struct ppp_t *ppp)
 		sprintf(ifr.ifr_newname, "ppp%i", ppp->ses.unit_idx);
 		if (strcmp(ifr.ifr_newname, ppp->ses.ifname)) {
 			strncpy(ifr.ifr_name, ppp->ses.ifname, IFNAMSIZ);
-			if (net->sock_ioctl(SIOCSIFNAME, &ifr)) {
+			if (net->sock_ioctl(SIOCSIFNAME, &ifr) < 0) {
 				log_ppp_warn("failed to rename ppp to default name\n");
 				triton_md_unregister_handler(&ppp->unit_hnd, 1);
 				goto skip;

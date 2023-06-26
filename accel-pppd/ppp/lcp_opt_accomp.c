@@ -112,14 +112,14 @@ static int accomp_recv_conf_ack(struct ppp_lcp_t *lcp, struct lcp_option_t *opt,
 	struct accomp_option_t *accomp_opt = container_of(opt, typeof(*accomp_opt), opt);
 	int flags;
 
-	if (net->ppp_ioctl(lcp->ppp->chan_fd, PPPIOCGFLAGS, &flags))
+	if (net->ppp_ioctl(lcp->ppp->chan_fd, PPPIOCGFLAGS, &flags) < 0)
 		goto err;
 
 	flags &= ~SC_COMP_AC;
 	if (accomp_opt->accomp & 1)
 		flags |= SC_COMP_AC;
 
-	if (net->ppp_ioctl(lcp->ppp->chan_fd, PPPIOCSFLAGS, &flags))
+	if (net->ppp_ioctl(lcp->ppp->chan_fd, PPPIOCSFLAGS, &flags) < 0)
 		goto err;
 
 	return 0;
