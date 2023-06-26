@@ -79,7 +79,7 @@ void ap_session_ifup(struct ap_session *ses)
 	}
 }
 
-void __export ap_session_accounting_started(struct ap_session *ses)
+static void ap_session_set_interface(struct ap_session *ses)
 {
 	struct ipv6db_addr_t *a;
 	struct ifreq ifr;
@@ -87,16 +87,6 @@ void __export ap_session_accounting_started(struct ap_session *ses)
 	struct in6_ifreq ifr6;
 	struct npioctl np;
 	struct ppp_t *ppp;
-
-	if (ses->stop_time)
-		return;
-
-	if (--ses->acct_start)
-		return;
-
-	triton_event_fire(EV_SES_PRE_UP, ses);
-	if (ses->stop_time)
-		return;
 
 	memset(&ifr, 0, sizeof(ifr));
 	strcpy(ifr.ifr_name, ses->ifname);
@@ -188,6 +178,22 @@ void __export ap_session_accounting_started(struct ap_session *ses)
 		}
 #endif
 	}
+}
+
+void __export ap_session_accounting_started(struct ap_session *ses)
+{
+
+	if (ses->stop_time)
+		return;
+
+	if (--ses->acct_start)
+		return;
+
+	triton_event_fire(EV_SES_PRE_UP, ses);
+	if (ses->stop_time)
+		return;
+
+	ap_session_set_interface(ses);
 
 	ses->ctrl->started(ses);
 
