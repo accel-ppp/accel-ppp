@@ -293,30 +293,30 @@ static int ipv6_nd_start(struct ap_session *ses)
 		return -1;
 	}
 
-	if (net->setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, ses->ifname, strlen(ses->ifname))) {
+	if (net->setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, ses->ifname, strlen(ses->ifname)) < 0) {
 		log_ppp_error("ipv6_nd: setsockopt(SO_BINDTODEVICE): %s\n", strerror(errno));
 		goto out_err;
 	}
 
 	val = 2;
-	if (net->setsockopt(sock, IPPROTO_RAW, IPV6_CHECKSUM, &val, sizeof(val))) {
+	if (net->setsockopt(sock, IPPROTO_RAW, IPV6_CHECKSUM, &val, sizeof(val)) < 0) {
 		log_ppp_error("ipv6_nd: setsockopt(IPV6_CHECKSUM): %s\n", strerror(errno));
 		goto out_err;
 	}
 
 	val = 255;
-	if (net->setsockopt(sock, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &val, sizeof(val))) {
+	if (net->setsockopt(sock, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &val, sizeof(val)) < 0) {
 		log_ppp_error("ipv6_nd: setsockopt(IPV6_UNICAST_HOPS): %s\n", strerror(errno));
 		goto out_err;
 	}
 
-	if (net->setsockopt(sock, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &val, sizeof(val))) {
+	if (net->setsockopt(sock, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &val, sizeof(val)) < 0) {
 		log_ppp_error("ipv6_nd: setsockopt(IPV6_MULTICAST_HOPS): %s\n", strerror(errno));
 		goto out_err;
 	}
 
 	/*val = 1;
-	if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVHOPLIMIT, &val, sizeof(val))) {
+	if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVHOPLIMIT, &val, sizeof(val)) < 0) {
 		log_ppp_error("ipv6_nd: setsockopt(IPV6_HOPLIMIT): %s\n", strerror(errno));
 		goto out_err;
 	}*/
@@ -324,7 +324,7 @@ static int ipv6_nd_start(struct ap_session *ses)
 	ICMP6_FILTER_SETBLOCKALL(&filter);
 	ICMP6_FILTER_SETPASS(ND_ROUTER_SOLICIT, &filter);
 
-	if (net->setsockopt(sock, IPPROTO_ICMPV6, ICMP6_FILTER, &filter, sizeof(filter))) {
+	if (net->setsockopt(sock, IPPROTO_ICMPV6, ICMP6_FILTER, &filter, sizeof(filter)) < 0) {
 		log_ppp_error("ipv6_nd: setsockopt(ICMP6_FILTER): %s\n", strerror(errno));
 		goto out_err;
 	}
@@ -334,7 +334,7 @@ static int ipv6_nd_start(struct ap_session *ses)
 	mreq.ipv6mr_multiaddr.s6_addr32[0] = htonl(0xff020000);
 	mreq.ipv6mr_multiaddr.s6_addr32[3] = htonl(0x2);
 
-	if (net->setsockopt(sock, SOL_IPV6, IPV6_ADD_MEMBERSHIP, &mreq, sizeof(mreq))) {
+	if (net->setsockopt(sock, SOL_IPV6, IPV6_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
 		log_ppp_error("ipv6_nd: failed to join ipv6 allrouters\n");
 		goto out_err;
 	}

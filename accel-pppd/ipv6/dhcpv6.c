@@ -87,7 +87,7 @@ static void ev_ses_started(struct ap_session *ses)
 
 	net->setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &f, sizeof(f));
 
-	if (net->setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, ses->ifname, strlen(ses->ifname))) {
+	if (net->setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, ses->ifname, strlen(ses->ifname)) < 0) {
 		log_ppp_error("dhcpv6: setsockopt(SO_BINDTODEVICE): %s\n", strerror(errno));
 		close(sock);
 		return;
@@ -97,7 +97,7 @@ static void ev_ses_started(struct ap_session *ses)
 	addr.sin6_family = AF_INET6;
 	addr.sin6_port = htons(DHCPV6_SERV_PORT);
 
-	if (net->bind(sock, (struct sockaddr *)&addr, sizeof(addr))) {
+	if (net->bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		log_ppp_error("dhcpv6: bind: %s\n", strerror(errno));
 		close(sock);
 		return;
@@ -108,7 +108,7 @@ static void ev_ses_started(struct ap_session *ses)
 	mreq.ipv6mr_multiaddr.s6_addr32[0] = htonl(0xff020000);
 	mreq.ipv6mr_multiaddr.s6_addr32[3] = htonl(0x010002);
 
-	if (net->setsockopt(sock, SOL_IPV6, IPV6_ADD_MEMBERSHIP, &mreq, sizeof(mreq))) {
+	if (net->setsockopt(sock, SOL_IPV6, IPV6_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
 		log_ppp_error("dhcpv6: failed to join to All_DHCP_Relay_Agents_and_Servers\n");
 		close(sock);
 		return;
