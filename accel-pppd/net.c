@@ -227,7 +227,7 @@ static int def_get_ifindex(const char *ifname)
 	memset(&ifr, 0, sizeof(ifr));
 	strcpy(ifr.ifr_name, ifname);
 
-	if (ioctl(n->sock, SIOCGIFINDEX, &ifr)) {
+	if (ioctl(n->sock, SIOCGIFINDEX, &ifr) < 0) {
 		log_ppp_error("ioctl(SIOCGIFINDEX): %s\n", strerror(errno));
 		return -1;
 	}
