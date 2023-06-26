@@ -102,13 +102,13 @@ void __export ap_session_accounting_started(struct ap_session *ses)
 	strcpy(ifr.ifr_name, ses->ifname);
 
 	if (ses->ctrl->dont_ifcfg) {
-		if (net->sock_ioctl(SIOCGIFFLAGS, &ifr))
+		if (net->sock_ioctl(SIOCGIFFLAGS, &ifr) < 0)
 			log_ppp_error("failed to get interface flags: %s\n", strerror(errno));
 
 		if (!(ifr.ifr_flags & IFF_UP)) {
 			ifr.ifr_flags |= IFF_UP;
 
-			if (net->sock_ioctl(SIOCSIFFLAGS, &ifr))
+			if (net->sock_ioctl(SIOCSIFFLAGS, &ifr) < 0)
 				log_ppp_error("failed to set interface flags: %s\n", strerror(errno));
 		}
 	} else {
@@ -140,7 +140,7 @@ void __export ap_session_accounting_started(struct ap_session *ses)
 					ifr6.ifr6_prefixlen = 64;
 					ifr6.ifr6_ifindex = ses->ifindex;
 
-					if (net->sock6_ioctl(SIOCSIFADDR, &ifr6))
+					if (net->sock6_ioctl(SIOCSIFADDR, &ifr6) < 0)
 						log_ppp_error("faild to set LL IPv6 address: %s\n", strerror(errno));
 				}
 
@@ -150,7 +150,7 @@ void __export ap_session_accounting_started(struct ap_session *ses)
 						build_ip6_addr(a, ses->ipv6->intf_id, &ifr6.ifr6_addr);
 						ifr6.ifr6_prefixlen = a->prefix_len;
 
-						if (ioctl(sock6_fd, SIOCSIFADDR, &ifr6))
+						if (ioctl(sock6_fd, SIOCSIFADDR, &ifr6) < 0)
 							log_ppp_error("failed to add IPv6 address: %s\n", strerror(errno));
 					} else
 					if (ip6route_add(ses->ifindex, &a->addr, a->prefix_len, 0))
@@ -158,12 +158,12 @@ void __export ap_session_accounting_started(struct ap_session *ses)
 				}
 			}
 
-			if (net->sock_ioctl(SIOCGIFFLAGS, &ifr))
+			if (net->sock_ioctl(SIOCGIFFLAGS, &ifr) < 0)
 				log_ppp_error("failed to get interface flags: %s\n", strerror(errno));
 
 			ifr.ifr_flags |= IFF_UP;
 
-			if (net->sock_ioctl(SIOCSIFFLAGS, &ifr))
+			if (net->sock_ioctl(SIOCSIFFLAGS, &ifr) < 0)
 				log_ppp_error("failed to set interface flags: %s\n", strerror(errno));
 
 			if (ses->ctrl->ppp) {
@@ -172,7 +172,7 @@ void __export ap_session_accounting_started(struct ap_session *ses)
 					np.protocol = PPP_IP;
 					np.mode = ses->ctrl->ppp_npmode ? : NPMODE_PASS;
 
-					if (net->ppp_ioctl(ppp->unit_fd, PPPIOCSNPMODE, &np))
+					if (net->ppp_ioctl(ppp->unit_fd, PPPIOCSNPMODE, &np) < 0)
 						log_ppp_error("failed to set NP (IPv4) mode: %s\n", strerror(errno));
 				}
 
@@ -180,7 +180,7 @@ void __export ap_session_accounting_started(struct ap_session *ses)
 					np.protocol = PPP_IPV6;
 					np.mode = ses->ctrl->ppp_npmode ? : NPMODE_PASS;
 
-					if (net->ppp_ioctl(ppp->unit_fd, PPPIOCSNPMODE, &np))
+					if (net->ppp_ioctl(ppp->unit_fd, PPPIOCSNPMODE, &np) < 0)
 						log_ppp_error("failed to set NP (IPv6) mode: %s\n", strerror(errno));
 				}
 			}
