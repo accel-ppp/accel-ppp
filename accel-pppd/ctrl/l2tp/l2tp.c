@@ -1609,7 +1609,7 @@ static struct l2tp_conn_t *l2tp_tunnel_alloc(const struct sockaddr_in *peer,
 			  strerror(errno));
 		goto err_conn_fd;
 	}
-	if (bind(conn->hnd.fd, host, sizeof(*host))) {
+	if (bind(conn->hnd.fd, host, sizeof(*host)) < 0) {
 		log_error("l2tp: impossible to allocate new tunnel:"
 			  " bind() failed: %s\n", strerror(errno));
 		goto err_conn_fd;
@@ -1621,7 +1621,7 @@ static struct l2tp_conn_t *l2tp_tunnel_alloc(const struct sockaddr_in *peer,
 		   source port that will be used by the peer isn't known yet */
 		conn->peer_addr.sin_port = 0;
 	if (connect(conn->hnd.fd, (struct sockaddr *)&conn->peer_addr,
-		    sizeof(conn->peer_addr))) {
+		    sizeof(conn->peer_addr)) < 0) {
 		log_error("l2tp: impossible to allocate new tunnel:"
 			  " connect() failed: %s\n", strerror(errno));
 		goto err_conn_fd;
@@ -1924,7 +1924,7 @@ static int l2tp_session_connect(struct l2tp_sess_t *sess)
 	}
 
 	if (setsockopt(sess->ppp.fd, SOL_PPPOL2TP, PPPOL2TP_SO_LNSMODE,
-		       &lns_mode, sizeof(lns_mode))) {
+		       &lns_mode, sizeof(lns_mode)) < 0) {
 		log_session(log_error, sess, "impossible to connect session:"
 			    " setsockopt(PPPOL2TP_SO_LNSMODE) failed: %s\n",
 			    strerror(errno));
@@ -1934,7 +1934,7 @@ static int l2tp_session_connect(struct l2tp_sess_t *sess)
 	flg = 1;
 	if (sess->send_seq &&
 	    setsockopt(sess->ppp.fd, SOL_PPPOL2TP, PPPOL2TP_SO_SENDSEQ,
-		       &flg, sizeof(flg))) {
+		       &flg, sizeof(flg)) < 0) {
 		log_session(log_error, sess, "impossible to connect session:"
 			    " setsockopt(PPPOL2TP_SO_SENDSEQ) failed: %s\n",
 			    strerror(errno));
@@ -1942,7 +1942,7 @@ static int l2tp_session_connect(struct l2tp_sess_t *sess)
 	}
 	if (sess->recv_seq &&
 	    setsockopt(sess->ppp.fd, SOL_PPPOL2TP, PPPOL2TP_SO_RECVSEQ,
-		       &flg, sizeof(flg))) {
+		       &flg, sizeof(flg)) < 0) {
 		log_session(log_error, sess, "impossible to connect session:"
 			    " setsockopt(PPPOL2TP_SO_RECVSEQ) failed: %s\n",
 			    strerror(errno));
@@ -1950,7 +1950,7 @@ static int l2tp_session_connect(struct l2tp_sess_t *sess)
 	}
 	if (sess->reorder_timeout &&
 	    setsockopt(sess->ppp.fd, SOL_PPPOL2TP, PPPOL2TP_SO_REORDERTO,
-		       &sess->reorder_timeout, sizeof(sess->reorder_timeout))) {
+		       &sess->reorder_timeout, sizeof(sess->reorder_timeout)) < 0) {
 		log_session(log_error, sess, "impossible to connect session:"
 			    " setsockopt(PPPOL2TP_REORDERTO) failed: %s\n",
 			    strerror(errno));
