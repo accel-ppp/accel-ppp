@@ -613,7 +613,7 @@ static int ipoe_create_interface(struct ipoe_session *ses)
 
 	memset(&ifr, 0, sizeof(ifr));
 	ifr.ifr_ifindex = ses->ifindex;
-	if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
+	if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr)) < 0) {
 		log_ppp_error("ipoe: failed to get interface name\n");
 		ses->ifindex = -1;
 		ap_session_terminate(&ses->ses, TERM_NAS_ERROR, 1);
@@ -2811,7 +2811,7 @@ void ipoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 
 	memset(&ifr, 0, sizeof(ifr));
 	ifr.ifr_ifindex = ifindex;
-	if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
+	if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr)) < 0) {
 		log_error("ipoe: vlan-mon: failed to get interface name, ifindex=%i\n", ifindex);
 		return;
 	}
@@ -2848,24 +2848,24 @@ void ipoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 		log_info2("ipoe: create vlan %s parent %s\n", ifname, ifr.ifr_name);
 
 		ifr.ifr_ifindex = vlan_ifindex;
-		if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
+		if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr)) < 0) {
 			log_error("ipoe: vlan-mon: failed to get interface name, ifindex=%i\n", ifindex);
 			return;
 		}
 
-		if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr, sizeof(ifr)))
+		if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr, sizeof(ifr)) < 0)
 			return;
 
 		if (ifr.ifr_flags & IFF_UP) {
 			ifr.ifr_flags &= ~IFF_UP;
 
-			if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr, sizeof(ifr)))
+			if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr, sizeof(ifr)) < 0)
 				return;
 		}
 
 		if (strcmp(ifr.ifr_name, ifname)) {
 			strcpy(ifr.ifr_newname, ifname);
-			if (ioctl(sock_fd, SIOCSIFNAME, &ifr, sizeof(ifr))) {
+			if (ioctl(sock_fd, SIOCSIFNAME, &ifr, sizeof(ifr)) < 0) {
 				log_error("ipoe: vlan-mon: failed to rename interface %s to %s\n", ifr.ifr_name, ifr.ifr_newname);
 				return;
 			}
@@ -2881,7 +2881,7 @@ void ipoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 	len = strlen(ifname);
 	memcpy(ifr.ifr_name, ifname, len + 1);
 
-	if (ioctl(sock_fd, SIOCGIFINDEX, &ifr, sizeof(ifr))) {
+	if (ioctl(sock_fd, SIOCGIFINDEX, &ifr, sizeof(ifr)) < 0) {
 		log_error("ipoe: vlan-mon: %s: failed to get interface index\n", ifr.ifr_name);
 		return;
 	}
@@ -3102,7 +3102,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 
 		sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
 
-		if (connect(sock, &addr, sizeof(addr))) {
+		if (connect(sock, &addr, sizeof(addr)) < 0) {
 			log_error("dhcpv4: relay: %s: connect: %s\n", opt_relay, strerror(errno));
 			goto out_err;
 		}
@@ -3205,7 +3205,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	memset(&ifr, 0, sizeof(ifr));
 	strcpy(ifr.ifr_name, ifname);
 
-	if (ioctl(sock_fd, SIOCGIFHWADDR, &ifr)) {
+	if (ioctl(sock_fd, SIOCGIFHWADDR, &ifr) < 0) {
 		log_error("ipoe: '%s': ioctl(SIOCGIFHWADDR): %s\n", ifname, strerror(errno));
 		return;
 	}
@@ -3337,7 +3337,7 @@ static void load_interface(const char *opt)
 		}
 	}
 
-	if (ioctl(sock_fd, SIOCGIFINDEX, &ifr)) {
+	if (ioctl(sock_fd, SIOCGIFINDEX, &ifr) < 0) {
 		log_error("ipoe: '%s': ioctl(SIOCGIFINDEX): %s\n", ifr.ifr_name, strerror(errno));
 		return;
 	}
@@ -3624,7 +3624,7 @@ static void add_vlan_mon(const char *opt, long *mask)
 	memcpy(ifr.ifr_name, opt, ptr - opt);
 	ifr.ifr_name[ptr - opt] = 0;
 
-	if (ioctl(sock_fd, SIOCGIFINDEX, &ifr)) {
+	if (ioctl(sock_fd, SIOCGIFINDEX, &ifr) < 0) {
 		log_error("ipoe: '%s': ioctl(SIOCGIFINDEX): %s\n", ifr.ifr_name, strerror(errno));
 		return;
 	}

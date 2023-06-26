@@ -336,7 +336,7 @@ static void init()
 
 	setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &f, sizeof(f));
 
-	if (bind(sock, (struct sockaddr *)&addr, sizeof(addr))) {
+	if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		log_error("arp: bind: %s\n", strerror(errno));
 		close(sock);
 		return;
