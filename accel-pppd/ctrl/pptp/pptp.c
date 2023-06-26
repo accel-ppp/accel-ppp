@@ -325,7 +325,7 @@ static int pptp_out_call_rqst(struct pptp_conn_t *conn)
 
 	fcntl(pptp_sock, F_SETFD, fcntl(pptp_sock, F_GETFD) | FD_CLOEXEC);
 
-	if (bind(pptp_sock, (struct sockaddr*)&src_addr, sizeof(src_addr))) {
+	if (bind(pptp_sock, (struct sockaddr*)&src_addr, sizeof(src_addr)) < 0) {
 		log_ppp_error("failed to bind PPTP socket (%s)\n", strerror(errno));
 		close(pptp_sock);
 		return -1;
@@ -333,7 +333,7 @@ static int pptp_out_call_rqst(struct pptp_conn_t *conn)
 	addrlen = sizeof(src_addr);
 	getsockname(pptp_sock, (struct sockaddr*)&src_addr, &addrlen);
 
-	if (connect(pptp_sock, (struct sockaddr*)&dst_addr, sizeof(dst_addr))) {
+	if (connect(pptp_sock, (struct sockaddr*)&dst_addr, sizeof(dst_addr)) < 0) {
 		log_ppp_error("failed to connect PPTP socket (%s)\n", strerror(errno));
 		close(pptp_sock);
 		return -1;
