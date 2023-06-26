@@ -283,7 +283,7 @@ static int make_socket(struct rad_req_t *req)
 
 	if (conf_bind) {
 		addr.sin_addr.s_addr = conf_bind;
-		if (bind(req->hnd.fd, (struct sockaddr *) &addr, sizeof(addr))) {
+		if (bind(req->hnd.fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
 			log_ppp_error("radius:bind: %s\n", strerror(errno));
 			goto out_err;
 		}
@@ -298,7 +298,7 @@ static int make_socket(struct rad_req_t *req)
 		goto out_err;
 	}
 
-	if (connect(req->hnd.fd, (struct sockaddr *) &addr, sizeof(addr))) {
+	if (connect(req->hnd.fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
 		log_ppp_error("radius:connect: %s\n", strerror(errno));
 		goto out_err;
 	}
