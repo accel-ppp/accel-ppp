@@ -193,7 +193,8 @@ void __export ap_session_accounting_started(struct ap_session *ses)
 	if (ses->stop_time)
 		return;
 
-	ap_session_set_interface(ses);
+	if (strlen(ses->ifname))
+		ap_session_set_interface(ses);
 
 	ses->ctrl->started(ses);
 
