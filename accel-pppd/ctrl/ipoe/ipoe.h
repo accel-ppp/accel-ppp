@@ -59,6 +59,8 @@ struct ipoe_serv {
 	char *opt_lua_username_func;
 #endif
 	int opt_weight;
+	char *opt_agent_remote_id;
+	char *opt_link_selection;
 	unsigned int opt_shared:1;
 	unsigned int opt_dhcpv4:1;
 	unsigned int opt_up:1;

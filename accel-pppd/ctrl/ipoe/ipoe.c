@@ -2656,6 +2656,12 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 		vlan_mon_add_vid(serv->parent_ifindex, ETH_P_IP, serv->vid);
 	}
 
+	if (serv->opt_agent_remote_id)
+		_free(serv->opt_agent_remote_id);
+
+	if (serv->opt_link_selection)
+		_free(serv->opt_link_selection);
+
 	triton_context_unregister(&serv->ctx);
 
 	_free(serv);
@@ -2996,6 +3002,9 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	int opt_arp = conf_arp;
 	struct ifreq ifr;
 	uint8_t hwaddr[ETH_ALEN];
+	const char *opt_agent_remote_id = conf_agent_remote_id;
+	const char *opt_link_selection = conf_link_selection;
+	struct in_addr dummy;
 
 	str0 = strchr(opt, ',');
 	if (str0) {
@@ -3059,6 +3068,11 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 				opt_weight = atoi(ptr1);
 			} else if (strcmp(str, "ip-unnumbered") == 0) {
 				opt_ip_unnumbered = atoi(ptr1);
+			} else if (strcmp(str, "agent-remote-id") == 0) {
+				opt_agent_remote_id = ptr1;
+			} else if (strcmp(str, "link-selection") == 0) {
+				if (inet_pton(AF_INET, ptr1, &dummy) > 0)
+					opt_link_selection = ptr1;
 			} else if (strcmp(str, "username") == 0) {
 				if (strcmp(ptr1, "ifname") == 0)
 					opt_username = USERNAME_IFNAME;
@@ -3166,6 +3180,25 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->opt_ipv6 = opt_ipv6;
 		serv->opt_weight = opt_weight;
 		serv->opt_ip_unnumbered = opt_ip_unnumbered;
+
+		if (!opt_agent_remote_id && serv->opt_agent_remote_id) {
+			_free(serv->opt_agent_remote_id);
+			serv->opt_agent_remote_id = NULL;
+		} else if (opt_agent_remote_id && serv->opt_agent_remote_id) {
+			serv->opt_agent_remote_id = _realloc(serv->opt_agent_remote_id, strlen(opt_agent_remote_id) + 1);
+			strncpy(serv->opt_agent_remote_id, opt_agent_remote_id, strlen(opt_agent_remote_id) + 1);
+		} else if (opt_agent_remote_id)
+			serv->opt_agent_remote_id = _strdup(opt_agent_remote_id);
+
+		if (!opt_link_selection && serv->opt_link_selection) {
+			_free(serv->opt_link_selection);
+			serv->opt_link_selection = NULL;
+		} else if (opt_link_selection && serv->opt_link_selection) {
+			serv->opt_link_selection = _realloc(serv->opt_link_selection, strlen(opt_link_selection) + 1);
+			strncpy(serv->opt_link_selection, opt_link_selection, strlen(opt_link_selection) + 1);
+		} else if (opt_link_selection)
+			serv->opt_link_selection = _strdup(opt_link_selection);
+
 #ifdef USE_LUA
 		if (serv->opt_lua_username_func && (!opt_lua_username_func || strcmp(serv->opt_lua_username_func, opt_lua_username_func))) {
 			_free(serv->opt_lua_username_func);
@@ -3253,6 +3286,10 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	serv->opt_mtu = opt_mtu;
 	serv->opt_weight = opt_weight;
 	serv->opt_ip_unnumbered = opt_ip_unnumbered;
+	if (opt_agent_remote_id)
+		serv->opt_agent_remote_id = _strdup(opt_agent_remote_id);
+	if (opt_link_selection)
+		serv->opt_link_selection = _strdup(opt_link_selection);
 #ifdef USE_LUA
 	serv->opt_lua_username_func = opt_lua_username_func;
 #endif
