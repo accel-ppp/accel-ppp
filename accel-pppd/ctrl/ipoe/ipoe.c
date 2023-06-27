@@ -448,7 +448,8 @@ static void ipoe_relay_timeout(struct triton_timer_t *t)
 
 		ap_session_terminate(&ses->ses, TERM_LOST_CARRIER, 1);
 	} else
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id,
+				ses->serv->ifname, ses->serv->opt_agent_remote_id, ses->serv->opt_link_selection);
 }
 
 
@@ -715,7 +716,8 @@ cont:
 	ap_session_set_ifindex(&ses->ses);
 
 	if (ses->dhcpv4_request && ses->serv->dhcpv4_relay) {
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id,
+				ses->serv->ifname, ses->serv->opt_agent_remote_id, ses->serv->opt_link_selection);
 
 		ses->timer.expire = ipoe_relay_timeout;
 		ses->timer.period = conf_relay_timeout * 1000;
@@ -1108,7 +1110,8 @@ static void ipoe_session_activate(struct dhcpv4_packet *pack)
 	ses->dhcpv4_request = pack;
 
 	if (ses->serv->dhcpv4_relay)
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id,
+				ses->serv->ifname, ses->serv->opt_agent_remote_id, ses->serv->opt_link_selection);
 	else
 		__ipoe_session_activate(ses);
 }
@@ -1128,7 +1131,8 @@ static void ipoe_session_keepalive(struct dhcpv4_packet *pack)
 	ses->xid = ses->dhcpv4_request->hdr->xid;
 
 	if (/*ses->ses.state == AP_STATE_ACTIVE &&*/ ses->serv->dhcpv4_relay) {
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id,
+				ses->serv->ifname, ses->serv->opt_agent_remote_id, ses->serv->opt_link_selection);
 		return;
 	}
 
@@ -1152,7 +1156,8 @@ static void ipoe_session_decline(struct dhcpv4_packet *pack)
 	}
 
 	if (pack->msg_type == DHCPDECLINE && ses->serv->dhcpv4_relay)
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0,
+				ses->serv->ifname, ses->serv->opt_agent_remote_id, ses->serv->opt_link_selection);
 
 	dhcpv4_packet_free(pack);
 
@@ -1264,7 +1269,8 @@ static void ipoe_session_finished(struct ap_session *s)
 		dhcpv4_put_ip(ses->serv->dhcpv4, ses->yiaddr);
 
 	if (ses->relay_addr && ses->serv->dhcpv4_relay)
-		dhcpv4_relay_send_release(ses->serv->dhcpv4_relay, ses->hwaddr, ses->xid, ses->yiaddr, ses->client_id, ses->relay_agent, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+		dhcpv4_relay_send_release(ses->serv->dhcpv4_relay, ses->hwaddr, ses->xid, ses->yiaddr,ses->client_id, ses->relay_agent,
+				ses->serv->ifname, ses->serv->opt_agent_remote_id, ses->serv->opt_link_selection);
 
 	if (ses->dhcpv4)
 		dhcpv4_free(ses->dhcpv4);
@@ -1548,7 +1554,8 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 			if (pack->server_id == ses->siaddr)
 				dhcpv4_send_nak(dhcpv4, pack, "Wrong session");
 			else if (ses->serv->dhcpv4_relay)
-				dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+				dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0,
+						ses->serv->ifname, ses->serv->opt_agent_remote_id, ses->serv->opt_link_selection);
 
 			triton_context_call(ses->ctrl.ctx, (triton_event_func)__ipoe_session_terminate, &ses->ses);
 		} else {
