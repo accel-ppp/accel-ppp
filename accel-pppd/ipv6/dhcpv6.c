@@ -159,7 +159,11 @@ static void ev_ses_finished(struct ap_session *ses)
 		if (pd->dp_active) {
 			struct ipv6db_addr_t *p;
 			list_for_each_entry(p, &ses->ipv6_dp->prefix_list, entry)
+#ifdef HAVE_VRF
+				ip6route_del(0, &p->addr, p->prefix_len, NULL, 0, 0, ses->vrf_name);
+#else
 				ip6route_del(0, &p->addr, p->prefix_len, NULL, 0, 0);
+#endif
 		}
 
 		ipdb_put_ipv6_prefix(ses, ses->ipv6_dp);
@@ -181,7 +185,11 @@ static void insert_dp_routes(struct ap_session *ses, struct dhcpv6_pd *pd, struc
 		addr = NULL;
 
 	list_for_each_entry(p, &ses->ipv6_dp->prefix_list, entry) {
+#ifdef HAVE_VRF
+		if (ip6route_add(ses->ifindex, &p->addr, p->prefix_len, addr, 0, 0, ses->vrf_name)) {
+#else
 		if (ip6route_add(ses->ifindex, &p->addr, p->prefix_len, addr, 0, 0)) {
+#endif
 			err = errno;
 			inet_ntop(AF_INET6, &p->addr, str1, sizeof(str1));
 			if (addr)
