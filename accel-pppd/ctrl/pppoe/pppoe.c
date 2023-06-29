@@ -1430,7 +1430,7 @@ static void __pppoe_server_start(const char *ifname, const char *opt, void *cli,
 	struct pppoe_serv_t *serv;
 	struct ifreq ifr;
 	int padi_limit = conf_padi_limit;
-	struct ap_net *net = def_net;
+	net = def_net;
 
 	if (parse_server(opt, &padi_limit, &net)) {
 		if (cli)
