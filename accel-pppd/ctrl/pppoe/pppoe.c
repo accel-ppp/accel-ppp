@@ -201,6 +201,7 @@ static void disconnect(struct pppoe_conn_t *conn)
 	sid_map[conn->sid/(8*sizeof(long))] |= 1 << (conn->sid % (8*sizeof(long)));
 	pthread_mutex_unlock(&sid_lock);
 
+	_free(conn->ctrl.service_name);
 	_free(conn->ctrl.calling_station_id);
 	_free(conn->ctrl.called_station_id);
 	_free(conn->service_name);
@@ -388,6 +389,12 @@ static struct pppoe_conn_t *allocate_channel(struct pppoe_serv_t *serv, const ui
 	}
 
 	conn->ctrl.calling_station_id = _malloc(IFNAMSIZ + 19);
+
+	conn->ctrl.service_name = _malloc(256);
+	memset(conn->ctrl.service_name, 0x0, 256);
+
+	if (service_name && ntohs(service_name->tag_len) < 256 && ntohs(service_name->tag_len) > 0)
+		memcpy(conn->ctrl.service_name, service_name->tag_data, ntohs(service_name->tag_len));
 
 	if (conf_ifname_in_sid == 1 || conf_ifname_in_sid == 3)
 		if (conf_sid_uppercase)
