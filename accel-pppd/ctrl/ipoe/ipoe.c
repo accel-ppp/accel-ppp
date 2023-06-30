@@ -4006,6 +4006,8 @@ static void load_config(void)
 	opt = conf_get_opt("ipoe", "link-selection");
 	if (opt && inet_pton(AF_INET, opt, &dummy) > 0)
 		conf_link_selection = opt;
+	else
+		conf_link_selection = NULL;
 
 	opt = conf_get_opt("ipoe", "ipv6");
 	if (opt)
