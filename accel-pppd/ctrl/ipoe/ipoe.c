@@ -2022,13 +2022,13 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 	opt = dhcpv4_packet_find_opt(pack, 58);
 	if (opt)
 		ses->renew_time = ntohl(*(uint32_t *)opt->data);
-	else
+	if (!opt || ses->renew_time >= ses->lease_time)
 		ses->renew_time = ses->lease_time * LEASE_RENEW_TIME_RATIO;
 
 	opt = dhcpv4_packet_find_opt(pack, 59);
 	if (opt)
 		ses->rebind_time = ntohl(*(uint32_t *)opt->data);
-	else
+	if (!opt || ses->rebind_time <= ses->renew_time)
 		ses->rebind_time = ses->lease_time * LEASE_REBIND_TIME_RATIO;
 
 	opt = dhcpv4_packet_find_opt(pack, 1);
