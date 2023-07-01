@@ -51,6 +51,7 @@ struct ap_ctrl {
 	int mppe;
 	char *calling_station_id;
 	char *called_station_id;
+	char *service_name;
 	unsigned int dont_ifcfg:1;
 	unsigned int ppp:1;
 	unsigned int ppp_npmode:2;

@@ -1257,4 +1257,76 @@ command history (defaults to \fI/var/lib/accel-ppp/history\fR).
 Defines the default set of columns to be displayed by the "show sessions"
 command (defaults to
 \fIifname,username,calling-sid,ip,rate-limit,type,comp,state,uptime\fR).
+.br
+.B Possible columns:
+.br
+.B ifname
+- interface name
+.br
+.B username
+- user name
+.br
+.B ip
+- IP address
+.br
+.B ip6
+- IPv6 address
+.br
+.B ip6-dp
+- IPv6 delegated prefix
+.br
+.B type
+- connection type [pppoe|ipoe|pptp|l2tp|sstp]
+.br
+.B state
+- state of session
+.br
+.B uptime
+- uptime (human readable)
+.br
+.B uptime-raw
+- uptime (in seconds)
+.br
+.B calling-sid
+- calling station id
+.br
+.B called-sid
+- called station id
+.br
+.B sid
+- session id
+.br
+.B comp
+- compression/encryption method
+.br
+.B inbound-if
+- inbound interface
+.br
+.B service-name
+- PPPoE service name
+.br
+.B rx-bytes
+- received bytes (human readable)
+.br
+.B tx-bytes
+- transmitted bytes (human readable)
+.br
+.B rx-bytes-raw
+- received bytes
+.br
+.B tx-bytes-raw
+- transmitted bytes
+.br
+.B rx-pkts
+- received packets
+.br
+.B tx-pkts
+- transmitted packets
+.br
+.B netns
+- network namespaces
+.br
+.B vrf
+- virtual routing and forwarding
+.br
 Invalid column names are silently discarded.
