@@ -643,11 +643,7 @@ static void ses_started(struct ap_session *ses)
 		char nbuf[INET6_ADDRSTRLEN];
 		char gwbuf[INET6_ADDRSTRLEN];
 
-#ifdef HAVE_VRF
 		if (ip6route_add(gw_spec ? 0 : rpd->ses->ifindex, &fr6->prefix, fr6->plen, gw_spec ? &fr6->gw : NULL, 3, fr6->prio, rpd->ses->vrf_name)) {
-#else
-		if (ip6route_add(gw_spec ? 0 : rpd->ses->ifindex, &fr6->prefix, fr6->plen, gw_spec ? &fr6->gw : NULL, 3, fr6->prio)) {
-#endif
 			log_ppp_warn("radius: failed to add route %s/%hhu %s %u\n",
 						    u_ip6str(&fr6->prefix, nbuf), fr6->plen,
 						    u_ip6str(&fr6->gw, gwbuf), fr6->prio);
@@ -655,11 +651,7 @@ static void ses_started(struct ap_session *ses)
 	}
 
 	for (fr = rpd->fr; fr; fr = fr->next) {
-#ifdef HAVE_VRF
 		if (iproute_add(fr->gw ? 0 : rpd->ses->ifindex, 0, fr->dst, fr->gw, 3, fr->mask, fr->prio, rpd->ses->vrf_name)) {
-#else
-		if (iproute_add(fr->gw ? 0 : rpd->ses->ifindex, 0, fr->dst, fr->gw, 3, fr->mask, fr->prio)) {
-#endif
 			char dst[17], gw[17];
 			u_inet_ntoa(fr->dst, dst);
 			u_inet_ntoa(fr->gw, gw);
@@ -698,20 +690,12 @@ static void ses_finishing(struct ap_session *ses)
 		 * when the interface is removed.
 		 */
 		if (!IN6_IS_ADDR_UNSPECIFIED(&fr6->gw))
-#ifdef HAVE_VRF
 			ip6route_del(0, &fr6->prefix, fr6->plen, &fr6->gw, 3, fr6->prio, rpd->ses->vrf_name);
-#else
-			ip6route_del(0, &fr6->prefix, fr6->plen, &fr6->gw, 3, fr6->prio);
-#endif
 	}
 
 	for (fr = rpd->fr; fr; fr = fr->next) {
 		if (fr->gw)
-#ifdef HAVE_VRF
 			iproute_del(0, 0, fr->dst, fr->gw, 3, fr->mask, fr->prio, rpd->ses->vrf_name);
-#else
-			iproute_del(0, 0, fr->dst, fr->gw, 3, fr->mask, fr->prio);
-#endif
 	}
 
 	if (rpd->acct_started || rpd->acct_req)

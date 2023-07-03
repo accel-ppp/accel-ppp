@@ -533,11 +533,7 @@ out:
 }
 #endif
 
-#ifdef HAVE_VRF
 int __export iproute_add(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw, int proto, int mask, uint32_t prio, const char *vrf_name)
-#else
-int __export iproute_add(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw, int proto, int mask, uint32_t prio)
-#endif
 {
 	struct ipaddr_req {
 		struct nlmsghdr n;
@@ -586,11 +582,7 @@ int __export iproute_add(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw
 	return r;
 }
 
-#ifdef HAVE_VRF
 int __export iproute_del(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw, int proto, int mask, uint32_t prio, const char *vrf_name)
-#else
-int __export iproute_del(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw, int proto, int mask, uint32_t prio)
-#endif
 {
 	struct ipaddr_req {
 		struct nlmsghdr n;
@@ -633,11 +625,7 @@ int __export iproute_del(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw
 	return r;
 }
 
-#ifdef HAVE_VRF
 int __export ip6route_add(int ifindex, const struct in6_addr *dst, int pref_len, const struct in6_addr *gw, int proto, uint32_t prio, const char *vrf_name)
-#else
-int __export ip6route_add(int ifindex, const struct in6_addr *dst, int pref_len, const struct in6_addr *gw, int proto, uint32_t prio)
-#endif
 {
 	struct ipaddr_req {
 		struct nlmsghdr n;
@@ -684,11 +672,7 @@ int __export ip6route_add(int ifindex, const struct in6_addr *dst, int pref_len,
 	return r;
 }
 
-#ifdef HAVE_VRF
 int __export ip6route_del(int ifindex, const struct in6_addr *dst, int pref_len, const struct in6_addr *gw, int proto, uint32_t prio, const char *vrf_name)
-#else
-int __export ip6route_del(int ifindex, const struct in6_addr *dst, int pref_len, const struct in6_addr *gw, int proto, uint32_t prio)
-#endif
 {
 	struct ipaddr_req {
 		struct nlmsghdr n;
