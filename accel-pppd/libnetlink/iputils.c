@@ -551,7 +551,7 @@ int __export iproute_add(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw
 #ifdef HAVE_VRF
 	__u32 rt_table = ipvrf_get_table(vrf_name);
 #else
-  __u32 rt_table = RT_TABLE_MAIN;
+	__u32 rt_table = RT_TABLE_MAIN;
 #endif
 
 	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
