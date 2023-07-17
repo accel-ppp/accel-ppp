@@ -166,8 +166,13 @@ static struct genl_multicast_group ipoe_nl_mcg;
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,16,0) || RHEL_MAJOR == 7
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,3,0)
+#define u64_stats_fetch_begin_bh u64_stats_fetch_begin
+#define u64_stats_fetch_retry_bh u64_stats_fetch_retry
+#else
 #define u64_stats_fetch_begin_bh u64_stats_fetch_begin_irq
 #define u64_stats_fetch_retry_bh u64_stats_fetch_retry_irq
+#endif
 #endif
 
 #ifndef NETIF_F_HW_VLAN_FILTER
