@@ -26,8 +26,13 @@ jobs:
             untar: false
             format: qcow2
 
+          - distro: Debian13
+            image: https://cloud.debian.org/images/cloud/sid/daily/latest/debian-sid-generic-amd64-daily.tar.xz
+            untar: true
+            format: raw
+
           - distro: Debian12
-            image: https://cloud.debian.org/images/cloud/bookworm/daily/latest/debian-12-generic-amd64-daily.tar.xz
+            image: https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.tar.xz
             untar: true
             format: raw
 
