@@ -2995,6 +2995,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	char *opt_lua_username_func = NULL;
 #endif
 	struct conf_relay *crelay = list_first_entry(&conf_relay, typeof(*crelay), entry);
+	LIST_HEAD(opt_relay_list);
 	const char *opt_relay = crelay ? crelay->str_addr : NULL;
 	in_addr_t relay_addr = crelay ? inet_addr(crelay->str_addr) : 0;
 	in_addr_t opt_giaddr = 0;
@@ -3002,6 +3003,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	int opt_arp = conf_arp;
 	struct ifreq ifr;
 	uint8_t hwaddr[ETH_ALEN];
+	struct in_addr dummy;
 
 	str0 = strchr(opt, ',');
 	if (str0) {
@@ -3047,8 +3049,13 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 			} else if (strcmp(str, "ifcfg") == 0) {
 				opt_ifcfg = atoi(ptr1);
 			} else if (strcmp(str, "relay") == 0) {
-				opt_relay = ptr1;
-				relay_addr = inet_addr(ptr1);
+				if (inet_pton(AF_INET, ptr1, &dummy) != 1) {
+					log_error("ipoe: interface %s failed to parse 'relay=%s'\n", ifname, ptr1);
+					goto parse_err;
+				}
+				crelay = _malloc(sizeof(struct conf_relay));
+				strncpy(crelay->str_addr, ptr1, INET_ADDRSTRLEN);
+				list_add_tail(&crelay->entry, &opt_relay_list);
 			} else if (strcmp(str, "giaddr") == 0) {
 				opt_giaddr = inet_addr(ptr1);
 			} else if (strcmp(str, "nat") == 0) {
@@ -3083,6 +3090,13 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 
 			str = ptr2 + 1;
 		}
+	}
+
+	if (!list_empty(&opt_relay_list)) {
+		/* prefer interface relay */
+		crelay = list_first_entry(&opt_relay_list, typeof(*crelay), entry);
+		opt_relay = crelay ? crelay->str_addr : NULL;
+		relay_addr = crelay ? inet_addr(crelay->str_addr) : 0;
 	}
 
 	if (!opt_up && !opt_dhcpv4 && !opt_auto) {
@@ -3149,6 +3163,12 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 
 		if (!serv->dhcpv4_relay && serv->opt_dhcpv4 && opt_relay)
 			serv->dhcpv4_relay = dhcpv4_relay_create(opt_relay, opt_giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay);
+
+		while (!list_empty(&opt_relay_list)) {
+			crelay = list_entry(opt_relay_list.next, typeof(*crelay), entry);
+			list_del(&crelay->entry);
+			_free(crelay);
+		}
 
 		if (serv->arp && !opt_arp) {
 			arpd_stop(serv->arp);
@@ -3282,6 +3302,12 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 
 		if (opt_relay)
 			serv->dhcpv4_relay = dhcpv4_relay_create(opt_relay, opt_giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay);
+	}
+
+	while (!list_empty(&opt_relay_list)) {
+		crelay = list_entry(opt_relay_list.next, typeof(*crelay), entry);
+		list_del(&crelay->entry);
+		_free(crelay);
 	}
 
 	if (serv->opt_arp)
