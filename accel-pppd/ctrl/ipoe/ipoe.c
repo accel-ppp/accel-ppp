@@ -70,6 +70,11 @@ struct l4_redirect {
 	time_t timeout;
 };
 
+struct conf_relay {
+	struct list_head entry;
+	char str_addr[INET_ADDRSTRLEN];
+};
+
 struct gw_addr {
 	struct list_head entry;
 	in_addr_t addr;
@@ -156,7 +161,7 @@ static int conf_session_timeout;
 static int conf_idle_timeout;
 static int conf_weight;
 
-static const char *conf_relay;
+static LIST_HEAD(conf_relay);
 
 #ifdef USE_LUA
 static const char *conf_lua_username_func;
@@ -2989,8 +2994,9 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 #ifdef USE_LUA
 	char *opt_lua_username_func = NULL;
 #endif
-	const char *opt_relay = conf_relay;
-	in_addr_t relay_addr = conf_relay ? inet_addr(conf_relay) : 0;
+	struct conf_relay *crelay = list_first_entry(&conf_relay, typeof(*crelay), entry);
+	const char *opt_relay = crelay ? crelay->str_addr : NULL;
+	in_addr_t relay_addr = crelay ? inet_addr(crelay->str_addr) : 0;
 	in_addr_t opt_giaddr = 0;
 	in_addr_t opt_src = conf_src;
 	int opt_arp = conf_arp;
@@ -3424,6 +3430,49 @@ static void load_interfaces(struct conf_sect_t *sect)
 			ipoe_drop_sessions(serv, NULL);
 			serv->need_close = 1;
 			triton_context_call(&serv->ctx, (triton_event_func)ipoe_serv_release, serv);
+		}
+	}
+}
+
+static void load_relays(struct conf_sect_t *sect)
+{
+	struct conf_option_t *opt;
+	struct conf_relay *crelay;
+	struct in_addr dummy;
+	char *str;
+
+	while (!list_empty(&conf_relay)) {
+		crelay = list_entry(conf_relay.next, typeof(*crelay), entry);
+		list_del(&crelay->entry);
+		_free(crelay);
+	}
+
+	list_for_each_entry(opt, &sect->items, entry) {
+		if (strcmp(opt->name, "relay"))
+			continue;
+		if (!opt->val)
+			continue;
+
+		/* get substring delimited by "," */
+		str = strtok(opt->val, ",");
+
+		while (str != NULL) {
+		    /* remove any leading spaces */
+			while (str[0] == ' ')
+		        str++;
+
+			if (inet_pton(AF_INET, str, &dummy) != 1) {
+				log_error("ipoe: failed to parse '%s %s'\n", opt->name, str);
+				break;
+			}
+
+			crelay = _malloc(sizeof(struct conf_relay));
+			strncpy(crelay->str_addr, str, INET_ADDRSTRLEN);
+
+			list_add_tail(&crelay->entry, &conf_relay);
+
+			/* get the next substring */
+			str = strtok(NULL, ",");
 		}
 	}
 }
@@ -3983,8 +4032,6 @@ static void load_config(void)
 	} else
 		conf_mode = MODE_L2;
 
-	conf_relay = conf_get_opt("ipoe", "relay");
-
 	opt = conf_get_opt("ipoe", "relay-timeout");
 	if (opt && atoi(opt) > 0)
 		conf_relay_timeout = atoi(opt);
@@ -4129,6 +4176,7 @@ static void load_config(void)
 
 	parse_offer_delay(conf_get_opt("ipoe", "offer-delay"));
 
+	load_relays(s);
 	load_interfaces(s);
 	load_vlan_mon(s);
 	load_gw_addr(s);
