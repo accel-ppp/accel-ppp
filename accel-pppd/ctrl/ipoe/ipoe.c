@@ -75,6 +75,17 @@ struct conf_relay {
 	char str_addr[INET_ADDRSTRLEN];
 };
 
+struct relay {
+	struct list_head entry;
+	/* DHCP server IP address string */
+	char str_addr[INET_ADDRSTRLEN];
+	/* DHCP server IP address */
+	in_addr_t addr;
+	/* relay agent IP address sent when relaying replies from the server to the client */
+	in_addr_t giaddr;
+	struct dhcpv4_relay *dhcpv4_relay;
+};
+
 struct gw_addr {
 	struct list_head entry;
 	in_addr_t addr;
@@ -2590,6 +2601,8 @@ static int ipoe_rad_send_auth_request(struct rad_plugin_t *rad, struct rad_packe
 
 static void ipoe_serv_release(struct ipoe_serv *serv)
 {
+	struct relay *relay;
+
 	pthread_mutex_lock(&serv->lock);
 	if (!list_empty(&serv->sessions)) {
 		pthread_mutex_unlock(&serv->lock);
@@ -2644,6 +2657,13 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 		struct request_item *r = list_first_entry(&serv->req_list, typeof(*r), entry);
 		list_del(&r->entry);
 		mempool_free(r);
+	}
+
+	while (!list_empty(&serv->relay_list)) {
+		relay = list_first_entry(&serv->relay_list, typeof(*relay), entry);
+		dhcpv4_relay_free(relay->dhcpv4_relay, &serv->ctx);
+		list_del(&relay->entry);
+		_free(relay);
 	}
 
 	if (serv->disc_timer.tpd)
@@ -3001,6 +3021,76 @@ static in_addr_t ipoe_get_giaddr(in_addr_t relay_addr, const char *str_addr)
 	return giaddr;
 }
 
+static void ipoe_dhcpv4_list_update(struct ipoe_serv *serv, struct list_head *crelay_list, in_addr_t opt_giaddr)
+{
+	struct conf_relay *crelay, *crelay_iter;
+	struct relay *relay, *relay_iter;
+	struct list_head *safe;
+	in_addr_t giaddr;
+
+	if (!crelay_list)
+		return;
+
+	if (!serv->opt_dhcpv4) {
+		list_for_each_entry_safe(relay, safe, &serv->relay_list, entry) {
+			dhcpv4_relay_free(relay->dhcpv4_relay, &serv->ctx);
+			list_del(&relay->entry);
+			_free(relay);
+		}
+		return;
+	}
+
+	/* Add new relay servers */
+	list_for_each_entry(crelay_iter, crelay_list, entry) {
+		relay = NULL;
+		list_for_each_entry(relay_iter, &serv->relay_list, entry) {
+			if (strncmp(crelay_iter->str_addr, relay_iter->str_addr, INET_ADDRSTRLEN))
+				continue;
+			relay = relay_iter;
+			break;
+		}
+		if (!relay) {
+			relay = _malloc(sizeof(struct relay));
+			memset(relay, 0, sizeof(struct relay));
+			strncpy(relay->str_addr, crelay_iter->str_addr, INET_ADDRSTRLEN);
+			relay->addr = inet_addr(relay->str_addr);
+			list_add_tail(&relay->entry, &serv->relay_list);
+		}
+
+		giaddr = opt_giaddr ? opt_giaddr : ipoe_get_giaddr(relay->addr, relay->str_addr);
+		if (!giaddr)
+			continue;
+
+		if (relay->giaddr != giaddr) {
+			relay->giaddr = giaddr;
+			if (relay->dhcpv4_relay) {
+				dhcpv4_relay_free(relay->dhcpv4_relay, &serv->ctx);
+				relay->dhcpv4_relay = NULL;
+			}
+		}
+
+		if (!relay->dhcpv4_relay && serv->opt_dhcpv4)
+			relay->dhcpv4_relay = dhcpv4_relay_create(relay->str_addr, relay->giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay);
+	}
+
+	/* Remove old relay servers */
+	list_for_each_entry_safe(relay_iter, safe, &serv->relay_list, entry) {
+		crelay = NULL;
+		list_for_each_entry(crelay_iter, crelay_list, entry) {
+			if (strncmp(crelay_iter->str_addr, relay_iter->str_addr, INET_ADDRSTRLEN))
+				continue;
+			crelay = crelay_iter;
+			break;
+		}
+		if (crelay)
+			continue;
+
+		dhcpv4_relay_free(relay_iter->dhcpv4_relay, &serv->ctx);
+		list_del(&relay_iter->entry);
+		_free(relay_iter);
+	}
+}
+
 
 static void add_interface(const char *ifname, int ifindex, const char *opt, int parent_ifindex, int vid, int vlan_mon)
 {
@@ -3022,10 +3112,10 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 #ifdef USE_LUA
 	char *opt_lua_username_func = NULL;
 #endif
-	struct conf_relay *crelay = list_first_entry(&conf_relay, typeof(*crelay), entry);
+	struct conf_relay *crelay;
+	struct relay *first_relay;
 	LIST_HEAD(opt_relay_list);
-	const char *opt_relay = crelay ? crelay->str_addr : NULL;
-	in_addr_t relay_addr = crelay ? inet_addr(crelay->str_addr) : 0;
+	struct list_head *conf_relay_list = NULL;
 	in_addr_t opt_giaddr = 0;
 	in_addr_t opt_src = conf_src;
 	int opt_arp = conf_arp;
@@ -3122,10 +3212,9 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 
 	if (!list_empty(&opt_relay_list)) {
 		/* prefer interface relay */
-		crelay = list_first_entry(&opt_relay_list, typeof(*crelay), entry);
-		opt_relay = crelay ? crelay->str_addr : NULL;
-		relay_addr = crelay ? inet_addr(crelay->str_addr) : 0;
-	}
+		conf_relay_list = &opt_relay_list;
+	} else if (!list_empty(&conf_relay))
+		conf_relay_list = &conf_relay;
 
 	if (!opt_up && !opt_dhcpv4 && !opt_auto) {
 		opt_up = conf_up;
@@ -3137,12 +3226,6 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
                 opt_arp = 1;
 
 	opt_auto &= !opt_shared;
-
-	if (opt_relay && !opt_giaddr && opt_dhcpv4) {
-		opt_giaddr = ipoe_get_giaddr(relay_addr, opt_relay);
-		if (!opt_giaddr)
-			goto out_err;
-	}
 
 	pthread_mutex_lock(&serv_lock);
 	list_for_each_entry(serv, &serv_list, entry) {
@@ -3166,14 +3249,9 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 			serv->dhcpv4 = NULL;
 		}
 
-		if (serv->dhcpv4_relay &&
-				(serv->dhcpv4_relay->addr != relay_addr || serv->dhcpv4_relay->giaddr != opt_giaddr)) {
-			dhcpv4_relay_free(serv->dhcpv4_relay, &serv->ctx);
-			serv->dhcpv4_relay = NULL;
-		}
-
-		if (!serv->dhcpv4_relay && serv->opt_dhcpv4 && opt_relay)
-			serv->dhcpv4_relay = dhcpv4_relay_create(opt_relay, opt_giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay);
+		ipoe_dhcpv4_list_update(serv, conf_relay_list, opt_giaddr);
+		first_relay = list_first_entry(conf_relay_list, typeof(*first_relay), entry);
+		serv->dhcpv4_relay = first_relay->dhcpv4_relay;
 
 		while (!list_empty(&opt_relay_list)) {
 			crelay = list_entry(opt_relay_list.next, typeof(*crelay), entry);
@@ -3301,6 +3379,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	INIT_LIST_HEAD(&serv->disc_list);
 	INIT_LIST_HEAD(&serv->arp_list);
 	INIT_LIST_HEAD(&serv->req_list);
+	INIT_LIST_HEAD(&serv->relay_list);
 	memcpy(serv->hwaddr, hwaddr, ETH_ALEN);
 	serv->disc_timer.expire = ipoe_serv_disc_timer;
 
@@ -3310,10 +3389,11 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->dhcpv4 = dhcpv4_create(&serv->ctx, serv->ifname, opt);
 		if (serv->dhcpv4)
 			serv->dhcpv4->recv = ipoe_recv_dhcpv4;
-
-		if (opt_relay)
-			serv->dhcpv4_relay = dhcpv4_relay_create(opt_relay, opt_giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay);
 	}
+
+	ipoe_dhcpv4_list_update(serv, conf_relay_list, opt_giaddr);
+	first_relay = list_first_entry(conf_relay_list, typeof(*first_relay), entry);
+	serv->dhcpv4_relay = first_relay->dhcpv4_relay;
 
 	while (!list_empty(&opt_relay_list)) {
 		crelay = list_entry(opt_relay_list.next, typeof(*crelay), entry);
@@ -3351,8 +3431,6 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 
 parse_err:
 	log_error("ipoe: failed to parse '%s'\n", opt);
-out_err:
-	_free(str0);
 }
 
 static void load_interface(const char *opt)

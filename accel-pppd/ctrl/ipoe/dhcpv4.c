@@ -1067,6 +1067,9 @@ void dhcpv4_relay_free(struct dhcpv4_relay *r, struct triton_context_t *ctx)
 {
 	struct dhcpv4_relay_ctx *c;
 
+	if (!r)
+		return;
+
 	pthread_mutex_lock(&relay_lock);
 	list_for_each_entry(c, &r->ctx_list, entry) {
 		if (c->ctx == ctx) {
