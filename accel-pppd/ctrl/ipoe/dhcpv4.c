@@ -578,6 +578,8 @@ static int dhcpv4_read(struct triton_md_handler_t *h)
 
 static int dhcpv4_relay_read(struct triton_md_handler_t *h)
 {
+	struct sockaddr_in src_addr;
+	socklen_t addr_len = sizeof(struct sockaddr_in);
 	struct dhcpv4_packet *pack;
 	struct dhcpv4_relay *r = container_of(h, typeof(*r), hnd);
 	int n;
@@ -590,7 +592,8 @@ static int dhcpv4_relay_read(struct triton_md_handler_t *h)
 			return 1;
 		}
 
-		n = read(h->fd, pack->data, BUF_SIZE);
+		n = recvfrom(h->fd, pack->data, BUF_SIZE, 0, (struct sockaddr *)&src_addr, &addr_len);
+
 		if (n == -1) {
 			mempool_free(pack);
 			if (errno == EAGAIN)
@@ -608,6 +611,8 @@ static int dhcpv4_relay_read(struct triton_md_handler_t *h)
 			dhcpv4_packet_free(pack);
 			continue;
 		}
+
+		pack->src_addr = src_addr.sin_addr.s_addr;
 
 		pthread_mutex_lock(&relay_lock);
 		list_for_each_entry(c, &r->ctx_list, entry) {
