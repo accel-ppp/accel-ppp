@@ -2974,6 +2974,34 @@ static void ipoe_ipv6_disable(struct ipoe_serv *serv)
 }
 
 
+static in_addr_t ipoe_get_giaddr(in_addr_t relay_addr, const char *str_addr)
+{
+	struct sockaddr_in addr;
+	int sock;
+	socklen_t len = sizeof(addr);
+	in_addr_t giaddr = 0;
+
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = relay_addr;
+	addr.sin_port = htons(DHCP_SERV_PORT);
+
+	sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+	if (connect(sock, &addr, sizeof(addr))) {
+		log_error("dhcpv4: relay: %s: connect: %s\n", str_addr, strerror(errno));
+		return giaddr;
+	}
+
+	getsockname(sock, &addr, &len);
+	giaddr = addr.sin_addr.s_addr;
+
+	close(sock);
+
+	return giaddr;
+}
+
+
 static void add_interface(const char *ifname, int ifindex, const char *opt, int parent_ifindex, int vid, int vlan_mon)
 {
 	char *str0 = NULL, *str, *ptr1, *ptr2;
@@ -3111,26 +3139,9 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	opt_auto &= !opt_shared;
 
 	if (opt_relay && !opt_giaddr && opt_dhcpv4) {
-		struct sockaddr_in addr;
-		int sock;
-		socklen_t len = sizeof(addr);
-
-		memset(&addr, 0, sizeof(addr));
-		addr.sin_family = AF_INET;
-		addr.sin_addr.s_addr = relay_addr;
-		addr.sin_port = htons(DHCP_SERV_PORT);
-
-		sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
-
-		if (connect(sock, &addr, sizeof(addr))) {
-			log_error("dhcpv4: relay: %s: connect: %s\n", opt_relay, strerror(errno));
+		opt_giaddr = ipoe_get_giaddr(relay_addr, opt_relay);
+		if (!opt_giaddr)
 			goto out_err;
-		}
-
-		getsockname(sock, &addr, &len);
-		opt_giaddr = addr.sin_addr.s_addr;
-
-		close(sock);
 	}
 
 	pthread_mutex_lock(&serv_lock);
