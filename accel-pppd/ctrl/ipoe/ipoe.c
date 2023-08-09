@@ -2074,7 +2074,7 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 
 	if (conf_verbose) {
 		log_ppp_info2("recv ");
-		dhcpv4_print_packet(pack, 1, log_ppp_info2);
+		dhcpv4_print_packet(pack, pack->src_addr, log_ppp_info2);
 	}
 
 	opt = dhcpv4_packet_find_opt(pack, 51);

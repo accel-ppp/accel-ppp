@@ -136,7 +136,7 @@ struct dhcpv4_packet *dhcpv4_clone_radius(struct rad_packet_t *);
 int dhcpv4_check_options(struct dhcpv4_packet *);
 void dhcpv4_print_options(struct dhcpv4_packet *, void (*)(const char *, ...));
 
-void dhcpv4_print_packet(struct dhcpv4_packet *pack, int relay, void (*print)(const char *fmt, ...));
+void dhcpv4_print_packet(struct dhcpv4_packet *pack, in_addr_t relay_addr, void (*print)(const char *fmt, ...));
 
 int dhcpv4_parse_opt82(struct dhcpv4_option *opt, uint8_t **agent_circuit_id, uint8_t **agent_remote_id, uint8_t **link_selection);
 

@@ -241,11 +241,34 @@ void dhcpv4_free(struct dhcpv4_serv *serv)
 	_free(serv);
 }
 
-void dhcpv4_print_packet(struct dhcpv4_packet *pack, int relay, void (*print)(const char *fmt, ...))
+void dhcpv4_print_packet(struct dhcpv4_packet *pack, in_addr_t relay_addr, void (*print)(const char *fmt, ...))
 {
 	const char *msg_name[] = {"Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform"};
 
-	print("[DHCPv4 %s%s xid=%x ", relay ? "relay " : "", msg_name[pack->msg_type - 1], pack->hdr->xid);
+	print("[DHCPv4 ");
+	if (relay_addr) {
+		print("relay ");
+		switch(pack->msg_type) {
+		case DHCPDISCOVER:
+		case DHCPREQUEST:
+		case DHCPDECLINE:
+		case DHCPRELEASE:
+		case DHCPINFORM:
+			print("to ");
+			break;
+		case DHCPOFFER:
+		case DHCPACK:
+		case DHCPNAK:
+			print("from ");
+			break;
+		}
+		print("%u.%u.%u.%u ",
+				relay_addr & 0xFF,
+				(relay_addr >> 8) & 0xFF,
+				(relay_addr >> 16) & 0xFF,
+				(relay_addr >> 24) & 0xFF);
+	}
+	print("%s xid=%x ", msg_name[pack->msg_type - 1], pack->hdr->xid);
 
 	if (pack->hdr->ciaddr) {
 		in_addr_t addr = ntohl(pack->hdr->ciaddr);
@@ -1126,7 +1149,7 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 
 	if (conf_verbose) {
 		log_ppp_info2("send ");
-		dhcpv4_print_packet(request, 1, log_ppp_info2);
+		dhcpv4_print_packet(request, relay->addr, log_ppp_info2);
 	}
 
 	n = write(relay->hnd.fd, request->data, len);
@@ -1199,7 +1222,7 @@ int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint3
 
 	if (conf_verbose) {
 		log_ppp_info2("send ");
-		dhcpv4_print_packet(pack, 1, log_ppp_info2);
+		dhcpv4_print_packet(pack, relay->addr, log_ppp_info2);
 	}
 
 	n = write(relay->hnd.fd, pack->data, len);
