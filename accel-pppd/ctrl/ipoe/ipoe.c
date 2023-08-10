@@ -872,6 +872,8 @@ static void send_arp_reply(struct ipoe_serv *serv, struct _arphdr *arph)
 
 static void __ipoe_session_start(struct ipoe_session *ses)
 {
+	struct relay *relay;
+
 	if (!ses->yiaddr && ses->serv->dhcpv4) {
 		dhcpv4_get_ip(ses->serv->dhcpv4, &ses->yiaddr, &ses->router, &ses->mask);
 		if (ses->yiaddr)
@@ -949,8 +951,14 @@ static void __ipoe_session_start(struct ipoe_session *ses)
 		if (!ses->siaddr)
 			ses->siaddr = ses->serv->opt_src;
 
-		if (!ses->siaddr && ses->serv->dhcpv4_relay)
-			ses->siaddr = ses->serv->dhcpv4_relay->giaddr;
+		if (!ses->siaddr) {
+			list_for_each_entry(relay, &ses->serv->relay_list, entry) {
+				if (relay->giaddr) {
+					ses->siaddr = relay->giaddr;
+					break;
+				}
+			}
+		}
 
 		if (!ses->siaddr) {
 			log_ppp_error("can't determine Server-ID\n");
