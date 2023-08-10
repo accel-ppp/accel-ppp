@@ -1094,6 +1094,9 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 	struct dhcpv4_option *opt = NULL;
 	uint32_t _server_id;
 
+	if (!relay)
+		return 0;
+
 	if (!request->relay_agent && (agent_remote_id || link_selection) &&
 	    dhcpv4_packet_insert_opt82(request, agent_circuit_id, agent_remote_id, link_selection))
 		return -1;
@@ -1141,6 +1144,9 @@ int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint3
 {
 	struct dhcpv4_packet *pack;
 	int n, len;
+
+	if (!relay)
+		return 0;
 
 	pack = dhcpv4_packet_alloc();
 	if (!pack) {
