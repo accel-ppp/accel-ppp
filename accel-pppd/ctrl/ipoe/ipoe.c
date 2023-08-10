@@ -1304,7 +1304,7 @@ static void ipoe_session_finished(struct ap_session *s)
 	if (ses->yiaddr)
 		list_for_each_entry(relay, &ses->serv->relay_list, entry)
 			dhcpv4_relay_send_release(relay->dhcpv4_relay, ses->hwaddr, ses->xid, ses->yiaddr,ses->client_id, ses->relay_agent,
-					ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+					ses->ses.dhcpv4_srv_addr, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 
 	if (ses->dhcpv4)
 		dhcpv4_free(ses->dhcpv4);

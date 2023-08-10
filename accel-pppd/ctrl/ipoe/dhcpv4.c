@@ -1184,7 +1184,7 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 }
 
 int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint32_t xid, uint32_t ciaddr,
-	struct dhcpv4_option *client_id, struct dhcpv4_option *relay_agent,
+	struct dhcpv4_option *client_id, struct dhcpv4_option *relay_agent, uint32_t server_addr,
         const char *agent_circuit_id, const char *agent_remote_id,
         const char *link_selection)
 {
@@ -1192,6 +1192,12 @@ int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint3
 	int n, len;
 
 	if (!relay)
+		return 0;
+
+	if (relay->addr != server_addr)
+		/* Do no send a DHCPRELEASE to a server that does not initiate
+		 * the DHCPOFFER
+		 */
 		return 0;
 
 	pack = dhcpv4_packet_alloc();

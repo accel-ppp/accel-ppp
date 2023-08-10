@@ -117,7 +117,7 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
         const char *agent_circuit_id, const char *agent_remote_id,
         const char *link_selection);
 int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint32_t xid, uint32_t ciaddr,
-	struct dhcpv4_option *client_id, struct dhcpv4_option *relay_agent,
+	struct dhcpv4_option *client_id, struct dhcpv4_option *relay_agent, uint32_t server_addr,
         const char *agent_circuit_id, const char *agent_remote_id,
         const char *link_selection);
 int dhcpv4_send_reply(int msg_type, struct dhcpv4_serv *serv, struct dhcpv4_packet *req,
