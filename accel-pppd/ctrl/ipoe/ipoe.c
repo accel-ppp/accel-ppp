@@ -455,7 +455,7 @@ static void ipoe_relay_timeout(struct triton_timer_t *t)
 	struct ipoe_session *ses = container_of(t, typeof(*ses), timer);
 	struct relay *relay;
 
-	if (!ses->serv->dhcpv4_relay || !ses->dhcpv4_request) {
+	if (list_empty(&ses->serv->relay_list) || !ses->dhcpv4_request) {
 		triton_timer_del(t);
 		return;
 	}
@@ -1594,12 +1594,13 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 
 	if (pack->msg_type == DHCPDISCOVER) {
 		if (ses->yiaddr) {
-			if (ses->serv->dhcpv4_relay) {
-				dhcpv4_packet_ref(pack);
-				ipoe_session_keepalive(pack);
-			} else
+			if (list_empty(&ses->serv->relay_list))
 				dhcpv4_send_reply(DHCPOFFER, dhcpv4, pack, ses->yiaddr, ses->siaddr, ses->router, ses->mask,
 						  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply);
+			else {
+				dhcpv4_packet_ref(pack);
+				ipoe_session_keepalive(pack);
+			}
 		}
 	} else if (pack->msg_type == DHCPREQUEST) {
 		ses->xid = pack->hdr->xid;
@@ -2678,9 +2679,6 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 	if (serv->dhcpv4)
 		dhcpv4_free(serv->dhcpv4);
 
-	if (serv->dhcpv4_relay)
-		dhcpv4_relay_free(serv->dhcpv4_relay, &serv->ctx);
-
 	if (serv->arp)
 		arpd_stop(serv->arp);
 
@@ -3162,7 +3160,6 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	char *opt_lua_username_func = NULL;
 #endif
 	struct conf_relay *crelay;
-	struct relay *first_relay;
 	LIST_HEAD(opt_relay_list);
 	struct list_head *conf_relay_list = NULL;
 	in_addr_t opt_giaddr = 0;
@@ -3299,8 +3296,6 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		}
 
 		ipoe_dhcpv4_list_update(serv, conf_relay_list, opt_giaddr);
-		first_relay = list_first_entry(conf_relay_list, typeof(*first_relay), entry);
-		serv->dhcpv4_relay = first_relay->dhcpv4_relay;
 
 		while (!list_empty(&opt_relay_list)) {
 			crelay = list_entry(opt_relay_list.next, typeof(*crelay), entry);
@@ -3441,8 +3436,6 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	}
 
 	ipoe_dhcpv4_list_update(serv, conf_relay_list, opt_giaddr);
-	first_relay = list_first_entry(conf_relay_list, typeof(*first_relay), entry);
-	serv->dhcpv4_relay = first_relay->dhcpv4_relay;
 
 	while (!list_empty(&opt_relay_list)) {
 		crelay = list_entry(opt_relay_list.next, typeof(*crelay), entry);

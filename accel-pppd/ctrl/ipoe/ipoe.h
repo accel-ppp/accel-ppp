@@ -39,7 +39,6 @@ struct ipoe_serv {
 	struct list_head sessions;
 	unsigned int sess_cnt;
 	struct dhcpv4_serv *dhcpv4;
-	struct dhcpv4_relay *dhcpv4_relay;
 	void *arp;
 	struct list_head disc_list;
 	struct list_head arp_list;
