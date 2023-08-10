@@ -231,7 +231,9 @@ static void ipoe_serv_release(struct ipoe_serv *serv);
 static void __ipoe_session_activate(struct ipoe_session *ses);
 static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet *pack);
 static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet *pack, int force);
+static void ipoe_recv_dhcpv4_relay(struct dhcpv4_packet *pack);
 static void ipoe_session_keepalive(struct dhcpv4_packet *pack);
+static in_addr_t ipoe_get_giaddr(in_addr_t relay_addr, const char *str_addr);
 static void add_interface(const char *ifname, int ifindex, const char *opt, int parent_ifindex, int vid, int vlan_mon);
 static int get_offer_delay();
 static void __ipoe_session_start(struct ipoe_session *ses);
@@ -1400,6 +1402,7 @@ static void ipoe_session_close(struct triton_context_t *ctx)
 static struct ipoe_session *ipoe_session_create_dhcpv4(struct ipoe_serv *serv, struct dhcpv4_packet *pack)
 {
 	struct ipoe_session *ses;
+	struct relay *relay;
 	int dlen = 0;
 	uint8_t *ptr = NULL;
 
@@ -1418,6 +1421,22 @@ static struct ipoe_session *ipoe_session_create_dhcpv4(struct ipoe_serv *serv, s
 
 	ses->serv = serv;
 	ses->dhcpv4_request = pack;
+
+	list_for_each_entry(relay, &ses->serv->relay_list, entry) {
+		if (relay->dhcpv4_relay && relay->dhcpv4_relay->hnd.read)
+			continue;
+
+		log_error("%s: no socket to the DHCPv4 server %s. Trying again to connect\n", ses->serv->ifname, relay->str_addr);
+
+		if (!relay->giaddr)
+			relay->giaddr = ipoe_get_giaddr(relay->addr, relay->str_addr);
+		if (!relay->giaddr)
+			continue;
+
+		relay->dhcpv4_relay = dhcpv4_relay_create(relay->str_addr,
+				relay->giaddr, &serv->ctx,
+				(triton_event_func)ipoe_recv_dhcpv4_relay);
+	}
 
 	if (!serv->opt_shared)
 		strncpy(ses->ses.ifname, serv->ifname, AP_IFNAME_LEN);
