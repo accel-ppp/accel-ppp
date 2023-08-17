@@ -113,7 +113,7 @@ void dhcpv4_free(struct dhcpv4_serv *);
 
 struct dhcpv4_relay *dhcpv4_relay_create(const char *addr, in_addr_t giaddr, struct triton_context_t *ctx, triton_event_func recv);
 void dhcpv4_relay_free(struct dhcpv4_relay *, struct triton_context_t *);
-int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request, uint32_t server_id,
+int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request, uint32_t server_id, uint32_t server_addr,
         const char *agent_circuit_id, const char *agent_remote_id,
         const char *link_selection);
 int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint32_t xid, uint32_t ciaddr,

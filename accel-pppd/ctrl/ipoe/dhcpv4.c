@@ -1114,7 +1114,9 @@ void dhcpv4_relay_free(struct dhcpv4_relay *r, struct triton_context_t *ctx)
 	pthread_mutex_unlock(&relay_lock);
 }
 
-int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request, uint32_t server_id, const char *agent_circuit_id, const char *agent_remote_id, const char *link_selection)
+int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
+		uint32_t server_id, uint32_t server_addr,
+		const char *agent_circuit_id, const char *agent_remote_id, const char *link_selection)
 {
 	int n;
 	int len = request->ptr - request->data;
@@ -1123,6 +1125,22 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 	uint32_t _server_id;
 
 	if (!relay)
+		return 0;
+
+	/* Excepted for the DHCPDISCOVER and the initial DHCPREQUEST, the
+	 * client requests should not be forwarded to the servers that did
+	 * send the DHCPOFFER.
+	 *
+	 * The initial DHCPREQUEST (in response to a DHCPDISCOVER) MUST have no
+	 * filled 'client identifier' ciaddr. ciaddr is filled in next
+	 * DHCPREQUEST when renewing the address.
+	 */
+	if (request->msg_type == DHCPDISCOVER)
+		;
+	else if (request->msg_type == DHCPREQUEST && !request->hdr->ciaddr)
+		;
+	else if (server_addr && server_addr != relay->addr)
+		/* Do no relay the client request to the relay->addr server */
 		return 0;
 
 	if (!request->relay_agent && (agent_remote_id || link_selection) &&
