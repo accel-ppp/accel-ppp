@@ -1306,7 +1306,7 @@ static void ipoe_session_finished(struct ap_session *s)
 	if (ses->dhcp_addr)
 		dhcpv4_put_ip(ses->serv->dhcpv4, ses->yiaddr);
 
-	if (ses->relay_addr)
+	if (ses->yiaddr)
 		list_for_each_entry(relay, &ses->serv->relay_list, entry)
 			dhcpv4_relay_send_release(relay->dhcpv4_relay, ses->hwaddr, ses->xid, ses->yiaddr,ses->client_id, ses->relay_agent,
 					ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
@@ -2101,10 +2101,8 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 
 			ses->relay_server_id = pack->server_id;
 
-			if (!ses->yiaddr) {
+			if (!ses->yiaddr)
 				ses->yiaddr = pack->hdr->yiaddr;
-				ses->relay_addr = 1;
-			}
 
 			__ipoe_session_start(ses);
 		} else

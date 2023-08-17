@@ -114,7 +114,6 @@ struct ipoe_session {
 	unsigned int started:1;
 	unsigned int terminating:1;
 	unsigned int dhcp_addr:1;
-	unsigned int relay_addr:1;
 	unsigned int l4_redirect:1;
 	unsigned int l4_redirect_set:1;
 	unsigned int terminate:1;
