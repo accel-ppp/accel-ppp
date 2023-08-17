@@ -1604,10 +1604,8 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 		}
 	} else if (pack->msg_type == DHCPREQUEST) {
 		ses->xid = pack->hdr->xid;
-		if (pack->hdr->ciaddr == ses->yiaddr && pack->hdr->xid != ses->xid)
-			ses->xid = pack->hdr->xid;
 		if ((pack->server_id && (pack->server_id != ses->siaddr || pack->request_ip != ses->yiaddr)) ||
-			(pack->hdr->ciaddr && (pack->hdr->xid != ses->xid || pack->hdr->ciaddr != ses->yiaddr))) {
+			(pack->hdr->ciaddr && pack->hdr->ciaddr != ses->yiaddr)) {
 
 			if (pack->server_id == ses->siaddr)
 				dhcpv4_send_nak(dhcpv4, pack, "Wrong session");
