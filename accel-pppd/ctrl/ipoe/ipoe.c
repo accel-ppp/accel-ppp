@@ -1131,11 +1131,6 @@ static void ipoe_session_activate(struct dhcpv4_packet *pack)
 	struct ipoe_session *ses = container_of(triton_context_self(), typeof(*ses), ctx);
 	struct relay *relay;
 
-	if (ses->ses.state == AP_STATE_ACTIVE) {
-		ipoe_session_keepalive(pack);
-		return;
-	}
-
 	if (ses->dhcpv4_request)
 		dhcpv4_packet_free(ses->dhcpv4_request);
 
