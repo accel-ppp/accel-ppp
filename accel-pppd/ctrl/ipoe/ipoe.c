@@ -2098,6 +2098,7 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 			triton_timer_del(&ses->timer);
 
 			ses->relay_server_id = pack->server_id;
+			ses->ses.dhcpv4_srv_addr = pack->src_addr;
 
 			if (!ses->yiaddr)
 				ses->yiaddr = pack->hdr->yiaddr;
