@@ -540,6 +540,18 @@ static void print_comp(struct ap_session *ses, char *buf)
 		buf[0] = 0;
 }
 
+static void print_dhcpv4_server(struct ap_session *ses, char *buf)
+{
+	if (ses->dhcpv4_srv_addr)
+		snprintf(buf, CELL_SIZE, "%u.%u.%u.%u",
+				ses->dhcpv4_srv_addr & 0xFF,
+				(ses->dhcpv4_srv_addr >> 8) & 0xFF,
+				(ses->dhcpv4_srv_addr >> 16) & 0xFF,
+				(ses->dhcpv4_srv_addr >> 24) & 0xFF);
+	else
+		buf[0] = 0;
+}
+
 static void format_bytes(char *buf, unsigned long long bytes)
 {
 	const char *suffix;
@@ -683,6 +695,7 @@ static void init(void)
 	cli_show_ses_register("called-sid", "called station id", print_called_sid);
 	cli_show_ses_register("sid", "session id", print_sid);
 	cli_show_ses_register("comp", "compression/encryption method", print_comp);
+	cli_show_ses_register("dhcp-server", "DHCP server", print_dhcpv4_server);
 	cli_show_ses_register("rx-bytes", "received bytes (human readable)", print_rx_bytes);
 	cli_show_ses_register("tx-bytes", "transmitted bytes (human readable)", print_tx_bytes);
 	cli_show_ses_register("rx-bytes-raw", "received bytes", print_rx_bytes_raw);
