@@ -2055,18 +2055,21 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 	struct ipoe_session *ses = container_of(triton_context_self(), typeof(*ses), ctx);
 	struct dhcpv4_option *opt;
 
-	if (ses->dhcpv4_relay_reply)
+	if (ses->dhcpv4_relay_reply) {
 		dhcpv4_packet_free(ses->dhcpv4_relay_reply);
+		ses->dhcpv4_relay_reply = NULL;
+	}
 
 	if (conf_verbose) {
 		log_ppp_info2("recv ");
 		dhcpv4_print_packet(pack, pack->src_addr, log_ppp_info2);
 	}
 
-	if (!ses->dhcpv4_request) {
-		ses->dhcpv4_relay_reply = NULL;
+	if (!ses->dhcpv4_request)
 		return;
-	}
+
+	if (ses->relay_server_id && ses->relay_server_id != pack->server_id)
+		return;
 
 	ses->dhcpv4_relay_reply = pack;
 
