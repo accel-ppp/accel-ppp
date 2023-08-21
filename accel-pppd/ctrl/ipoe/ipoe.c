@@ -2053,6 +2053,7 @@ static int parse_dhcpv4_mask(uint32_t mask)
 static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 {
 	struct ipoe_session *ses = container_of(triton_context_self(), typeof(*ses), ctx);
+	struct ap_dhcpv4_srv *dhcp_srv, *dhcp_srv_iter;
 	struct dhcpv4_option *opt;
 
 	if (ses->dhcpv4_relay_reply) {
@@ -2065,10 +2066,32 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 		dhcpv4_print_packet(pack, pack->src_addr, log_ppp_info2);
 	}
 
-	if (!ses->dhcpv4_request)
+	if (ses->relay_server_id && ses->relay_server_id != pack->server_id) {
+		if (pack->msg_type != DHCPOFFER) {
+			dhcpv4_packet_free(pack);
+			return;
+		}
+		if (!ses->yiaddr || ses->yiaddr != pack->hdr->yiaddr) {
+			dhcpv4_packet_free(pack);
+			return;
+		}
+		dhcp_srv = NULL;
+		list_for_each_entry(dhcp_srv_iter, &ses->ses.dhcpv4_srv_list, entry) {
+			if (dhcp_srv_iter->addr == pack->src_addr) {
+				dhcp_srv = dhcp_srv_iter;
+				break;
+			}
+		}
+		if (!dhcp_srv) {
+			dhcp_srv = _malloc(sizeof(struct ap_dhcpv4_srv));
+			dhcp_srv->addr = pack->src_addr;
+			list_add_tail(&dhcp_srv->entry, &ses->ses.dhcpv4_srv_list);
+		}
+		dhcpv4_packet_free(pack);
 		return;
+	}
 
-	if (ses->relay_server_id && ses->relay_server_id != pack->server_id)
+	if (!ses->dhcpv4_request)
 		return;
 
 	ses->dhcpv4_relay_reply = pack;
@@ -2099,6 +2122,19 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 
 			ses->relay_server_id = pack->server_id;
 			ses->ses.dhcpv4_srv_addr = pack->src_addr;
+
+			dhcp_srv = NULL;
+			list_for_each_entry(dhcp_srv_iter, &ses->ses.dhcpv4_srv_list, entry) {
+				if (dhcp_srv_iter->addr == pack->src_addr) {
+					dhcp_srv = dhcp_srv_iter;
+					break;
+				}
+			}
+			if (!dhcp_srv) {
+				dhcp_srv = _malloc(sizeof(struct ap_dhcpv4_srv));
+				dhcp_srv->addr = pack->src_addr;
+				list_add_tail(&dhcp_srv->entry, &ses->ses.dhcpv4_srv_list);
+			}
 
 			if (!ses->yiaddr)
 				ses->yiaddr = pack->hdr->yiaddr;

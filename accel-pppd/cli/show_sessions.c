@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <inttypes.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <arpa/inet.h>
 #include <linux/if_link.h>
 
@@ -540,16 +541,27 @@ static void print_comp(struct ap_session *ses, char *buf)
 		buf[0] = 0;
 }
 
-static void print_dhcpv4_server(struct ap_session *ses, char *buf)
+static void print_dhcpv4_servers(struct ap_session *ses, char *buf)
 {
-	if (ses->dhcpv4_srv_addr)
-		snprintf(buf, CELL_SIZE, "%u.%u.%u.%u",
-				ses->dhcpv4_srv_addr & 0xFF,
-				(ses->dhcpv4_srv_addr >> 8) & 0xFF,
-				(ses->dhcpv4_srv_addr >> 16) & 0xFF,
-				(ses->dhcpv4_srv_addr >> 24) & 0xFF);
-	else
+	struct ap_dhcpv4_srv *dhcp_srv;
+	size_t size = CELL_SIZE;
+	bool first = true;
+
+	if (list_empty(&ses->dhcpv4_srv_list)) {
 		buf[0] = 0;
+		return;
+	}
+	list_for_each_entry(dhcp_srv, &ses->dhcpv4_srv_list, entry) {
+		snprintf(buf, size, "%s%u.%u.%u.%u",
+				first ? "" : ", ",
+				dhcp_srv->addr & 0xFF,
+				(dhcp_srv->addr >> 8) & 0xFF,
+				(dhcp_srv->addr >> 16) & 0xFF,
+				(dhcp_srv->addr >> 24) & 0xFF);
+		size -= strlen(buf);
+		buf += strlen(buf);
+		first = false;
+	}
 }
 
 static void format_bytes(char *buf, unsigned long long bytes)
@@ -695,7 +707,7 @@ static void init(void)
 	cli_show_ses_register("called-sid", "called station id", print_called_sid);
 	cli_show_ses_register("sid", "session id", print_sid);
 	cli_show_ses_register("comp", "compression/encryption method", print_comp);
-	cli_show_ses_register("dhcp-server", "DHCP server", print_dhcpv4_server);
+	cli_show_ses_register("dhcp-server", "DHCP server(s)", print_dhcpv4_servers);
 	cli_show_ses_register("rx-bytes", "received bytes (human readable)", print_rx_bytes);
 	cli_show_ses_register("tx-bytes", "transmitted bytes (human readable)", print_tx_bytes);
 	cli_show_ses_register("rx-bytes-raw", "received bytes", print_rx_bytes_raw);
