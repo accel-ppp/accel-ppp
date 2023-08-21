@@ -96,7 +96,6 @@ struct ap_session
 	char *ipv6_pool_name;
 	char *dpv6_pool_name;
 	struct ap_net *net;
-	uint32_t dhcpv4_srv_addr;
 
 	const struct ap_ctrl *ctrl;
 

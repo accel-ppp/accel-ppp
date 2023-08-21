@@ -1115,10 +1115,11 @@ void dhcpv4_relay_free(struct dhcpv4_relay *r, struct triton_context_t *ctx)
 }
 
 int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
-		uint32_t server_id, uint32_t server_addr,
+		uint32_t server_id, struct list_head *srv_list,
 		const char *agent_circuit_id, const char *agent_remote_id, const char *link_selection)
 {
 	int n;
+	struct ap_dhcpv4_srv *dhcp_srv, *dhcp_srv_iter;
 	int len = request->ptr - request->data;
 	uint32_t giaddr = request->hdr->giaddr;
 	struct dhcpv4_option *opt = NULL;
@@ -1139,9 +1140,18 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 		;
 	else if (request->msg_type == DHCPREQUEST && !request->hdr->ciaddr)
 		;
-	else if (server_addr && server_addr != relay->addr)
+	else {
+		dhcp_srv = NULL;
+		list_for_each_entry(dhcp_srv_iter, srv_list, entry) {
+			if (dhcp_srv_iter->addr == relay->addr) {
+				dhcp_srv = dhcp_srv_iter;
+				break;
+			}
+		}
+		if (!dhcp_srv)
 		/* Do no relay the client request to the relay->addr server */
-		return 0;
+			return 0;
+	}
 
 	if (!request->relay_agent && (agent_remote_id || link_selection) &&
 	    dhcpv4_packet_insert_opt82(request, agent_circuit_id, agent_remote_id, link_selection))
@@ -1184,10 +1194,11 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 }
 
 int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint32_t xid, uint32_t ciaddr,
-	struct dhcpv4_option *client_id, struct dhcpv4_option *relay_agent, uint32_t server_addr,
+	struct dhcpv4_option *client_id, struct dhcpv4_option *relay_agent, struct list_head *srv_list,
         const char *agent_circuit_id, const char *agent_remote_id,
         const char *link_selection)
 {
+	struct ap_dhcpv4_srv *dhcp_srv, *dhcp_srv_iter;
 	struct dhcpv4_packet *pack;
 	int n, len;
 
@@ -1195,6 +1206,14 @@ int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint3
 		return 0;
 
 	if (relay->addr != server_addr)
+	dhcp_srv = NULL;
+	list_for_each_entry(dhcp_srv_iter, srv_list, entry) {
+		if (dhcp_srv_iter->addr == relay->addr) {
+			dhcp_srv = dhcp_srv_iter;
+			break;
+		}
+	}
+	if (!dhcp_srv)
 		/* Do no send a DHCPRELEASE to a server that does not initiate
 		 * the DHCPOFFER
 		 */
