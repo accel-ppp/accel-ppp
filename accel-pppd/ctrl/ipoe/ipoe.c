@@ -2008,6 +2008,7 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 
 	if (!ses->dhcpv4_request) {
 		ses->dhcpv4_relay_reply = NULL;
+		dhcpv4_packet_free(pack);
 		return;
 	}
 
