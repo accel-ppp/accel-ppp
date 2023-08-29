@@ -374,6 +374,12 @@ parameter.
 .BI "weight=" n
 Specifies global weight of this server (used for load balancing)
 .TP
+.BI "netmask=" n
+Specifies default value for per-interface
+.B netmask
+parameter.
+.br
+.TP
 .BI "ip-unnumbered=" 0|1
 Specifies default value for per-interface
 .B ip-unnumbered
@@ -409,6 +415,7 @@ option nor this option is present, option 82 is not inserted by the DCHP Relay A
 .BI "" [,mtu=N]
 .BI "" [,weight=N]
 .BI "" [,ip-unnumbered=0|1]
+.BI "" [,netmask=N]
 .br
 Specifies interface to listen dhcp or unclassified packets. You may specify multiple
 .B interface
@@ -465,6 +472,10 @@ parameter specifies ip address to use as source when adding route to client.
 If the
 .B ip-unnumbered
 is set to 1, accel-ppp will always assign /32 mask. Default value is 1.
+.br
+The
+.B netmask
+parameter specifies the netmask integer value from 1 to 32 to set when the subnet-mask DHCP option 1 is not sent by the server.
 .br
 The
 .B proxy-arp
