@@ -386,6 +386,12 @@ Specifies default value for per-interface
 parameter.
 .br
 .TP
+.BI "netmask-force=" 0|1
+Specifies default value for per-interface
+.B netmask-force
+parameter.
+.br
+.TP
 .BI "agent-remote-id=" string
 Specifies the DCHP option 82 sub-option 2 to be inserted by the DHCP Relay.
 .br
@@ -415,6 +421,7 @@ option nor this option is present, option 82 is not inserted by the DCHP Relay A
 .BI "" [,mtu=N]
 .BI "" [,weight=N]
 .BI "" [,ip-unnumbered=0|1]
+.BI "" [,netmask-force=0|1]
 .BI "" [,netmask=N]
 .br
 Specifies interface to listen dhcp or unclassified packets. You may specify multiple
@@ -478,6 +485,14 @@ The
 parameter specifies the netmask integer value from 1 to 32 to set when the subnet-mask DHCP option 1 is not sent by the server. If
 .B ip-unnumbered
 is set, the netmask will always be 32 regardless of this value.
+.br
+If the
+.B netmask-force
+is set, accel-ppp will replace the subnet-mask (option 1) value sent by the DHCP server to 255.255.255.255 if
+.B ip-unnumbered
+if set or by the
+.B netmask
+value. Default netmask-force value is 0.
 .br
 The
 .B proxy-arp
