@@ -166,7 +166,7 @@ static int conf_offer_timeout = 10;
 static int conf_relay_timeout = 3;
 static int conf_relay_retransmit = 3;
 static LIST_HEAD(conf_gw_addr);
-static int conf_netmask = 24;
+static int conf_netmask;
 static int conf_lease_time = LEASE_TIME;
 static int conf_lease_timeout = LEASE_TIME + LEASE_TIME/10;
 static int conf_renew_time = LEASE_TIME/2;
