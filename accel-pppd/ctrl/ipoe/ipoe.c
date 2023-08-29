@@ -123,6 +123,7 @@ static int conf_arp;
 static int conf_ipv6;
 static uint32_t conf_src;
 static uint32_t conf_router;
+static int conf_router_force;
 static const char *conf_ip_pool;
 static const char *conf_ipv6_pool;
 static const char *conf_dpv6_pool;
@@ -2998,6 +2999,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	in_addr_t opt_giaddr = 0;
 	in_addr_t opt_src = conf_src;
 	in_addr_t opt_router = conf_router;
+	int opt_router_force = conf_router_force;
 	int opt_arp = conf_arp;
 	struct ifreq ifr;
 	uint8_t hwaddr[ETH_ALEN];
@@ -3056,6 +3058,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 				opt_src = inet_addr(ptr1);
 			} else if (strcmp(str, "router") == 0) {
 				opt_router = inet_addr(ptr1);
+			} else if (strcmp(str, "router-force") == 0) {
+				opt_router_force = atoi(ptr1);
 			} else if (strcmp(str, "proxy-arp") == 0) {
 				opt_arp = atoi(ptr1);
 			} else if (strcmp(str, "ipv6") == 0) {
@@ -3169,6 +3173,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->opt_nat = opt_nat;
 		serv->opt_src = opt_src;
 		serv->opt_router = opt_router;
+		serv->opt_router_force = !!(opt_router && opt_router_force);
 		serv->opt_arp = opt_arp;
 		serv->opt_username = opt_username;
 		serv->opt_ipv6 = opt_ipv6;
@@ -3256,6 +3261,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	serv->opt_nat = opt_nat;
 	serv->opt_src = opt_src;
 	serv->opt_router = opt_router;
+	serv->opt_router_force = !!(opt_router && opt_router_force);
 	serv->opt_arp = opt_arp;
 	serv->opt_username = opt_username;
 	serv->opt_ipv6 = opt_ipv6;
@@ -3975,6 +3981,12 @@ static void load_config(void)
 		conf_router = inet_addr(opt);
 	else
 		conf_router = 0;
+
+	opt = conf_get_opt("ipoe", "router-force");
+	if (opt)
+		conf_router_force = atoi(opt);
+	else
+		conf_router_force = 1;
 
 	opt = conf_get_opt("ipoe", "proxy-arp");
 	if (opt)
