@@ -2025,7 +2025,7 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 		ses->rebind_time = ntohl(*(uint32_t *)opt->data);
 
 	opt = dhcpv4_packet_find_opt(pack, 1);
-	if (opt)
+	if (opt && !ses->serv->opt_netmask_force)
 		ses->mask = parse_dhcpv4_mask(ntohl(*(uint32_t *)opt->data));
 
 	opt = dhcpv4_packet_find_opt(pack, 3);
@@ -2378,6 +2378,8 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
 					ses->router = *(in_addr_t *)attr->raw;
 					break;
 				case DHCP_Subnet_Mask:
+					if (ses->serv->opt_netmask_force)
+						break;
 					ses->mask = ipaddr_to_prefix(attr->val.ipaddr);
 					break;
 				case DHCP_IP_Address_Lease_Time:
@@ -2407,7 +2409,7 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
 			ses->yiaddr = attr->val.ipaddr;
 		else if (attr->attr->id == conf_attr_dhcp_router_ip)
 			ses->router = attr->val.ipaddr;
-		else if (attr->attr->id == conf_attr_dhcp_mask) {
+		else if (attr->attr->id == conf_attr_dhcp_mask && !ses->serv->opt_netmask_force) {
 			if (attr->attr->type == ATTR_TYPE_INTEGER) {
 				if (attr->val.integer > 0 && attr->val.integer <= 32)
 					ses->mask = attr->val.integer;
