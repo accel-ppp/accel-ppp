@@ -178,6 +178,7 @@ static int conf_proto;
 static LIST_HEAD(conf_offer_delay);
 static const char *conf_vlan_name;
 static int conf_ip_unnumbered;
+static int conf_netmask_force;
 static int conf_check_mac_change;
 static int conf_soft_terminate;
 static int conf_calling_sid = SID_MAC;
@@ -2986,6 +2987,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	int opt_mtu = 0;
 	int opt_weight = -1;
 	int opt_ip_unnumbered = conf_ip_unnumbered;
+	int opt_netmask_force = conf_netmask_force;
 #ifdef USE_LUA
 	char *opt_lua_username_func = NULL;
 #endif
@@ -3063,6 +3065,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 			} else if (strcmp(str, "weight") == 0) {
 				opt_weight = atoi(ptr1);
 			} else if (strcmp(str, "ip-unnumbered") == 0) {
+				opt_ip_unnumbered = atoi(ptr1);
+			} else if (strcmp(str, "netmask-force") == 0) {
 				opt_ip_unnumbered = atoi(ptr1);
 			} else if (strcmp(str, "username") == 0) {
 				if (strcmp(ptr1, "ifname") == 0)
@@ -3172,6 +3176,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->opt_weight = opt_weight;
 		serv->opt_ip_unnumbered = opt_ip_unnumbered;
 		serv->opt_netmask = opt_ip_unnumbered ? 32 : opt_netmask;
+		serv->opt_netmask_force = !!(serv->opt_netmask && opt_netmask_force);
 #ifdef USE_LUA
 		if (serv->opt_lua_username_func && (!opt_lua_username_func || strcmp(serv->opt_lua_username_func, opt_lua_username_func))) {
 			_free(serv->opt_lua_username_func);
@@ -3260,6 +3265,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	serv->opt_weight = opt_weight;
 	serv->opt_ip_unnumbered = opt_ip_unnumbered;
 	serv->opt_netmask = opt_ip_unnumbered ? 32 : opt_netmask;
+	serv->opt_netmask_force = !!(serv->opt_netmask && opt_netmask_force);
 #ifdef USE_LUA
 	serv->opt_lua_username_func = opt_lua_username_func;
 #endif
@@ -4081,6 +4087,12 @@ static void load_config(void)
 		conf_ip_unnumbered = atoi(opt);
 	else
 		conf_ip_unnumbered = 1;
+
+	opt = conf_get_opt("ipoe", "netmask-force");
+	if (opt)
+		conf_netmask_force = atoi(opt);
+	else
+		conf_netmask_force = 1;
 
 	opt = conf_get_opt("ipoe", "idle-timeout");
 	if (opt)
