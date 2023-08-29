@@ -366,6 +366,11 @@ Specifies default value for per-interface
 .B relay
 parameter.
 .TP
+.BI "router=" ipv4_address
+Specifies default value for per-interface
+.B router
+parameter.
+.TP
 .BI "proxy-arp=" n
 Specifies default value for per-interface
 .B proxy-arp
@@ -406,6 +411,7 @@ option nor this option is present, option 82 is not inserted by the DCHP Relay A
 .BI "" [,relay=x.x.x.x]
 .BI "" [,giaddr=x.x.x.x]
 .BI "" [,src=x.x.x.x]
+.BI "" [,router=x.x.x.x]
 .BI "" [,proxy-arp=0|1|2]
 .BI "" [,username=ifname|lua:function]
 .BI "" [,ipv6=0|1]
@@ -464,6 +470,10 @@ parameter specifies relay agent IP address.
 The
 .B src
 parameter specifies ip address to use as source when adding route to client.
+.br
+The
+.B router
+parameter specifies the router ip address (option 3) to set if not already set by the server.
 .br
 The
 .B proxy-arp
