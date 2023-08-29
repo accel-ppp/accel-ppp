@@ -892,7 +892,7 @@ static void __ipoe_session_start(struct ipoe_session *ses)
 			find_gw_addr(ses);
 
 		if (!ses->mask)
-			ses->mask = conf_netmask;
+			ses->mask = ses->serv->opt_netmask;
 
 		if (!ses->mask)
 			ses->mask = 32;
@@ -2993,6 +2993,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	in_addr_t relay_addr = conf_relay ? inet_addr(conf_relay) : 0;
 	in_addr_t opt_giaddr = 0;
 	in_addr_t opt_src = conf_src;
+	uint8_t opt_netmask = conf_netmask, opt_netmask_tmp;
 	int opt_arp = conf_arp;
 	struct ifreq ifr;
 	uint8_t hwaddr[ETH_ALEN];
@@ -3049,6 +3050,10 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 				opt_nat = atoi(ptr1);
 			} else if (strcmp(str, "src") == 0) {
 				opt_src = inet_addr(ptr1);
+			} else if (strcmp(str, "netmask") == 0) {
+				opt_netmask_tmp = atoi(ptr1);
+				if (opt_netmask_tmp > 0 && opt_netmask_tmp <= 32)
+					opt_netmask = opt_netmask_tmp;
 			} else if (strcmp(str, "proxy-arp") == 0) {
 				opt_arp = atoi(ptr1);
 			} else if (strcmp(str, "ipv6") == 0) {
@@ -3166,6 +3171,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->opt_ipv6 = opt_ipv6;
 		serv->opt_weight = opt_weight;
 		serv->opt_ip_unnumbered = opt_ip_unnumbered;
+		serv->opt_netmask = opt_netmask;
 #ifdef USE_LUA
 		if (serv->opt_lua_username_func && (!opt_lua_username_func || strcmp(serv->opt_lua_username_func, opt_lua_username_func))) {
 			_free(serv->opt_lua_username_func);
@@ -3253,6 +3259,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	serv->opt_mtu = opt_mtu;
 	serv->opt_weight = opt_weight;
 	serv->opt_ip_unnumbered = opt_ip_unnumbered;
+	serv->opt_netmask = opt_netmask;
 #ifdef USE_LUA
 	serv->opt_lua_username_func = opt_lua_username_func;
 #endif
