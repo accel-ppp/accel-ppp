@@ -52,6 +52,7 @@ struct ipoe_serv {
 	int parent_vid;
 	int opt_mode;
 	uint32_t opt_src;
+	uint32_t opt_router;
 	int opt_arp;
 	int opt_username;
 	int opt_mtu;
