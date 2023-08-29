@@ -2033,7 +2033,7 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 		ses->mask = parse_dhcpv4_mask(ntohl(*(uint32_t *)opt->data));
 
 	opt = dhcpv4_packet_find_opt(pack, 3);
-	if (opt)
+	if (opt && !ses->serv->opt_router_force)
 		ses->router = *(uint32_t *)opt->data;
 
 	if (pack->msg_type == DHCPOFFER) {
@@ -2379,6 +2379,8 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
 					ses->siaddr = attr->val.ipaddr;
 					break;
 				case DHCP_Router_Address:
+					if (ses->serv->opt_router_force)
+						break;
 					ses->router = *(in_addr_t *)attr->raw;
 					break;
 				case DHCP_Subnet_Mask:
@@ -2409,7 +2411,7 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
 
 		if (attr->attr->id == conf_attr_dhcp_client_ip)
 			ses->yiaddr = attr->val.ipaddr;
-		else if (attr->attr->id == conf_attr_dhcp_router_ip)
+		else if (attr->attr->id == conf_attr_dhcp_router_ip && !ses->serv->opt_router_force)
 			ses->router = attr->val.ipaddr;
 		else if (attr->attr->id == conf_attr_dhcp_mask) {
 			if (attr->attr->type == ATTR_TYPE_INTEGER) {
