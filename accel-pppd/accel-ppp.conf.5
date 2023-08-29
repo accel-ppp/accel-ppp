@@ -379,9 +379,6 @@ Specifies default value for per-interface
 .B ip-unnumbered
 parameter.
 .br
-If ip-unnumbered=1 accel-ppp will always assign /32 mask.
-.br
-Default value is 1.
 .TP
 .BI "agent-remote-id=" string
 Specifies the DCHP option 82 sub-option 2 to be inserted by the DHCP Relay.
@@ -464,6 +461,10 @@ parameter specifies relay agent IP address.
 The
 .B src
 parameter specifies ip address to use as source when adding route to client.
+.br
+If the
+.B ip-unnumbered
+is set to 1, accel-ppp will always assign /32 mask. Default value is 1.
 .br
 The
 .B proxy-arp
