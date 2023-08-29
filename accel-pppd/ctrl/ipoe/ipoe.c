@@ -865,6 +865,9 @@ static void __ipoe_session_start(struct ipoe_session *ses)
 		}
 	}
 
+	if (!ses->router && ses->serv->opt_router)
+		ses->router = ses->serv->opt_router;
+
 	if (ses->ses.ipv4) {
 		if (!ses->mask)
 			ses->mask = ses->ses.ipv4->mask;
