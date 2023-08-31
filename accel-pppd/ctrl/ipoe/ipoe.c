@@ -1474,6 +1474,15 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 	uint8_t *agent_remote_id = NULL;
 	uint8_t *link_selection = NULL;
 
+	if (!ses->serv->opt_trusted_circuit && pack->hdr->giaddr) {
+		if (conf_verbose) {
+			log_ppp_info2("recv discarded - giaddr recvd on untrusted circuit ");
+			dhcpv4_print_packet(pack, 0, log_ppp_info2);
+		}
+		dhcpv4_packet_ref(pack);
+		return;
+	}
+
 	if (conf_verbose) {
 		log_ppp_info2("recv ");
 		dhcpv4_print_packet(pack, 0, log_ppp_info2);
@@ -1837,6 +1846,15 @@ static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet 
 
 	if (connlimit_loaded && pack->msg_type == DHCPDISCOVER && connlimit_check(serv->opt_shared ? cl_key_from_mac(pack->hdr->chaddr) : serv->ifindex))
 		return;
+
+	if (!serv->opt_trusted_circuit && pack->hdr->giaddr) {
+		if (conf_verbose) {
+			log_ppp_info2("recv discarded - giaddr recvd on untrusted circuit ");
+			dhcpv4_print_packet(pack, 0, log_ppp_info2);
+		}
+		dhcpv4_packet_ref(pack);
+		return;
+	}
 
 	pthread_mutex_lock(&serv->lock);
 	if (serv->timer.tpd)
