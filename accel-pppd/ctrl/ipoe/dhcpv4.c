@@ -1090,6 +1090,11 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 	struct dhcpv4_packet *pack;
 	uint8_t *data;
 
+	if (request->hdr->giaddr && request->hdr->giaddr == relay->giaddr &&
+			(agent_remote_id || link_selection))
+		/* the client request giaddr spoofs the local giaddr value */
+		return 0;
+
 	/* Build a relay packet from the client request */
 	pack = dhcpv4_packet_alloc();
 	memcpy(pack->hdr, request->hdr, sizeof(struct dhcpv4_hdr));
