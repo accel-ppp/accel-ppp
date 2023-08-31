@@ -1116,8 +1116,8 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 	/* add padding */
 	*pack->ptr++ = 255;
 
-	/* Insert "Agent information" option 82 if not already set */
-	if (!request->relay_agent && (agent_remote_id || link_selection) &&
+	/* Insert "Agent information" option 82 if the request was not yet relayed  */
+	if (!request->hdr->giaddr && !request->relay_agent && (agent_remote_id || link_selection) &&
 	    dhcpv4_packet_insert_opt82(pack, agent_circuit_id, agent_remote_id, link_selection))
 		return -1;
 
