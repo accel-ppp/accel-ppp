@@ -1098,7 +1098,12 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 	/* Build a relay packet from the client request */
 	pack = dhcpv4_packet_alloc();
 	memcpy(pack->hdr, request->hdr, sizeof(struct dhcpv4_hdr));
-	pack->hdr->giaddr = relay->giaddr;
+	if (request->hdr->giaddr)
+		/* do not modify the original giaddr */
+		pack->hdr->giaddr = request->hdr->giaddr;
+	else
+		/* set giaddr if it was not set */
+		pack->hdr->giaddr = relay->giaddr;
 	pack->msg_type = request->msg_type;
 	list_for_each_entry(opt, &request->options, entry) {
 		if (opt->type == 54 && server_id)
