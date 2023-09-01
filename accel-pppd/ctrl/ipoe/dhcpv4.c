@@ -1090,6 +1090,10 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 	struct dhcpv4_packet *pack;
 	uint8_t *data;
 
+	if (request->msg_type == DHCPDISCOVER && request->server_id)
+		/* DHCPDISCOVER MUST have NO server ID*/
+		server_id = 0;
+
 	/* Build a relay packet from the client request */
 	pack = dhcpv4_packet_alloc();
 	memcpy(pack->hdr, request->hdr, sizeof(struct dhcpv4_hdr));
