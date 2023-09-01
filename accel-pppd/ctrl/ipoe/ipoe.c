@@ -1152,7 +1152,8 @@ static void ipoe_session_decline(struct dhcpv4_packet *pack)
 	}
 
 	if (pack->msg_type == DHCPDECLINE && ses->serv->dhcpv4_relay)
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, ses->relay_server_id,
+				ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 
 	dhcpv4_packet_free(pack);
 
