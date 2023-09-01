@@ -1264,7 +1264,8 @@ static void ipoe_session_finished(struct ap_session *s)
 		dhcpv4_put_ip(ses->serv->dhcpv4, ses->yiaddr);
 
 	if (ses->relay_addr && ses->serv->dhcpv4_relay)
-		dhcpv4_relay_send_release(ses->serv->dhcpv4_relay, ses->hwaddr, ses->xid, ses->yiaddr, ses->client_id, ses->relay_agent, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+		dhcpv4_relay_send_release(ses->serv->dhcpv4_relay, ses->hwaddr, ses->xid, ses->yiaddr, ses->client_id, ses->relay_agent,
+				ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 
 	if (ses->dhcpv4)
 		dhcpv4_free(ses->dhcpv4);
