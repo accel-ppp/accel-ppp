@@ -1094,6 +1094,23 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 		/* DHCPDISCOVER MUST have NO server ID*/
 		server_id = 0;
 
+
+	if (request->msg_type == DHCPREQUEST && request->hdr->ciaddr)
+		/* RFC2031 section 4.3.6 - server IP MUST NOT be set with DHCPREQUEST
+		 * RENEWING and REBINDING.
+		 *
+		 * ---------------------------------------------------------------------
+		 * |              |INIT-REBOOT  |SELECTING    |RENEWING     |REBINDING |
+		 * ---------------------------------------------------------------------
+		 * |broad/unicast |broadcast    |broadcast    |unicast      |broadcast |
+		 * |server-ip     |MUST NOT     |MUST         |MUST NOT     |MUST NOT  |
+		 * |requested-ip  |MUST         |MUST         |MUST NOT     |MUST NOT  |
+		 * |ciaddr        |zero         |zero         |IP address   |IP address|
+		 * ---------------------------------------------------------------------
+		 *               Table 4: Client messages from different states
+		 */
+		server_id = 0;
+
 	/* Build a relay packet from the client request */
 	pack = dhcpv4_packet_alloc();
 	memcpy(pack->hdr, request->hdr, sizeof(struct dhcpv4_hdr));
