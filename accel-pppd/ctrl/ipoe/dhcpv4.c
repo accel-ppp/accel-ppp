@@ -1096,9 +1096,12 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 	pack->hdr->giaddr = relay->giaddr;
 	pack->msg_type = request->msg_type;
 	list_for_each_entry(opt, &request->options, entry) {
-		if (opt->type == 54 && server_id)
-			data = (void *) &server_id;
-		else
+		if (opt->type == 54) {
+			if (server_id)
+				data = (void *) &server_id;
+			else
+				continue;
+		} else
 			data = opt->data;
 		/* copy client option */
 		if (dhcpv4_packet_add_opt(pack, opt->type, data, opt->len) < 0) {
