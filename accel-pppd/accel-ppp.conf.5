@@ -401,6 +401,11 @@ If neither the
 .B agent-remote-id
 option nor this option is present, option 82 is not inserted by the DCHP Relay Agent.
 .TP
+.BI "trusted-circuit=" 0|1
+Specifies default value for per-interface
+.B trusted-circuit
+parameter.
+.TP
 .BI "interface=" [re:]name[,mode=L2|L3][,shared=0|1][,start=dhcpv4|up|auto]
 .BI "" [,range=x.x.x.x/mask][,ifcfg=0|1]
 .BI "" [,relay=x.x.x.x]
@@ -412,6 +417,7 @@ option nor this option is present, option 82 is not inserted by the DCHP Relay A
 .BI "" [,mtu=N]
 .BI "" [,weight=N]
 .BI "" [,ip-unnumbered=0|1]
+.BI "" [,trusted-circuit=0|1]
 .br
 Specifies interface to listen dhcp or unclassified packets. You may specify multiple
 .B interface
@@ -468,6 +474,13 @@ parameter specifies ip address to use as source when adding route to client.
 The
 .B proxy-arp
 parameter specifies whether accel-ppp should reply to arp requests.
+The
+.B trusted-circuit
+parameter specifies whether the agent relay should relay DHCP requests already containing agent information
+(either the giaddr header or the DHCP option 82). If set to 0, accel-ppp untrusts such requests. In this way,
+it prevents the relay agent from relaying DHCP requests containing real or fake agent information. If set to 1,
+the incoming DHCP requests are trusted and relayed unless a received giaddr spoofs the local giaddr. The default
+value is 1.
 .TP
 .BI "local-net=" x.x.x.x/mask
 Specifies networks from which packets will be treated as unclassified. You may specify multiple local-net options.
