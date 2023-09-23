@@ -135,7 +135,11 @@ static struct list_head ipoe_list1_u[IPOE_HASH_BITS + 1];
 static struct list_head ipoe_excl_list[IPOE_HASH_BITS + 1];
 static LIST_HEAD(ipoe_list2);
 static LIST_HEAD(ipoe_list2_u);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,4,0)
 static DEFINE_SEMAPHORE(ipoe_wlock);
+#else
+static DEFINE_SEMAPHORE(ipoe_wlock,1);
+#endif
 static LIST_HEAD(ipoe_interfaces);
 static LIST_HEAD(ipoe_networks);
 static struct work_struct ipoe_queue_work;

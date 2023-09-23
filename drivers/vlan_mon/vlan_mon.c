@@ -79,7 +79,11 @@ static struct genl_family vlan_mon_nl_family;
 static struct genl_multicast_group vlan_mon_nl_mcg;
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,4,0)
 static DEFINE_SEMAPHORE(vlan_mon_lock);
+#else
+static DEFINE_SEMAPHORE(vlan_mon_lock,1);
+#endif
 
 static inline int vlan_mon_proto(int proto)
 {
