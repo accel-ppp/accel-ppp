@@ -964,7 +964,7 @@ static void __ipoe_session_start(struct ipoe_session *ses)
 
 		ses->siaddr = ses->router;
 
-		if (ses->arph) {
+		if (ses->arph && !ses->serv->opt_ip_unnumbered) {
 			if (ses->serv->opt_shared)
 				ses->wait_start = 1;
 
