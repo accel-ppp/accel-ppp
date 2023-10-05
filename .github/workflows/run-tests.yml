@@ -27,7 +27,7 @@ jobs:
             format: qcow2
 
           - distro: Debian13
-            image: https://cloud.debian.org/images/cloud/sid/daily/latest/debian-sid-generic-amd64-daily.tar.xz
+            image: https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-generic-amd64-daily.tar.xz
             untar: true
             format: raw
 
