@@ -7,6 +7,7 @@ ExecStart=/usr/sbin/accel-pppd -d -p /var/run/accel-pppd.pid -c /etc/accel-ppp.c
 StandardOutput=null
 ExecReload=/bin/kill -SIGUSR1 $MAINPID
 PIDFile=/var/run/accel-pppd.pid
+RuntimeDirectory=accel-ppp
 Type=forking
 Restart=on-failure
 
