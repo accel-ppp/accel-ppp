@@ -3,5 +3,10 @@ VENDOR			Accel-PPP				55999
 BEGIN-VENDOR	Accel-PPP
 
 ATTRIBUTE	Accel-VRF-Name			1		string
+ATTRIBUTE	Accel-Upstream-Speed-Limit    230		integer
+ATTRIBUTE	Accel-Downstream-Speed-Limit  231		integer
+ATTRIBUTE	Accel-L4-Redirect             243		integer
+ATTRIBUTE	Accel-L4-Redirect-Ipset       244		string
+ATTRIBUTE	Accel-Option82                245		octets
 
 END-VENDOR		Accel-PPP
