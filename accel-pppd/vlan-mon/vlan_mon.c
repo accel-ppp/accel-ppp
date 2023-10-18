@@ -13,12 +13,19 @@
 #include <linux/if.h>
 #include <linux/genetlink.h>
 
+#include <pcre.h>
+
 #include "triton.h"
+#include "events.h"
 #include "log.h"
 #include "genl.h"
 #include "libnetlink.h"
 #include "iputils.h"
 #include "ap_net.h"
+#include "cli.h"
+
+//Only for sock_fd
+#include "ap_session.h"
 
 #include "vlan_mon.h"
 #include "if_vlan_mon.h"
@@ -27,25 +34,158 @@
 
 #define PKT_ATTR_MAX 256
 
+struct iplink_arg {
+    pcre *re;
+    const char *opt;
+    void *cli;
+    long *arg1;
+};
+
+LIST_HEAD(vlan_mon_devices);
+pthread_rwlock_t vlan_mon_devices_lock = PTHREAD_RWLOCK_INITIALIZER;
+
+pthread_rwlock_t vlan_mon_ctx_lock = PTHREAD_RWLOCK_INITIALIZER;
+
+LIST_HEAD(vlan_mon_notify_list);
+pthread_rwlock_t vlan_mon_notify_lock = PTHREAD_RWLOCK_INITIALIZER;
+
+int vlan_mon_need_close = 0;
+
 static struct rtnl_handle rth;
 static struct triton_md_handler_t mc_hnd;
 static int vlan_mon_genl_id;
 
-static vlan_mon_notify cb[2];
+//Callbacks for upstream servers (ipoe, pppoe)
+static vlan_mon_callbacks vlan_mon_cb[2];
 
-static void init(void);
+static void vlan_mon_ctx_close(struct triton_context_t *);
+static struct triton_context_t vlan_mon_ctx = {
+        .close = vlan_mon_ctx_close,
+        .before_switch = log_switch,
+};
 
-void __export vlan_mon_register_proto(uint16_t proto, vlan_mon_notify func)
+static char conf_vlan_name[IFNAMSIZ];
+
+static int conf_vlan_timeout = 60;
+
+static void vlan_mon_init(void);
+static void pre_down_upstream(int ifindex);
+static void vlan_mon_timeout(struct triton_timer_t *t);
+static void reload_interfaces();
+
+static void vlan_mon_ctx_close(struct triton_context_t *ctx)
+{
+	log_debug("vlan-mon: vlan_mon_ctx close\n");
+	vlan_mon_need_close = 1;
+
+	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
+
+	struct vlan_mon_device* vl_dev = NULL;
+
+	list_for_each_entry(vl_dev, &vlan_mon_devices, entry) {
+		pthread_mutex_lock(&vl_dev->lock);
+
+		if (vl_dev->timer.tpd)
+			triton_timer_del(&vl_dev->timer);
+
+		pre_down_upstream(vl_dev->ifindex);
+
+		pthread_mutex_unlock(&vl_dev->lock);
+	}
+
+	if (!list_empty(&vlan_mon_devices)) {
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		log_debug("vlan-mon: vlan_mon_ctx vlan_mon_devices not empty\n");
+
+		list_for_each_entry(vl_dev, &vlan_mon_devices, entry) {
+			pthread_mutex_lock(&vl_dev->lock);
+
+			log_debug("vlan-mon: vlan_mon_devices: parent-ifindex=%i ifindex=%i vlan-id=%i clients=%i/%i\n", vl_dev->parent_ifindex, vl_dev->ifindex, vl_dev->vid, vl_dev-> server_mask, vl_dev->client_mask);
+
+			pthread_mutex_unlock(&vl_dev->lock);
+		}
+
+		return;
+	}
+
+	pthread_rwlock_unlock(&vlan_mon_devices_lock);
+
+	pthread_rwlock_wrlock(&vlan_mon_ctx_lock);
+	if (ctx->tpd) {
+		log_debug("vlan-mon: vlan_mon_ctx unregistering\n");
+		triton_context_unregister(ctx);
+		log_debug("vlan-mon: vlan_mon_ctx unregistered\n");
+	}
+	pthread_rwlock_unlock(&vlan_mon_ctx_lock);
+}
+
+int vlan_mon_proto_to_proto(int proto)
+{
+	if (proto == 1)
+		return ETH_P_PPP_DISC;
+	else
+		return ETH_P_IP;
+}
+
+int proto_to_vlan_mon_proto(int proto)
+{
+	if (proto == ETH_P_PPP_DISC)
+		return 1;
+	else
+		return 0;
+}
+
+uint16_t get_another_proto(uint16_t proto)
+{
+	if (proto == ETH_P_PPP_DISC) {
+		return ETH_P_IP;
+	} else {
+		return ETH_P_PPP_DISC;
+	}
+}
+
+uint8_t vlan_mon_proto_to_mask(int proto)
+{
+	if (proto == 1)
+		return VLAN_MON_DEVICE_SERVER_PPPOE;
+	else
+		return VLAN_MON_DEVICE_SERVER_IPOE;
+}
+
+uint8_t proto_to_mask(int proto)
+{
+	if (proto == ETH_P_PPP_DISC)
+		return VLAN_MON_DEVICE_SERVER_PPPOE;
+	else
+		return VLAN_MON_DEVICE_SERVER_IPOE;
+}
+
+struct vlan_mon_upstream_notify* create_vlan_mon_notify(int ifindex, uint16_t vid, uint16_t proto)
+{
+	struct vlan_mon_upstream_notify *res = _malloc(sizeof(*res));
+	if (!res)
+		return NULL;
+
+	memset(res, 0, sizeof(*res));
+	res->ifindex = ifindex;
+	res->vid     = vid;
+	res->proto   = proto;
+
+	return res;
+}
+
+void __export vlan_mon_register_proto(uint16_t proto, vlan_mon_callbacks cb)
 {
 	if (proto == ETH_P_PPP_DISC)
 		proto = 1;
 	else
 		proto = 0;
 
-	cb[proto] = func;
+	vlan_mon_cb[proto].notify       = cb.notify;
+	vlan_mon_cb[proto].server_check = cb.server_check;
+	vlan_mon_cb[proto].pre_down     = cb.pre_down;
 
-	if (!vlan_mon_genl_id)
-		init();
+	reload_interfaces();
 }
 
 int __export vlan_mon_add(int ifindex, uint16_t proto, long *mask, int len)
@@ -63,7 +203,7 @@ int __export vlan_mon_add(int ifindex, uint16_t proto, long *mask, int len)
 		return -1;
 
 	if (rtnl_open_byproto(&rth, 0, NETLINK_GENERIC)) {
-		log_error("vlan_mon: cannot open generic netlink socket\n");
+		log_error("vlan-mon: cannot open generic netlink socket\n");
 		return -1;
 	}
 
@@ -80,7 +220,7 @@ int __export vlan_mon_add(int ifindex, uint16_t proto, long *mask, int len)
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_PROTO, &proto, 2);
 
 	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 ) {
-		log_error("vlan_mon: nl_add_vlan_mon: error talking to kernel\n");
+		log_error("vlan-mon: nl_add_vlan_mon: error talking to kernel\n");
 		r = -1;
 	}
 
@@ -104,7 +244,7 @@ int __export vlan_mon_add_vid(int ifindex, uint16_t proto, uint16_t vid)
 		return -1;
 
 	if (rtnl_open_byproto(&rth, 0, NETLINK_GENERIC)) {
-		log_error("vlan_mon: cannot open generic netlink socket\n");
+		log_error("vlan-mon: cannot open generic netlink socket\n");
 		return -1;
 	}
 
@@ -121,7 +261,7 @@ int __export vlan_mon_add_vid(int ifindex, uint16_t proto, uint16_t vid)
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_PROTO, &proto, 2);
 
 	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 ) {
-		log_error("vlan_mon: nl_add_vlan_mon_vid: error talking to kernel\n");
+		log_error("vlan-mon: nl_add_vlan_mon_vid: error talking to kernel\n");
 		r = -1;
 	}
 
@@ -145,7 +285,7 @@ int __export vlan_mon_del_vid(int ifindex, uint16_t proto, uint16_t vid)
 		return -1;
 
 	if (rtnl_open_byproto(&rth, 0, NETLINK_GENERIC)) {
-		log_error("vlan_mon: cannot open generic netlink socket\n");
+		log_error("vlan-mon: cannot open generic netlink socket\n");
 		return -1;
 	}
 
@@ -162,7 +302,7 @@ int __export vlan_mon_del_vid(int ifindex, uint16_t proto, uint16_t vid)
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_PROTO, &proto, 2);
 
 	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 ) {
-		log_error("vlan_mon: nl_add_vlan_mon_vid: error talking to kernel\n");
+		log_error("vlan-mon: nl_add_vlan_mon_vid: error talking to kernel\n");
 		r = -1;
 	}
 
@@ -186,7 +326,7 @@ int __export vlan_mon_del(int ifindex, uint16_t proto)
 		return -1;
 
 	if (rtnl_open_byproto(&rth, 0, NETLINK_GENERIC)) {
-		log_error("vlan_mon: cannot open generic netlink socket\n");
+		log_error("vlan-mon: cannot open generic netlink socket\n");
 		return -1;
 	}
 
@@ -202,7 +342,7 @@ int __export vlan_mon_del(int ifindex, uint16_t proto)
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_PROTO, &proto, 2);
 
 	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 ) {
-		log_error("vlan_mon: nl_del_vlan_mon: error talking to kernel\n");
+		log_error("vlan-mon: nl_del_vlan_mon: error talking to kernel\n");
 		r = -1;
 	}
 
@@ -237,7 +377,7 @@ void vlan_mon_clean()
 	rtnl_close(&rth);
 }
 
-int __export vlan_mon_check_busy(int ifindex, uint16_t vid)
+int __export vlan_mon_check_busy(int ifindex, uint16_t vid, uint16_t proto)
 {
 	struct rtnl_handle rth;
 	struct nlmsghdr *nlh;
@@ -252,7 +392,7 @@ int __export vlan_mon_check_busy(int ifindex, uint16_t vid)
 		return 0;
 
 	if (rtnl_open_byproto(&rth, 0, NETLINK_GENERIC)) {
-		log_error("vlan_mon: cannot open generic netlink socket\n");
+		log_error("vlan-mon: cannot open generic netlink socket\n");
 		return 0;
 	}
 
@@ -266,6 +406,7 @@ int __export vlan_mon_check_busy(int ifindex, uint16_t vid)
 
 	addattr32(nlh, 1024, VLAN_MON_ATTR_IFINDEX, ifindex);
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_VID, &vid, 2);
+	addattr_l(nlh, 1024, VLAN_MON_ATTR_PROTO, &proto, 2);
 
 	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 1) < 0 ) {
 		if (errno == EBUSY)
@@ -275,6 +416,527 @@ int __export vlan_mon_check_busy(int ifindex, uint16_t vid)
 	rtnl_close(&rth);
 
 	return r;
+}
+
+//====================WARNING==========================
+//==============NOT THREAD SAFETY!=====================
+//=====================================================
+static struct vlan_mon_device* get_vlan_mon_device(int ifindex)
+{
+	struct vlan_mon_device* vl_dev = NULL;
+
+	list_for_each_entry(vl_dev, &vlan_mon_devices, entry) {
+		if (vl_dev->ifindex == ifindex) {
+			return vl_dev;
+		}
+	}
+
+	return NULL;
+}
+
+int search_servers_for_proto(int ifindex, uint16_t proto)
+{
+	int vlan_mon_proto = proto_to_vlan_mon_proto(proto);
+
+	if ( vlan_mon_cb[vlan_mon_proto].server_check ) {
+
+		return vlan_mon_cb[vlan_mon_proto].server_check(ifindex);
+
+	}
+
+	return 0;
+}
+
+//====================WARNING==========================
+//=================USE WITH LOCK!======================
+//=====================================================
+static void vlan_mon_start_timer(struct vlan_mon_device *vl_dev)
+{
+	if (!vlan_mon_ctx.tpd) {
+		log_debug("vlan-mon: start_timer: vlan_mon_ctx tpd is NULL\n");
+		return;
+	}
+
+	vl_dev->timer.expire = vlan_mon_timeout;
+	vl_dev->timer.expire_tv.tv_sec = conf_vlan_timeout;
+	if (vl_dev->timer.tpd) {
+		triton_timer_mod(&vl_dev->timer, 0);
+	} else {
+		triton_timer_add(&vlan_mon_ctx, &vl_dev->timer, 0);
+	}
+}
+
+static int search_servers_on_vlan(int ifindex)
+{
+	for (int i = 0; i < 2; ++i) {
+		int proto = vlan_mon_proto_to_proto(i);
+		if (search_servers_for_proto(ifindex, proto)) {
+			log_info2("vlan-mon: servers for ethertype=%04x EXISTS!\n", proto);
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+static void pre_down_upstream(int ifindex)
+{
+	for (int i = 0; i < 2; ++i) {
+		if (vlan_mon_cb[i].pre_down) {
+			vlan_mon_cb[i].pre_down(ifindex);
+		}
+	}
+}
+
+static void vlan_mon_timeout(struct triton_timer_t *t)
+{
+	pthread_rwlock_wrlock(&vlan_mon_devices_lock);
+	struct vlan_mon_device *vl_dev = container_of(t, typeof(*vl_dev), timer);
+
+	if (!vl_dev) {
+		log_error("vlan-mon: timeout: vl_dev is NULL!\n");
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		return;
+	}
+
+	pthread_mutex_lock(&vl_dev->lock);
+	if (vl_dev->client_mask) {
+		log_warn("vlan-mon: timeout: while vlan deleting some client on server exists! ifindex=%i vlan-id=%i\n", vl_dev->ifindex, vl_dev->vid);
+		goto out;
+	}
+
+	struct vlan_mon_upstream_notify *notify;
+
+	pthread_rwlock_rdlock(&vlan_mon_notify_lock);
+	list_for_each_entry(notify, &vlan_mon_notify_list, entry) {
+		if (notify->ifindex != vl_dev->ifindex)
+			continue;
+		pthread_rwlock_unlock(&vlan_mon_notify_lock);
+		log_warn("vlan-mon: timeout: for ifindex=%i vlan-id=%i exists notify. Restarting timer.\n", vl_dev->ifindex, vl_dev->vid);
+		if (vl_dev->timer.tpd) {
+			triton_timer_mod(&vl_dev->timer, 0);
+		}
+		goto out;
+	}
+	pthread_rwlock_unlock(&vlan_mon_notify_lock);
+
+	//Send signal to upstream servers
+	pre_down_upstream(vl_dev->ifindex);
+
+out:
+	pthread_mutex_unlock(&vl_dev->lock);
+	pthread_rwlock_unlock(&vlan_mon_devices_lock);
+}
+
+//====================================
+//========FOR CONTEXT CALLING=========
+//====================================
+static void _on_vlan_mon_upstream_server_have_clients(struct vlan_mon_upstream_notify *notify)
+{
+	if (!notify) {
+		log_error("vlan-mon: ctx: vlan_mon_upstream_notify is NULL\n");
+		return;
+	}
+
+	int ifindex    = notify->ifindex;
+	uint16_t proto = notify->proto;
+
+	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
+	list_del(&notify->entry);
+	pthread_rwlock_unlock(&vlan_mon_notify_lock);
+
+	//Memory was allocated just for calling function in context
+	_free(notify);
+
+	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
+
+	struct vlan_mon_device* vl_dev = get_vlan_mon_device(ifindex);
+	if (!vl_dev) {
+		log_warn("vlan-mon: ctx: have_clients: vlan_mon_device ifindex=%i not found!\n", ifindex);
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		return;
+	}
+
+	pthread_mutex_lock(&vl_dev->lock);
+	//Add client by proto in vlan
+	vl_dev->client_mask |= proto_to_mask(proto);
+
+	if (vl_dev->timer.tpd) {
+		triton_timer_del(&vl_dev->timer);
+	}
+
+	pthread_mutex_unlock(&vl_dev->lock);
+	pthread_rwlock_unlock(&vlan_mon_devices_lock);
+}
+
+int __export on_vlan_mon_upstream_server_have_clients(int ifindex, uint16_t vid, uint16_t proto)
+{
+	pthread_rwlock_rdlock(&vlan_mon_ctx_lock);
+	if (!vlan_mon_ctx.tpd) {
+		log_error("vlan-mon: have_clients: vlan_mon_ctx->tpd is NULL ifindex=%i vlan-id=%i ethertype=%04x\n", ifindex, vid, proto);
+		pthread_rwlock_unlock(&vlan_mon_ctx_lock);
+		return -1;
+	}
+
+	struct vlan_mon_upstream_notify *notify = create_vlan_mon_notify(ifindex, vid, proto);
+	if (!notify) {
+		log_error("vlan-mon: have_clients: cannot allocate memory for notify\n");
+		pthread_rwlock_unlock(&vlan_mon_ctx_lock);
+		return -1;
+	}
+
+	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
+	list_add_tail(&notify->entry, &vlan_mon_notify_list);
+	pthread_rwlock_unlock(&vlan_mon_notify_lock);
+
+	triton_context_call(&vlan_mon_ctx, (triton_event_func)_on_vlan_mon_upstream_server_have_clients, notify);
+	pthread_rwlock_unlock(&vlan_mon_ctx_lock);
+	return 0;
+}
+
+//====================================
+//========FOR CONTEXT CALLING=========
+//====================================
+static void _on_vlan_mon_upstream_server_no_clients(struct vlan_mon_upstream_notify *notify)
+{
+	if (!notify) {
+		log_error("vlan-mon: ctx: vlan_mon_upstream_notify is NULL\n");
+		return;
+	}
+
+	int ifindex    = notify->ifindex;
+	uint16_t proto = notify->proto;
+
+	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
+	list_del(&notify->entry);
+	pthread_rwlock_unlock(&vlan_mon_notify_lock);
+
+	//Memory was allocated just for calling function in context
+	_free(notify);
+
+	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
+
+	struct vlan_mon_device* vl_dev = get_vlan_mon_device(ifindex);
+	if (!vl_dev) {
+		log_warn("vlan-mon: ctx: have_no_clients: vlan_mon_device ifindex=%i not found!\n", ifindex);
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		return;
+	}
+
+	pthread_mutex_lock(&vl_dev->lock);
+	//Delete client by protocol in vlan
+	vl_dev->client_mask &= ~proto_to_mask(proto);
+
+	//If clients in upstream servers is present in vlan or not need to remove vlan then exit from function
+	if (vl_dev->client_mask || !conf_vlan_timeout) {
+		pthread_mutex_unlock(&vl_dev->lock);
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		return;
+	}
+
+	vlan_mon_start_timer(vl_dev);
+
+	pthread_mutex_unlock(&vl_dev->lock);
+	pthread_rwlock_unlock(&vlan_mon_devices_lock);
+}
+
+int __export on_vlan_mon_upstream_server_no_clients(int ifindex, uint16_t vid, uint16_t proto)
+{
+	pthread_rwlock_rdlock(&vlan_mon_ctx_lock);
+	if (!vlan_mon_ctx.tpd) {
+		log_error("vlan-mon: have_no_clients: vlan_mon_ctx->tpd is NULL ifindex=%i vlan-id=%i ethertype=%04x\n", ifindex, vid, proto);
+		pthread_rwlock_unlock(&vlan_mon_ctx_lock);
+		return -1;
+	}
+
+	struct vlan_mon_upstream_notify *notify = create_vlan_mon_notify(ifindex, vid, proto);
+	if (!notify) {
+		log_error("vlan-mon: have_no_clients: cannot allocate memory for notify\n");
+		pthread_rwlock_unlock(&vlan_mon_ctx_lock);
+		return -1;
+	}
+
+	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
+	list_add_tail(&notify->entry, &vlan_mon_notify_list);
+	pthread_rwlock_unlock(&vlan_mon_notify_lock);
+
+	triton_context_call(&vlan_mon_ctx, (triton_event_func)_on_vlan_mon_upstream_server_no_clients, notify);
+	pthread_rwlock_unlock(&vlan_mon_ctx_lock);
+	return 0;
+}
+
+//====================================
+//========FOR CONTEXT CALLING=========
+//====================================
+static void _on_vlan_mon_upstream_server_down(struct vlan_mon_upstream_notify *notify)
+{
+	if (!notify) {
+		log_error("vlan-mon: ctx: vlan_mon_upstream_notify is NULL\n");
+		return;
+	}
+
+	int ifindex    = notify->ifindex;
+	uint16_t proto = notify->proto;
+
+	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
+	list_del(&notify->entry);
+	pthread_rwlock_unlock(&vlan_mon_notify_lock);
+
+	//Memory was allocated just for calling function in context
+	_free(notify);
+
+	pthread_rwlock_wrlock(&vlan_mon_devices_lock);
+	struct vlan_mon_device* vl_dev = get_vlan_mon_device(ifindex);
+
+	if (!vl_dev) {
+		log_warn("vlan-mon: vlan_mon_device ifindex=%i not found!\n", ifindex);
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		return;
+	}
+
+	pthread_mutex_lock(&vl_dev->lock);
+
+	//Delete server for proto from vlan
+	vl_dev->server_mask &= ~proto_to_mask(proto);
+	vl_dev->client_mask &= ~proto_to_mask(proto);
+
+	if (vl_dev->server_mask || search_servers_on_vlan(vl_dev->ifindex)) {
+		if (!vl_dev->server_mask)
+			log_warn("vlan-mon: ctx: serv_down: servers on vlan ifindex=%i vlan-id=%i EXISTS!\n", vl_dev->ifindex, vl_dev->vid);
+		vlan_mon_add_vid(vl_dev->parent_ifindex, proto, vl_dev->vid);
+		pthread_mutex_unlock(&vl_dev->lock);
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		return;
+	}
+
+	list_del(&vl_dev->entry);
+
+	if (vl_dev->timer.tpd) {
+		triton_timer_del(&vl_dev->timer);
+	}
+
+	if (conf_vlan_timeout) {
+		//If we can remove the interface then we remove it
+		log_info2("vlan-mon: ctx: serv_down: remove vlan interface ifindex=%i vlan-id=%i\n", vl_dev->ifindex, vl_dev->vid);
+		iplink_vlan_del(vl_dev->ifindex);
+	}
+
+	if (!vlan_mon_need_close) {
+		//Adding vlans in vlan_mon driver if protocol registered
+		for (int i = 0; i < 2; ++i) {
+			if (vlan_mon_cb[i].notify) {
+				int proto = vlan_mon_proto_to_proto(i);
+				vlan_mon_add_vid(vl_dev->parent_ifindex, proto, vl_dev->vid);
+			}
+		}
+	}
+
+	pthread_mutex_unlock(&vl_dev->lock);
+
+	_free(vl_dev);
+
+	if ( vlan_mon_need_close && list_empty(&vlan_mon_devices) ) {
+		log_debug("vlan-mon: ctx: serv_down: vlan_mon_devices EMPTY! calling vlan_mon_ctx_close\n");
+		triton_context_call(&vlan_mon_ctx, (triton_event_func)vlan_mon_ctx_close, &vlan_mon_ctx);
+		log_debug("vlan-mon: ctx: serv_down: vlan_mon_devices called vlan_mon_ctx_close!\n");
+	}
+	pthread_rwlock_unlock(&vlan_mon_devices_lock);
+}
+
+int __export on_vlan_mon_upstream_server_down(int ifindex, uint16_t vid, uint16_t proto)
+{
+	pthread_rwlock_rdlock(&vlan_mon_ctx_lock);
+	if (!vlan_mon_ctx.tpd) {
+		log_error("vlan-mon: serv_down: vlan_mon_ctx->tpd is NULL ifindex=%i vlan-id=%i ethertype=%04x\n", ifindex, vid, proto);
+		pthread_rwlock_unlock(&vlan_mon_ctx_lock);
+		return -1;
+	}
+
+	struct vlan_mon_upstream_notify *notify = create_vlan_mon_notify(ifindex, vid, proto);
+	if (!notify) {
+		log_error("vlan-mon: serv_down: cannot allocate memory for notify\n");
+		pthread_rwlock_unlock(&vlan_mon_ctx_lock);
+		return -1;
+	}
+
+	pthread_rwlock_wrlock(&vlan_mon_notify_lock);
+	list_add_tail(&notify->entry, &vlan_mon_notify_list);
+	pthread_rwlock_unlock(&vlan_mon_notify_lock);
+
+	triton_context_call(&vlan_mon_ctx, (triton_event_func)_on_vlan_mon_upstream_server_down, notify);
+
+	pthread_rwlock_unlock(&vlan_mon_ctx_lock);
+	return 0;
+}
+
+
+//Create a vlan interface and then make an ipoe or pppoe callback
+static void vlan_mon_driver_callback(int proto, int ifindex, int vid, int vlan_ifindex)
+{
+	struct ifreq ifr;
+	int svid, r, len;
+	char ifname[IFNAMSIZ];
+
+	memset(&ifr, 0, sizeof(ifr));
+	ifr.ifr_ifindex = ifindex;
+	if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
+		log_error("vlan-mon: failed to get interface name, ifindex=%i\n", ifindex);
+		return;
+	}
+
+	svid = iplink_vlan_get_vid(ifindex, NULL);
+
+#ifdef USE_LUA
+	if (!memcmp(conf_vlan_name, "lua:", 4))
+		r = ipoe_lua_make_vlan_name(conf_vlan_name + 4, ifr.ifr_name, svid, vid, ifname);
+	else
+#endif
+	r = make_vlan_name(conf_vlan_name, ifr.ifr_name, svid, vid, ifname);
+	if (r) {
+		log_error("vlan-mon: %s.%i: interface name is too long\n", ifr.ifr_name, vid);
+		return;
+	}
+
+	pthread_rwlock_wrlock(&vlan_mon_devices_lock);
+
+	if (vlan_mon_need_close) {
+		log_debug("vlan-mon: daemon is in closing state\n");
+//		vlan_mon_add_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
+		pthread_rwlock_unlock(&vlan_mon_devices_lock);
+		return;
+	}
+
+	if (vlan_ifindex) {
+		log_info2("vlan-mon: using vlan %s parent %s\n", ifname, ifr.ifr_name);
+
+		ifr.ifr_ifindex = vlan_ifindex;
+		if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
+			log_error("vlan-mon: failed to get interface name, ifindex=%i\n", ifr.ifr_ifindex);
+			//Interface maybe deleted
+			vlan_mon_add_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
+			goto out;
+		}
+
+		if (strcmp(ifr.ifr_name, ifname)) {
+			strcpy(ifr.ifr_newname, ifname);
+			if (ioctl(sock_fd, SIOCSIFNAME, &ifr, sizeof(ifr))) {
+				log_error("vlan-mon: failed to rename interface %s to %s\n", ifr.ifr_name, ifr.ifr_newname);
+				//Interface maybe deleted
+				vlan_mon_add_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
+				goto out;
+			}
+			strcpy(ifr.ifr_name, ifname);
+		}
+	} else {
+		log_info2("vlan-mon: create vlan %s parent %s\n", ifname, ifr.ifr_name);
+
+		if (iplink_vlan_add(ifname, ifindex, vid)) {
+			log_error("vlan-mon: failed to create interface parent-ifindex=%i name=%s vlan-id=%i\n", ifindex, ifname, vid);
+			//Sometimes the vlan_mon driver send notify faster then the previous request be processed.
+			//So, device cannot be created because it already exists
+			vlan_mon_add_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
+			goto out;
+		}
+
+	}
+
+	len = strlen(ifname);
+	memcpy(ifr.ifr_name, ifname, len + 1);
+
+	if (ioctl(sock_fd, SIOCGIFINDEX, &ifr, sizeof(ifr))) {
+		log_error("vlan-mon: %s: failed to get interface index\n", ifr.ifr_name);
+		//Interface maybe deleted
+		vlan_mon_add_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
+		goto out;
+	}
+
+	vlan_ifindex = ifr.ifr_ifindex;
+
+	if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr, sizeof(ifr))) {
+		log_error("vlan-mon: failed to get interface flags, ifindex=%i\n", ifr.ifr_ifindex);
+		//Interface maybe deleted
+		vlan_mon_add_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
+		goto out;
+	}
+
+	if (!(ifr.ifr_flags & IFF_UP)) {
+		ifr.ifr_flags |= IFF_UP;
+
+		if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr, sizeof(ifr))) {
+			log_error("vlan-mon: failed to set interface flags, ifindex=%i\n", ifr.ifr_ifindex);
+			//Interface maybe deleted
+			vlan_mon_add_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
+			goto out;
+		}
+	}
+
+	//Send params to pppoe or ipoe callback
+	//ifindex      - vlan interface parent ifindex
+	//svid         - vlan id of parent interface
+	//vid          - vlan id of new interface
+	//vlan_ifindex - ifindex of new interface
+	//ifname       - interface name of new vlan interface
+	//len          - length of ifname
+	//Return 0 if success, not 0 else
+	if (vlan_mon_cb[proto].notify) {
+		if (!vlan_mon_cb[proto].notify(ifindex, svid, vid, vlan_ifindex, ifname, len)) {
+			log_debug("vlan-mon: vlan %s started\n", ifname);
+
+			//Searching vlan_mon_device by ifindex
+			struct vlan_mon_device* vl_dev = get_vlan_mon_device(vlan_ifindex);
+			if (vl_dev) {
+				pthread_mutex_lock(&vl_dev->lock);
+				vl_dev->server_mask |= vlan_mon_proto_to_mask(proto);
+				pthread_mutex_unlock(&vl_dev->lock);
+			} else {
+				vl_dev = _malloc(sizeof(struct vlan_mon_device));
+				if (!vl_dev) {
+					log_error("vlan-mon: failed to create vlan_mon_device ifindex=%i name=%s\n", vlan_ifindex, ifname);
+					goto out;
+				}
+
+				memset(vl_dev, 0, sizeof(*vl_dev));
+
+				vl_dev->parent_ifindex = ifindex;
+				vl_dev->ifindex = vlan_ifindex;
+				vl_dev->server_mask = vlan_mon_proto_to_mask(proto);
+				vl_dev->vid = vid;
+				pthread_mutex_init(&vl_dev->lock, NULL);
+
+				list_add_tail(&vl_dev->entry, &vlan_mon_devices);
+
+				if (conf_vlan_timeout)
+					vlan_mon_start_timer(vl_dev);
+			}
+
+		} else {
+			log_warn("vlan-mon: vlan %s not started\n", ifname);
+
+			struct vlan_mon_device* vl_dev = get_vlan_mon_device(vlan_ifindex);
+			//If interface does not match by upstream server then delete and deregister proto in vlan
+			if (!vl_dev) {
+				iplink_vlan_del(vlan_ifindex);
+			}
+			//If interface does not match by upstream server, but created by another proto
+			//then deregister proto in vlan
+			vlan_mon_del_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
+		}
+	} else {
+		log_debug("vlan-mon: vlan %s does not have a registered callback\n", ifname);
+
+		struct vlan_mon_device* vl_dev = get_vlan_mon_device(vlan_ifindex);
+		//If callback is not registered
+		//and vlan_mon_device not created by another proto,
+		//then delete vlan and deregister proto in vlan
+		if (!vl_dev) {
+			iplink_vlan_del(vlan_ifindex);
+		}
+		//If device created by another proto, then deregister vlan for proto
+		vlan_mon_del_vid(ifindex, vlan_mon_proto_to_proto(proto), vid);
+	}
+
+out:
+	pthread_rwlock_unlock(&vlan_mon_devices_lock);
 }
 
 static void vlan_mon_handler(const struct sockaddr_nl *addr, struct nlmsghdr *h)
@@ -290,7 +952,7 @@ static void vlan_mon_handler(const struct sockaddr_nl *addr, struct nlmsghdr *h)
 	len -= NLMSG_LENGTH(GENL_HDRLEN);
 
 	if (len < 0) {
-		log_warn("vlan_mon: wrong controller message length %d\n", len);
+		log_warn("vlan-mon: wrong controller message length %d\n", len);
 		return;
 	}
 
@@ -315,15 +977,15 @@ static void vlan_mon_handler(const struct sockaddr_nl *addr, struct nlmsghdr *h)
 		else
 			vlan_ifindex = 0;
 
-		log_debug("vlan-mon: notify %i %i %04x %i\n", ifindex, vid, proto, vlan_ifindex);
+		log_debug("vlan-mon: notify parent-ifindex=%i vlan-id=%i ethertype=%04x ifindex=%i\n", ifindex, vid, proto, vlan_ifindex);
 
 		if (proto == ETH_P_PPP_DISC)
 			proto = 1;
 		else
 			proto = 0;
 
-		if (cb[proto])
-			cb[proto](ifindex, vid, vlan_ifindex);
+		vlan_mon_driver_callback(proto, ifindex, vid, vlan_ifindex);
+
 	}
 }
 
@@ -349,6 +1011,7 @@ static int vlan_mon_mc_read(struct triton_md_handler_t *h)
 	nladdr.nl_groups = 0;
 
 	iov.iov_base = buf;
+
 	while (1) {
 		iov.iov_len = sizeof(buf);
 		status = recvmsg(h->fd, &msg, 0);
@@ -356,19 +1019,19 @@ static int vlan_mon_mc_read(struct triton_md_handler_t *h)
 		if (status < 0) {
 			if (errno == EAGAIN)
 				break;
-			log_error("vlan_mon: netlink error: %s\n", strerror(errno));
+			log_error("vlan-mon: netlink error: %s\n", strerror(errno));
 			if (errno == ENOBUFS)
 				continue;
 			return 0;
 		}
 
 		if (status == 0) {
-			log_error("vlan_mon: EOF on netlink\n");
+			log_error("vlan-mon: EOF on netlink\n");
 			return 0;
 		}
 
 		if (msg.msg_namelen != sizeof(nladdr)) {
-			log_error("vlan_mon: netlink sender address length == %d\n", msg.msg_namelen);
+			log_error("vlan-mon: netlink sender address length == %d\n", msg.msg_namelen);
 			return 0;
 		}
 
@@ -378,10 +1041,10 @@ static int vlan_mon_mc_read(struct triton_md_handler_t *h)
 
 			if (l<0 || len>status) {
 				if (msg.msg_flags & MSG_TRUNC) {
-					log_warn("vlan_mon: truncated netlink message\n");
+					log_warn("vlan-mon: truncated netlink message\n");
 					continue;
 				}
-				log_error("vlan_mon: malformed netlink message\n");
+				log_error("vlan-mon: malformed netlink message\n");
 				continue;
 			}
 
@@ -395,12 +1058,12 @@ static int vlan_mon_mc_read(struct triton_md_handler_t *h)
 		}
 
 		if (msg.msg_flags & MSG_TRUNC) {
-			log_warn("vlan_mon: netlink message truncated\n");
+			log_warn("vlan-mon: netlink message truncated\n");
 			continue;
 		}
 
 		if (status) {
-			log_error("vlan_mon: netlink remnant of size %d\n", status);
+			log_error("vlan-mon: netlink remnant of size %d\n", status);
 			return 0;
 		}
 	}
@@ -493,10 +1156,315 @@ int __export parse_vlan_mon(const char *opt, long *mask)
 	return 0;
 
 out_err:
-	log_error("vlan-mon=%s: failed to parse\n", opt);
+	log_error("vlan-mon: vlan-mon=%s: failed to parse\n", opt);
 	return -1;
 }
 
+static int __load_vlan_mon_re(int index, int flags, const char *name, int iflink, int vid, struct iplink_arg *arg)
+{
+	struct ifreq ifr;
+	long mask1[4096/8/sizeof(long)];
+
+	if (pcre_exec(arg->re, NULL, name, strlen(name), 0, 0, NULL, 0) < 0)
+		return 0;
+
+	memset(&ifr, 0, sizeof(ifr));
+	strcpy(ifr.ifr_name, name);
+
+	ioctl(sock_fd, SIOCGIFFLAGS, &ifr);
+
+	if (!(ifr.ifr_flags & IFF_UP)) {
+		ifr.ifr_flags |= IFF_UP;
+
+		ioctl(sock_fd, SIOCSIFFLAGS, &ifr);
+	}
+
+	memcpy(mask1, arg->arg1, sizeof(mask1));
+	vlan_mon_add(index, ETH_P_PPP_DISC,  mask1, sizeof(mask1));
+	vlan_mon_add(index, ETH_P_IP,  mask1, sizeof(mask1));
+
+	return 0;
+}
+
+static void load_vlan_mon_re(const char *opt, long *mask, int len)
+{
+	pcre *re = NULL;
+	const char *pcre_err;
+	char *pattern;
+	const char *ptr;
+	int pcre_offset;
+	struct iplink_arg arg;
+
+	for (ptr = opt; *ptr && *ptr != ','; ptr++);
+
+	pattern = _malloc(ptr - (opt + 3) + 1);
+	memcpy(pattern, opt + 3, ptr - (opt + 3));
+	pattern[ptr - (opt + 3)] = 0;
+
+	re = pcre_compile2(pattern, 0, NULL, &pcre_err, &pcre_offset, NULL);
+
+	if (!re) {
+		log_error("vlan-mon: '%s': %s at %i\r\n", pattern, pcre_err, pcre_offset);
+		return;
+	}
+
+	arg.re = re;
+	arg.opt = opt;
+	arg.arg1 = mask;
+
+	iplink_list((iplink_list_func)__load_vlan_mon_re, &arg);
+
+	pcre_free(re);
+	_free(pattern);
+
+}
+
+static void add_vlan_mon(const char *opt, long *mask)
+{
+	const char *ptr;
+	struct ifreq ifr;
+	int ifindex;
+	long mask1[4096/8/sizeof(long)];
+
+	for (ptr = opt; *ptr && *ptr != ','; ptr++);
+
+	if (ptr - opt >= IFNAMSIZ) {
+		log_error("vlan-mon: vlan-mon=%s: interface name is too long\n", opt);
+		return;
+	}
+
+	memset(&ifr, 0, sizeof(ifr));
+
+	memcpy(ifr.ifr_name, opt, ptr - opt);
+	ifr.ifr_name[ptr - opt] = 0;
+
+	if (ioctl(sock_fd, SIOCGIFINDEX, &ifr)) {
+		log_error("vlan-mon: '%s': ioctl(SIOCGIFINDEX): %s\n", ifr.ifr_name, strerror(errno));
+		return;
+	}
+
+	ifindex = ifr.ifr_ifindex;
+
+	ioctl(sock_fd, SIOCGIFFLAGS, &ifr);
+
+	if (!(ifr.ifr_flags & IFF_UP)) {
+		ifr.ifr_flags |= IFF_UP;
+
+		ioctl(sock_fd, SIOCSIFFLAGS, &ifr);
+	}
+
+	memcpy(mask1, mask, sizeof(mask1));
+	vlan_mon_add(ifindex, ETH_P_PPP_DISC, mask1, sizeof(mask1));
+	vlan_mon_add(ifindex, ETH_P_IP, mask1, sizeof(mask1));
+}
+
+static void clean_interfaces()
+{
+	//Clean all interfaces
+	vlan_mon_del(-1, ETH_P_PPP_DISC);
+	vlan_mon_del(-1, ETH_P_IP);
+}
+
+static void load_interfaces(struct conf_sect_t *sect)
+{
+	struct conf_option_t *opt;
+	long mask[4096/8/sizeof(long)];
+
+	list_for_each_entry(opt, &sect->items, entry) {
+		if (strcmp(opt->name, "vlan-mon"))
+			continue;
+
+		if (!opt->val)
+			continue;
+
+		if (parse_vlan_mon(opt->val, mask))
+			continue;
+
+		if (strlen(opt->val) > 3 && !memcmp(opt->val, "re:", 3)) {
+			load_vlan_mon_re(opt->val, mask, sizeof(mask));
+		} else {
+			add_vlan_mon(opt->val, mask);
+		}
+	}
+}
+
+static void reload_interfaces()
+{
+	clean_interfaces();
+
+	struct conf_sect_t *s = conf_get_section("pppoe");
+	if (s) {
+		load_interfaces(s);
+	}
+
+	s = conf_get_section("ipoe");
+	if (s) {
+		load_interfaces(s);
+	}
+
+	s = conf_get_section("vlan-mon");
+	if (s) {
+		clean_interfaces();
+		load_interfaces(s);
+	}
+}
+
+//For backward compatibility
+static void load_deprecated_sect(char* sect_name)
+{
+	char *opt;
+	struct conf_sect_t *s = conf_get_section(sect_name);
+	int deprecated = 0;
+
+	if (!s)
+		return;
+
+	opt = conf_get_opt(sect_name, "vlan-name");
+	if (opt) {
+		deprecated = 1;
+		strncpy(conf_vlan_name, opt, IFNAMSIZ);
+		conf_vlan_name[IFNAMSIZ-1] = 0;
+	}
+
+	opt = conf_get_opt(sect_name, "vlan-timeout");
+	if (opt) {
+		deprecated = 1;
+		char *p = NULL;
+		conf_vlan_timeout = strtol(opt, &p, 10);
+		if (*p)
+			conf_vlan_timeout = 60;
+	}
+
+	opt = conf_get_opt(sect_name, "vlan-mon");
+	if (opt) {
+		deprecated = 1;
+		load_interfaces(s);
+	}
+
+	if (deprecated)
+		log_warn("vlan-mon: [%s] vlan-mon configuration is deprecated\n", sect_name);
+}
+
+static void load_config(void *data)
+{
+	clean_interfaces();
+	load_deprecated_sect("pppoe");
+	load_deprecated_sect("ipoe");
+
+	char *opt;
+	struct conf_sect_t *s = conf_get_section("vlan-mon");
+
+	if (s) {
+
+		opt = conf_get_opt("vlan-mon", "vlan-name");
+		if (opt) {
+			strncpy(conf_vlan_name, opt, IFNAMSIZ);
+		} else {
+			strncpy(conf_vlan_name, "%I.%N", IFNAMSIZ);
+		}
+		//Make string null-terminated
+		conf_vlan_name[IFNAMSIZ-1] = 0;
+
+		//Loading vlan-timeout if specified
+		//If there is an error in the value, then conf_vlan_timeout=60
+		//If no value is specified, then conf_vlan_timeout=60
+		opt = conf_get_opt("vlan-mon", "vlan-timeout");
+		if (opt) {
+			char *p = NULL;
+			conf_vlan_timeout = strtol(opt, &p, 10);
+			if (*p)
+				conf_vlan_timeout = 60;
+		} else {
+			conf_vlan_timeout = 60;
+		}
+
+		clean_interfaces();
+		load_interfaces(s);
+	}
+
+	log_debug("vlan-mon: vlan-name=%s vlan-timeout=%i\n", conf_vlan_name, conf_vlan_timeout);
+}
+
+static void show_vlan_help(char * const *fields, int fields_cnt, void *client)
+{
+	cli_sendv(client, "show vlan - shows vlans that registered in vlan-mon\r\n");
+}
+
+static int show_vlan_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
+{
+	cli_sendv(client, "%-16s %-16s %-16s %-16s %-8s %-12s %-12s\r\n", "parent_if", "parent_ifindex", "interface", "ifindex", "vlan_id", "pppoe s/c", "ipoe s/c");
+
+	LIST_HEAD(vl_dev_list);
+	struct vlan_mon_device* vl_dev = NULL;
+	struct vlan_mon_device* new_vl_dev = NULL;
+
+	//Copy data
+	pthread_rwlock_rdlock(&vlan_mon_devices_lock);
+	list_for_each_entry(vl_dev, &vlan_mon_devices, entry) {
+		pthread_mutex_lock(&vl_dev->lock);
+
+		new_vl_dev = _malloc(sizeof(*vl_dev));
+		if (!new_vl_dev) {
+			cli_sendv(client, "Cannot allocate memory!\r\n");
+
+			pthread_mutex_unlock(&vl_dev->lock);
+			pthread_rwlock_unlock(&vlan_mon_devices_lock);
+			goto out;
+		}
+
+		memcpy(new_vl_dev, vl_dev, sizeof(*vl_dev));
+		list_add_tail(&new_vl_dev->entry, &vl_dev_list);
+
+		pthread_mutex_unlock(&vl_dev->lock);
+	}
+	pthread_rwlock_unlock(&vlan_mon_devices_lock);
+
+
+	char parent_ifname[IFNAMSIZ];
+	char ifname[IFNAMSIZ];
+
+	struct ifreq ifr;
+	memset(&ifr, 0, sizeof(ifr));
+
+	//Show data
+	list_for_each_entry(vl_dev, &vl_dev_list, entry) {
+
+		ifr.ifr_ifindex = vl_dev->ifindex;
+		if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
+			strncpy(ifname, "unknown", IFNAMSIZ);
+		} else {
+			strncpy(ifname, ifr.ifr_name, IFNAMSIZ);
+		}
+		ifname[IFNAMSIZ-1] = 0;
+
+		ifr.ifr_ifindex = vl_dev->parent_ifindex;
+		if (ioctl(sock_fd, SIOCGIFNAME, &ifr, sizeof(ifr))) {
+			strncpy(parent_ifname, "unknown", IFNAMSIZ);
+		} else {
+			strncpy(parent_ifname, ifr.ifr_name, IFNAMSIZ);
+		}
+		parent_ifname[IFNAMSIZ-1] = 0;
+
+		uint8_t pppoe_server_present = vl_dev->server_mask & VLAN_MON_DEVICE_SERVER_PPPOE ? 1 : 0;
+		uint8_t ipoe_server_present  = vl_dev->server_mask & VLAN_MON_DEVICE_SERVER_IPOE ? 1 : 0;
+
+		uint8_t pppoe_client_present = vl_dev->client_mask & VLAN_MON_DEVICE_SERVER_PPPOE ? 1 : 0;
+		uint8_t ipoe_client_present  = vl_dev->client_mask & VLAN_MON_DEVICE_SERVER_IPOE ? 1 : 0;
+
+		cli_sendv(client, "%-16s %-16u %-16s %-16u %-8u %u/%-10u %u/%-10u\r\n", parent_ifname, vl_dev->parent_ifindex,
+					ifname, vl_dev->ifindex, vl_dev->vid, pppoe_server_present, pppoe_client_present, ipoe_server_present, ipoe_client_present);
+	}
+
+	//Free local copy
+out:
+	while (!list_empty(&vl_dev_list)) {
+		vl_dev = list_entry(vl_dev_list.next, typeof(*vl_dev), entry);
+		list_del(&vl_dev->entry);
+		_free(vl_dev);
+	}
+
+	return CLI_CMD_OK;
+}
 
 static void vlan_mon_mc_close(struct triton_context_t *ctx)
 {
@@ -518,7 +1486,7 @@ static struct triton_md_handler_t mc_hnd = {
 	.read = vlan_mon_mc_read,
 };
 
-static void init(void)
+static void vlan_mon_init(void)
 {
 	int mcg_id;
 
@@ -527,18 +1495,23 @@ static void init(void)
 
 	mcg_id = genl_resolve_mcg(VLAN_MON_GENL_NAME, VLAN_MON_GENL_MCG, &vlan_mon_genl_id);
 	if (mcg_id == -1) {
-		log_warn("vlan_mon: kernel module is not loaded\n");
+		log_warn("vlan-mon: kernel module is not loaded\n");
 		vlan_mon_genl_id = -1;
 		return;
 	}
 
 	if (rtnl_open_byproto(&rth, 1 << (mcg_id - 1), NETLINK_GENERIC)) {
-		log_error("vlan_mon: cannot open generic netlink socket\n");
+		log_error("vlan-mon: cannot open generic netlink socket\n");
 		vlan_mon_genl_id = -1;
 		return;
 	}
 
 	vlan_mon_clean();
+	load_config(NULL);
+
+	triton_context_register(&vlan_mon_ctx, NULL);
+//	triton_context_set_priority(&vlan_mon_ctx, 0);
+	triton_context_wakeup(&vlan_mon_ctx);
 
 	fcntl(rth.fd, F_SETFL, O_NONBLOCK);
 	fcntl(rth.fd, F_SETFD, fcntl(rth.fd, F_GETFD) | FD_CLOEXEC);
@@ -549,5 +1522,10 @@ static void init(void)
 	triton_md_register_handler(&mc_ctx, &mc_hnd);
 	triton_md_enable_handler(&mc_hnd, MD_MODE_READ);
 	triton_context_wakeup(&mc_ctx);
+
+	cli_register_simple_cmd2(show_vlan_exec, show_vlan_help, 2, "show", "vlan");
+
+	triton_event_register_handler(EV_CONFIG_RELOAD, load_config);
 }
 
+DEFINE_INIT(19, vlan_mon_init);
