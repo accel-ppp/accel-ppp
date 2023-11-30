@@ -484,7 +484,7 @@ List must to be sorted by count key.
 Specified timeout waiting DHCP-Request from client in seconds (default 10).
 .TP
 .BI "vlan-mon=" [re:]name[,filter]
-Starts vlan monitor on specified interface (requires ipoe kernel module).
+Starts vlan monitor on specified interface (requires vlan_mon kernel module).
 .br
 The
 .B filter
@@ -493,7 +493,7 @@ parameter specifies list of vlans or ranges of vlans to monitor for and may be i
 vlan-mon=eth1,2,5,10,20-30
 .TP
 .BI "vlan-timeout=" n
-Specifies time of vlan inactivity before it will be removed (seconds).
+Specifies time of vlan inactivity before it will be removed in seconds (default 60). A value of 0 disables removal of inactive vlan.
 .TP
 .BI "vlan-name=" pattern
 Specifies pattern of vlan interface name. Pattern may contain following macros:
@@ -601,6 +601,32 @@ is prefixed with
 then ifname is considered as regular expression. Optional
 .B padi-limit
 parameter specifies limit of PADI packets to reply on this interface in 1 second period.
+.TP
+.BI "vlan-mon=" [re:]name[,filter]
+Starts vlan monitor on specified interface (requires vlan_mon kernel module).
+.br
+The
+.B filter
+parameter specifies list of vlans or ranges of vlans to monitor for and may be in following form:
+.br
+vlan-mon=eth1,2,5,10,20-30
+.TP
+.BI "vlan-timeout=" n
+Specifies time of vlan inactivity before it will be removed in seconds (default 60). A value of 0 disables removal of inactive vlan.
+.TP
+.BI "vlan-name=" pattern
+Specifies pattern of vlan interface name. Pattern may contain following macros:
+.br
+.B %I
+- name of pattern interface.
+.br
+.B %N
+- number of vlan.
+.br
+.B %P
+- number of vlan of parent interface.
+.br
+By default vlan-name=%I.%N.
 .TP
 .BI "ac-name=" ac-name
 Specifies AC-Name tag value. If absent tag will not be sent.
