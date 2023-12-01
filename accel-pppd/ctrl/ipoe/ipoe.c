@@ -150,7 +150,7 @@ static const char *conf_attr_dhcp_opt82_circuit_id;
 static int conf_l4_redirect_table;
 static int conf_l4_redirect_on_reject;
 static const char *conf_l4_redirect_ipset;
-static int conf_vlan_timeout;
+static int conf_vlan_timeout = 60;
 static int conf_max_request = 3;
 static int conf_session_timeout;
 static int conf_idle_timeout;
@@ -2650,7 +2650,7 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 	if (!serv->opt_auto)
 		ipoe_nl_del_interface(serv->ifindex);
 
-	if (serv->vlan_mon) {
+	if (serv->vlan_mon && conf_vlan_timeout) {
 		log_info2("ipoe: remove vlan %s\n", serv->ifname);
 		iplink_vlan_del(serv->ifindex);
 		vlan_mon_add_vid(serv->parent_ifindex, ETH_P_IP, serv->vid);
@@ -2786,11 +2786,13 @@ static int get_offer_delay()
 
 static void set_vlan_timeout(struct ipoe_serv *serv)
 {
-	serv->timer.expire = ipoe_serv_timeout;
-	serv->timer.expire_tv.tv_sec = conf_vlan_timeout;
+	if(conf_vlan_timeout) {
+		serv->timer.expire = ipoe_serv_timeout;
+		serv->timer.expire_tv.tv_sec = conf_vlan_timeout;
 
-	if (list_empty(&serv->sessions))
-		triton_timer_add(&serv->ctx, &serv->timer, 0);
+		if (list_empty(&serv->sessions))
+			triton_timer_add(&serv->ctx, &serv->timer, 0);
+	}
 }
 
 void ipoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
@@ -4049,10 +4051,8 @@ static void load_config(void)
 		conf_proto = 3;
 
 	opt = conf_get_opt("ipoe", "vlan-timeout");
-	if (opt && atoi(opt) > 0)
+	if (opt && atoi(opt) >= 0)
 		conf_vlan_timeout = atoi(opt);
-	else
-		conf_vlan_timeout = 60;
 
 	opt = conf_get_opt("ipoe", "offer-timeout");
 	if (opt && atoi(opt) > 0)
