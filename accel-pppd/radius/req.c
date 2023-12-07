@@ -53,6 +53,7 @@ static struct rad_req_t *__rad_req_alloc(struct radius_pd_t *rpd, int code, cons
 		goto out_err;
 
 	req->server_addr = req->serv->addr;
+	req->server_ipv6_addr = req->serv->addr6;
 	req->server_port = req->serv->auth_port;
 
 	while (1) {
@@ -268,47 +269,71 @@ void rad_req_free(struct rad_req_t *req)
 
 static int make_socket(struct rad_req_t *req)
 {
-  struct sockaddr_in addr;
+    if (req->serv->ipv4) {
+		struct sockaddr_in addr;
 
-	req->hnd.fd = socket(PF_INET, SOCK_DGRAM, 0);
-	if (req->hnd.fd < 0) {
-		log_ppp_error("radius:socket: %s\n", strerror(errno));
-		return -1;
-	}
+		req->hnd.fd = socket(PF_INET, SOCK_DGRAM, 0);
+		if (req->hnd.fd < 0) {
+			log_ppp_error("radius:socket: %s\n", strerror(errno));
+			return -1;
+		}
 
-	fcntl(req->hnd.fd, F_SETFD, fcntl(req->hnd.fd, F_GETFD) | FD_CLOEXEC);
+		fcntl(req->hnd.fd, F_SETFD, fcntl(req->hnd.fd, F_GETFD) | FD_CLOEXEC);
 
-	memset(&addr, 0, sizeof(addr));
-	addr.sin_family = AF_INET;
+		memset(&addr, 0, sizeof(addr));
+		addr.sin_family = AF_INET;
 
-	if (conf_bind) {
-		addr.sin_addr.s_addr = conf_bind;
-		if (bind(req->hnd.fd, (struct sockaddr *) &addr, sizeof(addr))) {
-			log_ppp_error("radius:bind: %s\n", strerror(errno));
+		if (conf_bind) {
+			addr.sin_addr.s_addr = conf_bind;
+			if (bind(req->hnd.fd, (struct sockaddr *) &addr, sizeof(addr))) {
+				log_ppp_error("radius:bind: %s\n", strerror(errno));
+				goto out_err;
+			}
+		}
+
+		addr.sin_addr.s_addr = req->server_addr;
+		addr.sin_port = htons(req->server_port);
+
+		if ( req->serv && !req->serv->bind_default && ( 0 > setsockopt(req->hnd.fd, SOL_SOCKET, SO_BINDTODEVICE, req->serv->bind_device, strlen(req->serv->bind_device)) ) )
+		{
+			log_ppp_error("radius:setsockopt: %s\n", strerror(errno));
 			goto out_err;
 		}
+
+		if (connect(req->hnd.fd, (struct sockaddr *) &addr, sizeof(addr))) {
+			log_ppp_error("radius:connect: %s\n", strerror(errno));
+			goto out_err;
+		}
+
+		if (fcntl(req->hnd.fd, F_SETFL, O_NONBLOCK)) {
+			log_ppp_error("radius: failed to set nonblocking mode: %s\n", strerror(errno));
+			goto out_err;
+		}
+
+		return 0;
+
+	}else {//ipv6 address
+		struct sockaddr_in6 addr6;
+
+		req->hnd.fd = socket(AF_INET6, SOCK_DGRAM, 0);
+		if (req->hnd.fd < 0) {
+			log_ppp_error("radius:socket: %s\n", strerror(errno));
+			return -1;
+		}
+
+		fcntl(req->hnd.fd, F_SETFD, fcntl(req->hnd.fd, F_GETFD) | FD_CLOEXEC);
+
+		memset(&addr6, 0, sizeof(addr6));
+		addr6.sin6_family = AF_INET6;
+		addr6.sin6_addr = req->server_ipv6_addr;
+		addr6.sin6_port = htons(req->server_port);
+
+		if (connect(req->hnd.fd, (struct sockaddr *) &addr6, sizeof(addr6))) {
+			log_ppp_error("radius:connect: %s\n", strerror(errno));
+			goto out_err;
+		}
+		return 0;
 	}
-
-	addr.sin_addr.s_addr = req->server_addr;
-	addr.sin_port = htons(req->server_port);
-
-	if ( req->serv && !req->serv->bind_default && ( 0 > setsockopt(req->hnd.fd, SOL_SOCKET, SO_BINDTODEVICE, req->serv->bind_device, strlen(req->serv->bind_device)) ) )
-	{
-		log_ppp_error("radius:setsockopt: %s\n", strerror(errno));
-		goto out_err;
-	}
-
-	if (connect(req->hnd.fd, (struct sockaddr *) &addr, sizeof(addr))) {
-		log_ppp_error("radius:connect: %s\n", strerror(errno));
-		goto out_err;
-	}
-
-	if (fcntl(req->hnd.fd, F_SETFL, O_NONBLOCK)) {
-		log_ppp_error("radius: failed to set nonblocking mode: %s\n", strerror(errno));
-		goto out_err;
-	}
-
-	return 0;
 
 out_err:
 	if (req->hnd.tpd)
