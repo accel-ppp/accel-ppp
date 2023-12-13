@@ -659,10 +659,19 @@ static void auth_result(struct ipoe_session *ses, int r)
 	if (r == PWDB_DENIED) {
 		if (conf_l4_redirect_on_reject && ses->dhcpv4_request) {
 			ses->l4_redirect = 1;
-			if (conf_l4_redirect_pool) {
+			if (conf_l4_redirect_pool || ses->serv->opt_l4_redirect_ip_pool) {
 				if (ses->ses.ipv4_pool_name)
 					_free(ses->ses.ipv4_pool_name);
-				ses->ses.ipv4_pool_name = _strdup(conf_l4_redirect_pool);
+				if (ses->ses.ipv6_pool_name)
+					_free(ses->ses.ipv6_pool_name);
+				if (ses->ses.dpv6_pool_name)
+					_free(ses->ses.dpv6_pool_name);
+				if (ses->serv->opt_l4_redirect_ip_pool)
+					ses->ses.ipv4_pool_name = _strdup(ses->serv->opt_l4_redirect_ip_pool);
+				else
+					ses->ses.ipv4_pool_name = _strdup(conf_l4_redirect_pool);
+				ses->ses.ipv6_pool_name = NULL;
+				ses->ses.dpv6_pool_name = NULL;
 			}
 
 			ses->l4_redirect_timer.expire = ipoe_session_l4_redirect_timeout;
@@ -673,8 +682,7 @@ static void auth_result(struct ipoe_session *ses, int r)
 				ap_session_terminate(&ses->ses, TERM_NAS_REQUEST, 1);
 				return;
 			}
-			log_ppp_info1("%s: authentication failed\n", ses->ses.username);
-			log_ppp_info1("%s: start temporary session (l4-redirect)\n", ses->ses.username);
+			log_ppp_info1("%s: authentication failed - start temporary session (l4-redirect) with ipv4_pool_name %s\n", ses->ses.username, ses->ses.ipv4_pool_name);
 			goto cont;
 		}
 
@@ -1429,8 +1437,13 @@ static struct ipoe_session *ipoe_session_create_dhcpv4(struct ipoe_serv *serv, s
 	ses->ses.ctrl = &ses->ctrl;
 	ses->ses.chan_name = ses->ctrl.calling_station_id;
 
-	if (conf_ip_pool)
+	if (serv->opt_ip_pool) {
+		log_info2("Using server specific ip pool %s\n", serv->opt_ip_pool);
+		ses->ses.ipv4_pool_name = _strdup(serv->opt_ip_pool);
+	} else if (conf_ip_pool) {
+		log_info2("Using global ip pool %s\n", conf_ip_pool);
 		ses->ses.ipv4_pool_name = _strdup(conf_ip_pool);
+	}
 	if (conf_ipv6_pool)
 		ses->ses.ipv6_pool_name = _strdup(conf_ipv6_pool);
 	if (conf_dpv6_pool)
@@ -2988,6 +3001,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	int opt_mtu = 0;
 	int opt_weight = -1;
 	int opt_ip_unnumbered = conf_ip_unnumbered;
+	char *opt_ip_pool = NULL;
+	char *opt_l4_redirect_ip_pool = NULL;
 #ifdef USE_LUA
 	char *opt_lua_username_func = NULL;
 #endif
@@ -3061,6 +3076,10 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 				opt_weight = atoi(ptr1);
 			} else if (strcmp(str, "ip-unnumbered") == 0) {
 				opt_ip_unnumbered = atoi(ptr1);
+			} else if (strcmp(str, "ip-pool") == 0) {
+				opt_ip_pool = _strdup(ptr1);
+			} else if (strcmp(str, "l4-redirect-ip-pool") == 0) {
+				opt_l4_redirect_ip_pool = _strdup(ptr1);
 			} else if (strcmp(str, "username") == 0) {
 				if (strcmp(ptr1, "ifname") == 0)
 					opt_username = USERNAME_IFNAME;
@@ -3168,6 +3187,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->opt_ipv6 = opt_ipv6;
 		serv->opt_weight = opt_weight;
 		serv->opt_ip_unnumbered = opt_ip_unnumbered;
+		serv->opt_ip_pool = opt_ip_pool;
+		serv->opt_l4_redirect_ip_pool = opt_l4_redirect_ip_pool;
 #ifdef USE_LUA
 		if (serv->opt_lua_username_func && (!opt_lua_username_func || strcmp(serv->opt_lua_username_func, opt_lua_username_func))) {
 			_free(serv->opt_lua_username_func);
@@ -3255,6 +3276,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	serv->opt_mtu = opt_mtu;
 	serv->opt_weight = opt_weight;
 	serv->opt_ip_unnumbered = opt_ip_unnumbered;
+	serv->opt_ip_pool = opt_ip_pool;
+	serv->opt_l4_redirect_ip_pool = opt_l4_redirect_ip_pool;
 #ifdef USE_LUA
 	serv->opt_lua_username_func = opt_lua_username_func;
 #endif
