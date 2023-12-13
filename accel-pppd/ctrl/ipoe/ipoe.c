@@ -174,6 +174,7 @@ static int conf_rebind_time = LEASE_TIME/2 + LEASE_TIME/4 + LEASE_TIME/8;
 static int conf_verbose;
 static const char *conf_agent_remote_id;
 static const char *conf_link_selection;
+static int conf_trusted_circuit;
 static int conf_proto;
 static LIST_HEAD(conf_offer_delay);
 static const char *conf_vlan_name;
@@ -1473,6 +1474,16 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 	uint8_t *agent_remote_id = NULL;
 	uint8_t *link_selection = NULL;
 
+	if (!ses->serv->opt_trusted_circuit && (pack->hdr->giaddr || pack->relay_agent)) {
+		if (conf_verbose) {
+			log_ppp_info2("recv discarded - %s recvd on untrusted circuit ",
+					pack->hdr->giaddr ? "giaddr" : "option 82");
+			dhcpv4_print_packet(pack, 0, log_ppp_info2);
+		}
+		dhcpv4_packet_ref(pack);
+		return;
+	}
+
 	if (conf_verbose) {
 		log_ppp_info2("recv ");
 		dhcpv4_print_packet(pack, 0, log_ppp_info2);
@@ -1836,6 +1847,16 @@ static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet 
 
 	if (connlimit_loaded && pack->msg_type == DHCPDISCOVER && connlimit_check(serv->opt_shared ? cl_key_from_mac(pack->hdr->chaddr) : serv->ifindex))
 		return;
+
+	if (!serv->opt_trusted_circuit && (pack->hdr->giaddr || pack->relay_agent)) {
+		if (conf_verbose) {
+			log_ppp_info2("recv discarded - %s recvd on untrusted circuit ",
+					pack->hdr->giaddr ? "giaddr" : "option 82");
+			dhcpv4_print_packet(pack, 0, log_ppp_info2);
+		}
+		dhcpv4_packet_ref(pack);
+		return;
+	}
 
 	pthread_mutex_lock(&serv->lock);
 	if (serv->timer.tpd)
@@ -2998,6 +3019,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	int opt_arp = conf_arp;
 	struct ifreq ifr;
 	uint8_t hwaddr[ETH_ALEN];
+	int opt_trusted_circuit = conf_trusted_circuit;
 
 	str0 = strchr(opt, ',');
 	if (str0) {
@@ -3061,6 +3083,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 				opt_weight = atoi(ptr1);
 			} else if (strcmp(str, "ip-unnumbered") == 0) {
 				opt_ip_unnumbered = atoi(ptr1);
+			} else if (strcmp(str, "trusted-circuit") == 0) {
+				opt_trusted_circuit = atoi(ptr1);
 			} else if (strcmp(str, "username") == 0) {
 				if (strcmp(ptr1, "ifname") == 0)
 					opt_username = USERNAME_IFNAME;
@@ -3168,6 +3192,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->opt_ipv6 = opt_ipv6;
 		serv->opt_weight = opt_weight;
 		serv->opt_ip_unnumbered = opt_ip_unnumbered;
+		serv->opt_trusted_circuit = opt_trusted_circuit;
 #ifdef USE_LUA
 		if (serv->opt_lua_username_func && (!opt_lua_username_func || strcmp(serv->opt_lua_username_func, opt_lua_username_func))) {
 			_free(serv->opt_lua_username_func);
@@ -3255,6 +3280,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	serv->opt_mtu = opt_mtu;
 	serv->opt_weight = opt_weight;
 	serv->opt_ip_unnumbered = opt_ip_unnumbered;
+	serv->opt_trusted_circuit = opt_trusted_circuit;
 #ifdef USE_LUA
 	serv->opt_lua_username_func = opt_lua_username_func;
 #endif
@@ -4010,6 +4036,12 @@ static void load_config(void)
 		conf_link_selection = opt;
 	else
 		conf_link_selection = NULL;
+
+	opt = conf_get_opt("ipoe", "trusted-circuit");
+	if (opt)
+		conf_trusted_circuit = atoi(opt);
+	else
+		conf_trusted_circuit = 1;
 
 	opt = conf_get_opt("ipoe", "ipv6");
 	if (opt)
