@@ -384,22 +384,14 @@ If ip-unnumbered=1 accel-ppp will always assign /32 mask.
 Default value is 1.
 .TP
 .BI "agent-remote-id=" string
-Specifies the DCHP option 82 sub-option 2 to be inserted by the DHCP Relay.
-.br
-The purpose of the sub-option is documented in section 3.2 of RFC3046.
-.br
-If neither the
-.B link-selection
-option nor this option is present, option 82 is not inserted by the DCHP Relay Agent.
+Specifies default value for per-interface
+.B agent-remote-id
+parameter.
 .TP
 .BI "link-selection=" ipv4_address
-Specifies option 82 sub-option 5 as per RFC3527 to be added by dhcp relay. The value stands for the subnet to be selected by the DHCP server to associate the request to a specific subnet.
-.br
-The purpose of the sub-option is documented in RFC3527.
-.br
-If neither the
-.B agent-remote-id
-option nor this option is present, option 82 is not inserted by the DCHP Relay Agent.
+Specifies default value for per-interface
+.B link-selection
+parameter.
 .TP
 .BI "interface=" [re:]name[,mode=L2|L3][,shared=0|1][,start=dhcpv4|up|auto]
 .BI "" [,range=x.x.x.x/mask][,ifcfg=0|1]
@@ -412,6 +404,8 @@ option nor this option is present, option 82 is not inserted by the DCHP Relay A
 .BI "" [,mtu=N]
 .BI "" [,weight=N]
 .BI "" [,ip-unnumbered=0|1]
+.BI "" [,agent-remote-id=string]
+.BI "" [,link-selection=x.x.x.x]
 .br
 Specifies interface to listen dhcp or unclassified packets. You may specify multiple
 .B interface
@@ -468,6 +462,20 @@ parameter specifies ip address to use as source when adding route to client.
 The
 .B proxy-arp
 parameter specifies whether accel-ppp should reply to arp requests.
+.br
+The
+.B agent-remote-id
+parameter specifies the DCHP option 82 sub-option 2, as per RFC3046 section 3.2,
+to be added by the DHCP Relay.
+.br
+The
+.B link-selection
+parameter specifies option 82 sub-option 5 as per RFC3527 to be added by dhcp
+relay. The value stands for the subnet to be selected by the DHCP server to
+associate the request to a specific subnet. If neither the
+.B agent-remote-id
+option nor this option is present, option 82 is not inserted by the DCHP Relay
+Agent.
 .TP
 .BI "local-net=" x.x.x.x/mask
 Specifies networks from which packets will be treated as unclassified. You may specify multiple local-net options.

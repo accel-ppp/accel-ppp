@@ -448,7 +448,8 @@ static void ipoe_relay_timeout(struct triton_timer_t *t)
 
 		ap_session_terminate(&ses->ses, TERM_LOST_CARRIER, 1);
 	} else
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id,
+				ses->serv->ifname, ses->serv->opt_agent_remote_id, ses->serv->opt_link_selection);
 }
 
 
@@ -715,7 +716,8 @@ cont:
 	ap_session_set_ifindex(&ses->ses);
 
 	if (ses->dhcpv4_request && ses->serv->dhcpv4_relay) {
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id,
+				ses->serv->ifname, ses->serv->opt_agent_remote_id, ses->serv->opt_link_selection);
 
 		ses->timer.expire = ipoe_relay_timeout;
 		ses->timer.period = conf_relay_timeout * 1000;
@@ -1108,7 +1110,8 @@ static void ipoe_session_activate(struct dhcpv4_packet *pack)
 	ses->dhcpv4_request = pack;
 
 	if (ses->serv->dhcpv4_relay)
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id,
+				ses->serv->ifname, ses->serv->opt_agent_remote_id, ses->serv->opt_link_selection);
 	else
 		__ipoe_session_activate(ses);
 }
@@ -1128,7 +1131,8 @@ static void ipoe_session_keepalive(struct dhcpv4_packet *pack)
 	ses->xid = ses->dhcpv4_request->hdr->xid;
 
 	if (/*ses->ses.state == AP_STATE_ACTIVE &&*/ ses->serv->dhcpv4_relay) {
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id,
+				ses->serv->ifname, ses->serv->opt_agent_remote_id, ses->serv->opt_link_selection);
 		return;
 	}
 
@@ -1152,7 +1156,8 @@ static void ipoe_session_decline(struct dhcpv4_packet *pack)
 	}
 
 	if (pack->msg_type == DHCPDECLINE && ses->serv->dhcpv4_relay)
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+		dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0,
+				ses->serv->ifname, ses->serv->opt_agent_remote_id, ses->serv->opt_link_selection);
 
 	dhcpv4_packet_free(pack);
 
@@ -1264,7 +1269,8 @@ static void ipoe_session_finished(struct ap_session *s)
 		dhcpv4_put_ip(ses->serv->dhcpv4, ses->yiaddr);
 
 	if (ses->relay_addr && ses->serv->dhcpv4_relay)
-		dhcpv4_relay_send_release(ses->serv->dhcpv4_relay, ses->hwaddr, ses->xid, ses->yiaddr, ses->client_id, ses->relay_agent, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+		dhcpv4_relay_send_release(ses->serv->dhcpv4_relay, ses->hwaddr, ses->xid, ses->yiaddr,ses->client_id, ses->relay_agent,
+				ses->serv->ifname, ses->serv->opt_agent_remote_id, ses->serv->opt_link_selection);
 
 	if (ses->dhcpv4)
 		dhcpv4_free(ses->dhcpv4);
@@ -1548,7 +1554,8 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 			if (pack->server_id == ses->siaddr)
 				dhcpv4_send_nak(dhcpv4, pack, "Wrong session");
 			else if (ses->serv->dhcpv4_relay)
-				dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+				dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0,
+						ses->serv->ifname, ses->serv->opt_agent_remote_id, ses->serv->opt_link_selection);
 
 			triton_context_call(ses->ctrl.ctx, (triton_event_func)__ipoe_session_terminate, &ses->ses);
 		} else {
@@ -2656,6 +2663,12 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 		vlan_mon_add_vid(serv->parent_ifindex, ETH_P_IP, serv->vid);
 	}
 
+	if (serv->opt_agent_remote_id)
+		_free(serv->opt_agent_remote_id);
+
+	if (serv->opt_link_selection)
+		_free(serv->opt_link_selection);
+
 	triton_context_unregister(&serv->ctx);
 
 	_free(serv);
@@ -2998,6 +3011,9 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	int opt_arp = conf_arp;
 	struct ifreq ifr;
 	uint8_t hwaddr[ETH_ALEN];
+	const char *opt_agent_remote_id = conf_agent_remote_id;
+	const char *opt_link_selection = conf_link_selection;
+	struct in_addr dummy;
 
 	str0 = strchr(opt, ',');
 	if (str0) {
@@ -3061,6 +3077,11 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 				opt_weight = atoi(ptr1);
 			} else if (strcmp(str, "ip-unnumbered") == 0) {
 				opt_ip_unnumbered = atoi(ptr1);
+			} else if (strcmp(str, "agent-remote-id") == 0) {
+				opt_agent_remote_id = ptr1;
+			} else if (strcmp(str, "link-selection") == 0) {
+				if (inet_pton(AF_INET, ptr1, &dummy) > 0)
+					opt_link_selection = ptr1;
 			} else if (strcmp(str, "username") == 0) {
 				if (strcmp(ptr1, "ifname") == 0)
 					opt_username = USERNAME_IFNAME;
@@ -3168,6 +3189,25 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->opt_ipv6 = opt_ipv6;
 		serv->opt_weight = opt_weight;
 		serv->opt_ip_unnumbered = opt_ip_unnumbered;
+
+		if (!opt_agent_remote_id && serv->opt_agent_remote_id) {
+			_free(serv->opt_agent_remote_id);
+			serv->opt_agent_remote_id = NULL;
+		} else if (opt_agent_remote_id && serv->opt_agent_remote_id) {
+			serv->opt_agent_remote_id = _realloc(serv->opt_agent_remote_id, strlen(opt_agent_remote_id) + 1);
+			strncpy(serv->opt_agent_remote_id, opt_agent_remote_id, strlen(opt_agent_remote_id) + 1);
+		} else if (opt_agent_remote_id)
+			serv->opt_agent_remote_id = _strdup(opt_agent_remote_id);
+
+		if (!opt_link_selection && serv->opt_link_selection) {
+			_free(serv->opt_link_selection);
+			serv->opt_link_selection = NULL;
+		} else if (opt_link_selection && serv->opt_link_selection) {
+			serv->opt_link_selection = _realloc(serv->opt_link_selection, strlen(opt_link_selection) + 1);
+			strncpy(serv->opt_link_selection, opt_link_selection, strlen(opt_link_selection) + 1);
+		} else if (opt_link_selection)
+			serv->opt_link_selection = _strdup(opt_link_selection);
+
 #ifdef USE_LUA
 		if (serv->opt_lua_username_func && (!opt_lua_username_func || strcmp(serv->opt_lua_username_func, opt_lua_username_func))) {
 			_free(serv->opt_lua_username_func);
@@ -3255,6 +3295,10 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	serv->opt_mtu = opt_mtu;
 	serv->opt_weight = opt_weight;
 	serv->opt_ip_unnumbered = opt_ip_unnumbered;
+	if (opt_agent_remote_id)
+		serv->opt_agent_remote_id = _strdup(opt_agent_remote_id);
+	if (opt_link_selection)
+		serv->opt_link_selection = _strdup(opt_link_selection);
 #ifdef USE_LUA
 	serv->opt_lua_username_func = opt_lua_username_func;
 #endif

@@ -231,7 +231,18 @@ static void print_relay_agent(const struct dhcpv4_option *opt, int elem_size, vo
 			print("{Agent-Circuit-ID ");
 		else if (type == 2)
 			print("{Agent-Remote-ID ");
-		else
+		else if (type == 5 && len == 4) {
+			print("{Link-Selection ");
+			if (len == 4) {
+				print("%i.%i.%i.%i}",
+					*ptr & 0xff,
+					(*(ptr + 1)) & 0xff,
+					(*(ptr + 2)) & 0xff,
+					(*(ptr + 3)) & 0xff);
+				ptr = ptr + len;
+				continue;
+			}
+		} else
 			print("{Option-%i ", type);
 
 		endptr1 = ptr + len;
