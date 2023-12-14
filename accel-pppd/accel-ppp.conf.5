@@ -374,14 +374,23 @@ parameter.
 .BI "weight=" n
 Specifies global weight of this server (used for load balancing)
 .TP
+.BI "netmask=" n
+Specifies default value for per-interface
+.B netmask
+parameter.
+.br
+.TP
 .BI "ip-unnumbered=" 0|1
 Specifies default value for per-interface
 .B ip-unnumbered
 parameter.
 .br
-If ip-unnumbered=1 accel-ppp will always assign /32 mask.
+.TP
+.BI "netmask-force=" 0|1
+Specifies default value for per-interface
+.B netmask-force
+parameter.
 .br
-Default value is 1.
 .TP
 .BI "agent-remote-id=" string
 Specifies the DCHP option 82 sub-option 2 to be inserted by the DHCP Relay.
@@ -412,6 +421,8 @@ option nor this option is present, option 82 is not inserted by the DCHP Relay A
 .BI "" [,mtu=N]
 .BI "" [,weight=N]
 .BI "" [,ip-unnumbered=0|1]
+.BI "" [,netmask-force=0|1]
+.BI "" [,netmask=N]
 .br
 Specifies interface to listen dhcp or unclassified packets. You may specify multiple
 .B interface
@@ -464,6 +475,24 @@ parameter specifies relay agent IP address.
 The
 .B src
 parameter specifies ip address to use as source when adding route to client.
+.br
+If the
+.B ip-unnumbered
+is set to 1, accel-ppp will always assign /32 mask. Default value is 1.
+.br
+The
+.B netmask
+parameter specifies the netmask integer value from 1 to 32 to set when the subnet-mask DHCP option 1 is not sent by the server. If
+.B ip-unnumbered
+is set, the netmask will always be 32 regardless of this value.
+.br
+If the
+.B netmask-force
+is set, accel-ppp will replace the subnet-mask (option 1) value sent by the DHCP server to 255.255.255.255 if
+.B ip-unnumbered
+if set or by the
+.B netmask
+value. Default netmask-force value is 0.
 .br
 The
 .B proxy-arp

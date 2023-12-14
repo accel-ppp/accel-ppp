@@ -166,7 +166,7 @@ static int conf_offer_timeout = 10;
 static int conf_relay_timeout = 3;
 static int conf_relay_retransmit = 3;
 static LIST_HEAD(conf_gw_addr);
-static int conf_netmask = 24;
+static int conf_netmask;
 static int conf_lease_time = LEASE_TIME;
 static int conf_lease_timeout = LEASE_TIME + LEASE_TIME/10;
 static int conf_renew_time = LEASE_TIME/2;
@@ -178,6 +178,7 @@ static int conf_proto;
 static LIST_HEAD(conf_offer_delay);
 static const char *conf_vlan_name;
 static int conf_ip_unnumbered;
+static int conf_netmask_force;
 static int conf_check_mac_change;
 static int conf_soft_terminate;
 static int conf_calling_sid = SID_MAC;
@@ -892,7 +893,7 @@ static void __ipoe_session_start(struct ipoe_session *ses)
 			find_gw_addr(ses);
 
 		if (!ses->mask)
-			ses->mask = conf_netmask;
+			ses->mask = ses->serv->opt_netmask;
 
 		if (!ses->mask)
 			ses->mask = 32;
@@ -2024,7 +2025,7 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 		ses->rebind_time = ntohl(*(uint32_t *)opt->data);
 
 	opt = dhcpv4_packet_find_opt(pack, 1);
-	if (opt)
+	if (opt && !ses->serv->opt_netmask_force)
 		ses->mask = parse_dhcpv4_mask(ntohl(*(uint32_t *)opt->data));
 
 	opt = dhcpv4_packet_find_opt(pack, 3);
@@ -2377,6 +2378,8 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
 					ses->router = *(in_addr_t *)attr->raw;
 					break;
 				case DHCP_Subnet_Mask:
+					if (ses->serv->opt_netmask_force)
+						break;
 					ses->mask = ipaddr_to_prefix(attr->val.ipaddr);
 					break;
 				case DHCP_IP_Address_Lease_Time:
@@ -2406,7 +2409,7 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
 			ses->yiaddr = attr->val.ipaddr;
 		else if (attr->attr->id == conf_attr_dhcp_router_ip)
 			ses->router = attr->val.ipaddr;
-		else if (attr->attr->id == conf_attr_dhcp_mask) {
+		else if (attr->attr->id == conf_attr_dhcp_mask && !ses->serv->opt_netmask_force) {
 			if (attr->attr->type == ATTR_TYPE_INTEGER) {
 				if (attr->val.integer > 0 && attr->val.integer <= 32)
 					ses->mask = attr->val.integer;
@@ -2988,6 +2991,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	int opt_mtu = 0;
 	int opt_weight = -1;
 	int opt_ip_unnumbered = conf_ip_unnumbered;
+	int opt_netmask_force = conf_netmask_force;
 #ifdef USE_LUA
 	char *opt_lua_username_func = NULL;
 #endif
@@ -2995,6 +2999,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	in_addr_t relay_addr = conf_relay ? inet_addr(conf_relay) : 0;
 	in_addr_t opt_giaddr = 0;
 	in_addr_t opt_src = conf_src;
+	uint8_t opt_netmask = conf_netmask, opt_netmask_tmp;
 	int opt_arp = conf_arp;
 	struct ifreq ifr;
 	uint8_t hwaddr[ETH_ALEN];
@@ -3051,6 +3056,10 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 				opt_nat = atoi(ptr1);
 			} else if (strcmp(str, "src") == 0) {
 				opt_src = inet_addr(ptr1);
+			} else if (strcmp(str, "netmask") == 0) {
+				opt_netmask_tmp = atoi(ptr1);
+				if (opt_netmask_tmp > 0 && opt_netmask_tmp <= 32)
+					opt_netmask = opt_netmask_tmp;
 			} else if (strcmp(str, "proxy-arp") == 0) {
 				opt_arp = atoi(ptr1);
 			} else if (strcmp(str, "ipv6") == 0) {
@@ -3060,6 +3069,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 			} else if (strcmp(str, "weight") == 0) {
 				opt_weight = atoi(ptr1);
 			} else if (strcmp(str, "ip-unnumbered") == 0) {
+				opt_ip_unnumbered = atoi(ptr1);
+			} else if (strcmp(str, "netmask-force") == 0) {
 				opt_ip_unnumbered = atoi(ptr1);
 			} else if (strcmp(str, "username") == 0) {
 				if (strcmp(ptr1, "ifname") == 0)
@@ -3168,6 +3179,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->opt_ipv6 = opt_ipv6;
 		serv->opt_weight = opt_weight;
 		serv->opt_ip_unnumbered = opt_ip_unnumbered;
+		serv->opt_netmask = opt_ip_unnumbered ? 32 : opt_netmask;
+		serv->opt_netmask_force = !!(serv->opt_netmask && opt_netmask_force);
 #ifdef USE_LUA
 		if (serv->opt_lua_username_func && (!opt_lua_username_func || strcmp(serv->opt_lua_username_func, opt_lua_username_func))) {
 			_free(serv->opt_lua_username_func);
@@ -3255,6 +3268,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	serv->opt_mtu = opt_mtu;
 	serv->opt_weight = opt_weight;
 	serv->opt_ip_unnumbered = opt_ip_unnumbered;
+	serv->opt_netmask = opt_ip_unnumbered ? 32 : opt_netmask;
+	serv->opt_netmask_force = !!(serv->opt_netmask && opt_netmask_force);
 #ifdef USE_LUA
 	serv->opt_lua_username_func = opt_lua_username_func;
 #endif
@@ -4074,6 +4089,12 @@ static void load_config(void)
 		conf_ip_unnumbered = atoi(opt);
 	else
 		conf_ip_unnumbered = 1;
+
+	opt = conf_get_opt("ipoe", "netmask-force");
+	if (opt)
+		conf_netmask_force = atoi(opt);
+	else
+		conf_netmask_force = 1;
 
 	opt = conf_get_opt("ipoe", "idle-timeout");
 	if (opt)
