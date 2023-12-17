@@ -276,14 +276,14 @@ static struct ipoe_session *ipoe_session_lookup(struct ipoe_serv *serv, struct d
 		return ses;
 	}
 
-	if (!conf_check_mac_change || (pack->relay_agent && dhcpv4_parse_opt82(pack->relay_agent, &agent_circuit_id, &agent_remote_id, &link_selection))) {
+	if (!serv->opt_check_mac_change || (pack->relay_agent && dhcpv4_parse_opt82(pack->relay_agent, &agent_circuit_id, &agent_remote_id, &link_selection))) {
 		agent_circuit_id = NULL;
 		agent_remote_id = NULL;
 		link_selection = NULL;
 	}
 
 	list_for_each_entry(ses, &serv->sessions, entry) {
-		opt82_match = conf_check_mac_change && pack->relay_agent != NULL;
+		opt82_match = serv->opt_check_mac_change && pack->relay_agent != NULL;
 
 		if (agent_circuit_id && !ses->agent_circuit_id)
 			opt82_match = 0;
@@ -1521,7 +1521,7 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 			opt82_match = 0;
 	}
 
-	if (conf_check_mac_change && pack->relay_agent && !opt82_match) {
+	if (ses->serv->opt_check_mac_change && pack->relay_agent && !opt82_match) {
 		log_ppp_info2("port change detected\n");
 		if (pack->msg_type == DHCPREQUEST)
 			dhcpv4_send_nak(dhcpv4, pack, SESSION_TERMINATED);
@@ -1877,7 +1877,7 @@ static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet 
 				goto out;
 			}
 
-			if (conf_check_mac_change) {
+			if (serv->opt_check_mac_change) {
 				if ((opt82_ses && ses != opt82_ses) || (!opt82_ses && pack->relay_agent)) {
 					dhcpv4_packet_ref(pack);
 					triton_context_call(&ses->ctx, (triton_event_func)port_change_detected, pack);
@@ -1939,7 +1939,7 @@ static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet 
 				goto out;
 			}
 
-			if (conf_check_mac_change) {
+			if (serv->opt_check_mac_change) {
 				if ((opt82_ses && ses != opt82_ses) || (!opt82_ses && pack->relay_agent)) {
 					dhcpv4_packet_ref(pack);
 					triton_context_call(&ses->ctx, (triton_event_func)port_change_detected, pack);
@@ -2996,6 +2996,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	in_addr_t opt_giaddr = 0;
 	in_addr_t opt_src = conf_src;
 	int opt_arp = conf_arp;
+	int opt_check_mac_change = conf_check_mac_change;
 	struct ifreq ifr;
 	uint8_t hwaddr[ETH_ALEN];
 
@@ -3053,6 +3054,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 				opt_src = inet_addr(ptr1);
 			} else if (strcmp(str, "proxy-arp") == 0) {
 				opt_arp = atoi(ptr1);
+			} else if (strcmp(str, "check-mac-change") == 0) {
+				opt_check_mac_change = atoi(ptr1);
 			} else if (strcmp(str, "ipv6") == 0) {
 				opt_ipv6 = atoi(ptr1);
 			} else if (strcmp(str, "mtu") == 0) {
@@ -3168,6 +3171,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->opt_ipv6 = opt_ipv6;
 		serv->opt_weight = opt_weight;
 		serv->opt_ip_unnumbered = opt_ip_unnumbered;
+		serv->opt_check_mac_change = opt_check_mac_change;
 #ifdef USE_LUA
 		if (serv->opt_lua_username_func && (!opt_lua_username_func || strcmp(serv->opt_lua_username_func, opt_lua_username_func))) {
 			_free(serv->opt_lua_username_func);
@@ -3255,6 +3259,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	serv->opt_mtu = opt_mtu;
 	serv->opt_weight = opt_weight;
 	serv->opt_ip_unnumbered = opt_ip_unnumbered;
+	serv->opt_check_mac_change = opt_check_mac_change;
 #ifdef USE_LUA
 	serv->opt_lua_username_func = opt_lua_username_func;
 #endif
