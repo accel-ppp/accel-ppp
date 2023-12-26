@@ -92,7 +92,7 @@ static void arp_ctx_read(struct _arphdr *ah)
 			break;
 	}
 
-	if (!ses1 && ipoe->opt_up) {
+	if (!ses1 && ipoe->opt_up && ipoe_check_localnet(ah->ar_spa)) {
 		ipoe_serv_recv_arp(ipoe, ah);
 		pthread_mutex_unlock(&ipoe->lock);
 		goto out;
@@ -189,9 +189,6 @@ static int arp_read(struct triton_md_handler_t *h)
 			continue;
 
 		if (ah->ar_spa == 0)
-			continue;
-
-		if (!ipoe_check_localnet(ah->ar_spa))
 			continue;
 
 		t = &arp_tree[src.sll_ifindex & HASH_BITS];
