@@ -90,6 +90,7 @@ jobs:
             "debian:trixie",
             "ubuntu:20.04",
             "ubuntu:22.04",
+            "ubuntu:24.04"
           ]
     runs-on: ubuntu-latest
     container:
@@ -104,6 +105,7 @@ jobs:
           debian:12) DISTRO=debian12; CPACK_TYPE=Debian12 ;;
           debian:11) CPACK_TYPE=Debian11 ;;
           debian:10) CPACK_TYPE=Debian10 ;;
+          ubuntu:24.04) CPACK_TYPE=Ubuntu24 ; HEADERS_SUFFIX=generic ;;
           ubuntu:22.04) CPACK_TYPE=Ubuntu22 ; HEADERS_SUFFIX=generic ;;
           ubuntu:20.04) CPACK_TYPE=Ubuntu20 ; HEADERS_SUFFIX=generic ;;
           esac;
@@ -167,7 +169,7 @@ jobs:
           if-no-files-found: error
 
   Build-in-Container-Mainline:
-    #if: ${{ false }} # disable for now
+    if: ${{ false }} # disable for now
     runs-on: ubuntu-latest
     container:
       image: ubuntu:devel
