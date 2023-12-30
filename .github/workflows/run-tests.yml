@@ -16,6 +16,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - distro: Ubuntu-24.04
+            image: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+            untar: false
+            format: qcow2
+
           - distro: Ubuntu-22.04
             image: https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img
             untar: false

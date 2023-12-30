@@ -85,6 +85,11 @@ IF(CPACK_TYPE STREQUAL Ubuntu22)
         INCLUDE(${CMAKE_HOME_DIRECTORY}/cmake/debian/debian.cmake)
 ENDIF(CPACK_TYPE STREQUAL Ubuntu22)
 
+IF(CPACK_TYPE STREQUAL Ubuntu24)
+        SET(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6 (>= 2.35), libssl3 (>= 3.0.2), libpcre3 (>= 8.39)")
+        INCLUDE(${CMAKE_HOME_DIRECTORY}/cmake/debian/debian.cmake)
+ENDIF(CPACK_TYPE STREQUAL Ubuntu24)
+
 IF(CPACK_TYPE STREQUAL Centos7)
 	SET(CPACK_RPM_PACKAGE_LICENSE "GPL")
 	SET(CPACK_RPM_PACKAGE_URL "http://accel-ppp.org")
