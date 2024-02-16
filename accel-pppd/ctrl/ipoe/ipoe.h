@@ -55,6 +55,7 @@ struct ipoe_serv {
 	int opt_arp;
 	int opt_username;
 	int opt_mtu;
+	int opt_check_mac_change;
 #ifdef USE_LUA
 	char *opt_lua_username_func;
 #endif
@@ -86,6 +87,7 @@ struct ipoe_session {
 	struct dhcpv4_option *relay_agent;
 	uint8_t *agent_circuit_id;
 	uint8_t *agent_remote_id;
+	uint8_t *link_selection;
 	uint32_t xid;
 	uint32_t giaddr;
 	uint32_t yiaddr;

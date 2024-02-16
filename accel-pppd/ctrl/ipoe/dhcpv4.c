@@ -430,7 +430,7 @@ void dhcpv4_packet_free(struct dhcpv4_packet *pack)
 	mempool_free(pack);
 }
 
-int dhcpv4_parse_opt82(struct dhcpv4_option *opt, uint8_t **agent_circuit_id, uint8_t **agent_remote_id)
+int dhcpv4_parse_opt82(struct dhcpv4_option *opt, uint8_t **agent_circuit_id, uint8_t **agent_remote_id, uint8_t **link_selection)
 {
 	uint8_t *ptr = opt->data;
 	uint8_t *endptr = ptr + opt->len;
@@ -450,6 +450,8 @@ int dhcpv4_parse_opt82(struct dhcpv4_option *opt, uint8_t **agent_circuit_id, ui
 			*agent_circuit_id = ptr - 1;
 		else if (type == 2)
 			*agent_remote_id = ptr - 1;
+		else if (type == 5)
+			*link_selection = ptr - 1;
 
 		ptr += len;
 	}
@@ -457,25 +459,51 @@ int dhcpv4_parse_opt82(struct dhcpv4_option *opt, uint8_t **agent_circuit_id, ui
 	return 0;
 }
 
-int dhcpv4_packet_insert_opt82(struct dhcpv4_packet *pack, const char *agent_circuit_id, const char *agent_remote_id)
+int dhcpv4_packet_insert_opt82(struct dhcpv4_packet *pack, const char *agent_circuit_id, const char *agent_remote_id, const char *link_selection)
 {
 	int len1 = strlen(agent_circuit_id);
-	int len2 = strlen(agent_remote_id);
-	uint8_t *data = _malloc(4 + len1 + len2);
-	uint8_t *ptr = data;
+	int len2 = 0;
+	int len5 = 0;
+	int opt82_len;
+	uint8_t *data;
+	uint8_t *ptr;
 	int r;
+	struct in_addr link_select = {0};
 
 	pack->ptr--;
 
-	*ptr++ = 1;
+	opt82_len = len1 + 2;
+	if (agent_remote_id) {
+		len2 = strlen(agent_remote_id);
+		opt82_len += len2 + 2;
+	}
+	if (link_selection && inet_pton(AF_INET, link_selection, &link_select) > 0) {
+		len5 = sizeof(struct in_addr);
+		opt82_len += len5 + 2;
+	}
+
+	data = _malloc(opt82_len);
+	ptr = data;
+
+	/* Agent Circuit ID */
+	*ptr++ = 1; /* Sub-Option 1 */
 	*ptr++ = len1;
 	memcpy(ptr, agent_circuit_id, len1); ptr += len1;
 
-	*ptr++ = 2;
-	*ptr++ = len2;
-	memcpy(ptr, agent_remote_id, len2); ptr += len2;
+	/* Agent Remote ID */
+	if (len2 > 0) {
+		*ptr++ = 2; /* Sub-Option 2 */
+		*ptr++ = len2;
+		memcpy(ptr, agent_remote_id, len2); ptr += len2;
+	}
+	/* Link-Selection */
+	if (len5 > 0) {
+		*ptr++ = 5; /* Sub-Option 5 */
+		*ptr++ = len5;
+		memcpy(ptr, &link_select, len5); ptr += len5;
+	}
 
-	r = dhcpv4_packet_add_opt(pack, 82, data, 4 + len1 + len2);
+	r = dhcpv4_packet_add_opt(pack, 82, data, opt82_len);
 	_free(data);
 
 	*pack->ptr++ = 255;
@@ -625,7 +653,7 @@ static int dhcpv4_send_raw(struct dhcpv4_serv *serv, struct dhcpv4_packet *pack,
 		struct iphdr ip;
 		struct udphdr udp;
 		uint8_t data[0];
-	} __packed *hdr;
+	} __packed __aligned(2) *hdr;
 	struct sockaddr_ll ll_addr;
 	int n, len = pack->ptr - pack->data;
 
@@ -925,6 +953,8 @@ void dhcpv4_send_notify(struct dhcpv4_serv *serv, struct dhcpv4_packet *req, uns
 	dhcpv4_packet_add_opt_u8(pack, 53, DHCPDISCOVER);
 	dhcpv4_packet_add_opt(pack, 43, opt, sizeof(opt));
 
+	*pack->ptr++ = 255;
+
 	dhcpv4_send_raw(serv, pack, 0, INADDR_BROADCAST, DHCP_SERV_PORT);
 
 	dhcpv4_packet_free(pack);
@@ -1053,7 +1083,7 @@ void dhcpv4_relay_free(struct dhcpv4_relay *r, struct triton_context_t *ctx)
 	pthread_mutex_unlock(&relay_lock);
 }
 
-int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request, uint32_t server_id, const char *agent_circuit_id, const char *agent_remote_id)
+int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request, uint32_t server_id, const char *agent_circuit_id, const char *agent_remote_id, const char *link_selection)
 {
 	int n;
 	int len = request->ptr - request->data;
@@ -1061,7 +1091,8 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 	struct dhcpv4_option *opt = NULL;
 	uint32_t _server_id;
 
-	if (!request->relay_agent && agent_remote_id && dhcpv4_packet_insert_opt82(request, agent_circuit_id, agent_remote_id))
+	if (!request->relay_agent && (agent_remote_id || link_selection) &&
+	    dhcpv4_packet_insert_opt82(request, agent_circuit_id, agent_remote_id, link_selection))
 		return -1;
 
 	request->hdr->giaddr = relay->giaddr;
@@ -1102,7 +1133,8 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 
 int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint32_t xid, uint32_t ciaddr,
 	struct dhcpv4_option *client_id, struct dhcpv4_option *relay_agent,
-	const char *agent_circuit_id, const char *agent_remote_id)
+        const char *agent_circuit_id, const char *agent_remote_id,
+        const char *link_selection)
 {
 	struct dhcpv4_packet *pack;
 	int n, len;
@@ -1133,9 +1165,10 @@ int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint3
 
 	if (relay_agent && dhcpv4_packet_add_opt(pack, 82, relay_agent->data, relay_agent->len))
 		goto out_err;
-	else if (!relay_agent && agent_remote_id) {
+	else if (!relay_agent && (agent_remote_id || link_selection)) {
 		pack->ptr++;
-		if (dhcpv4_packet_insert_opt82(pack, agent_circuit_id, agent_remote_id))
+		if (dhcpv4_packet_insert_opt82(pack, agent_circuit_id, agent_remote_id,
+                                               link_selection))
 			goto out_err;
 		pack->ptr--;
 	}

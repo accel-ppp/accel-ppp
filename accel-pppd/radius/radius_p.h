@@ -95,6 +95,7 @@ struct rad_req_t {
 	struct rad_server_t *serv;
 
 	in_addr_t server_addr;
+	struct in6_addr server_ipv6_addr;
 
 	int server_port;
 	int type;
@@ -120,6 +121,7 @@ struct rad_server_t {
 	struct triton_timer_t timer;
 	int id;
 	in_addr_t addr;
+	struct in6_addr addr6;
 	char *secret;
 	int auth_port;
 	int acct_port;
@@ -165,6 +167,8 @@ struct rad_server_t {
 	unsigned int acct_on:1;
 	unsigned int need_free:1;
 	unsigned int need_close:1;
+	//Flag to set radius ip version
+	unsigned int ipv4:1;
 };
 
 #define RAD_SERV_AUTH 0
@@ -193,6 +197,7 @@ extern int conf_acct_interim_interval;
 extern int conf_acct_interim_jitter;
 extern int conf_accounting;
 extern const char *conf_attr_tunnel_type;
+extern int conf_acct_delay_start;
 
 int rad_check_nas_pack(struct rad_packet_t *pack);
 struct radius_pd_t *rad_find_session(const char *sessionid, const char *username, const char *port_id, int port, in_addr_t ipaddr, const char *csid);

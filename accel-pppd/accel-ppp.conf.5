@@ -383,6 +383,24 @@ If ip-unnumbered=1 accel-ppp will always assign /32 mask.
 .br
 Default value is 1.
 .TP
+.BI "agent-remote-id=" string
+Specifies the DCHP option 82 sub-option 2 to be inserted by the DHCP Relay.
+.br
+The purpose of the sub-option is documented in section 3.2 of RFC3046.
+.br
+If neither the
+.B link-selection
+option nor this option is present, option 82 is not inserted by the DCHP Relay Agent.
+.TP
+.BI "link-selection=" ipv4_address
+Specifies option 82 sub-option 5 as per RFC3527 to be added by dhcp relay. The value stands for the subnet to be selected by the DHCP server to associate the request to a specific subnet.
+.br
+The purpose of the sub-option is documented in RFC3527.
+.br
+If neither the
+.B agent-remote-id
+option nor this option is present, option 82 is not inserted by the DCHP Relay Agent.
+.TP
 .BI "interface=" [re:]name[,mode=L2|L3][,shared=0|1][,start=dhcpv4|up|auto]
 .BI "" [,range=x.x.x.x/mask][,ifcfg=0|1]
 .BI "" [,relay=x.x.x.x]
@@ -466,7 +484,7 @@ List must to be sorted by count key.
 Specified timeout waiting DHCP-Request from client in seconds (default 10).
 .TP
 .BI "vlan-mon=" [re:]name[,filter]
-Starts vlan monitor on specified interface (requires ipoe kernel module).
+Starts vlan monitor on specified interface (requires vlan_mon kernel module).
 .br
 The
 .B filter
@@ -475,7 +493,7 @@ parameter specifies list of vlans or ranges of vlans to monitor for and may be i
 vlan-mon=eth1,2,5,10,20-30
 .TP
 .BI "vlan-timeout=" n
-Specifies time of vlan inactivity before it will be removed (seconds).
+Specifies time of vlan inactivity before it will be removed in seconds (default 60). A value of 0 disables removal of inactive vlan.
 .TP
 .BI "vlan-name=" pattern
 Specifies pattern of vlan interface name. Pattern may contain following macros:
@@ -583,6 +601,32 @@ is prefixed with
 then ifname is considered as regular expression. Optional
 .B padi-limit
 parameter specifies limit of PADI packets to reply on this interface in 1 second period.
+.TP
+.BI "vlan-mon=" [re:]name[,filter]
+Starts vlan monitor on specified interface (requires vlan_mon kernel module).
+.br
+The
+.B filter
+parameter specifies list of vlans or ranges of vlans to monitor for and may be in following form:
+.br
+vlan-mon=eth1,2,5,10,20-30
+.TP
+.BI "vlan-timeout=" n
+Specifies time of vlan inactivity before it will be removed in seconds (default 60). A value of 0 disables removal of inactive vlan.
+.TP
+.BI "vlan-name=" pattern
+Specifies pattern of vlan interface name. Pattern may contain following macros:
+.br
+.B %I
+- name of pattern interface.
+.br
+.B %N
+- number of vlan.
+.br
+.B %P
+- number of vlan of parent interface.
+.br
+By default vlan-name=%I.%N.
 .TP
 .BI "ac-name=" ac-name
 Specifies AC-Name tag value. If absent tag will not be sent.
@@ -932,6 +976,9 @@ Specifies timeout of accounting interim update.
 .TP
 .BI "acct-delay-time=" 0|1
 Specifies whether radius client should include Acct-Delay-Time attribute to accounting requests (default 0).
+.TP
+.BI "acct-delay-start=" n
+Specifies delay to send accounting start packet (defaul 0).
 .TP
 .BI "acct-on=" 0|1
 Specifies whether radius client should send Account-Request with Acct-Status-Type=Accounting-On on startup and Acct-Status-Type=Accounting-Off on shutdown.
@@ -1486,4 +1533,76 @@ command history (defaults to \fI/var/lib/accel-ppp/history\fR).
 Defines the default set of columns to be displayed by the "show sessions"
 command (defaults to
 \fIifname,username,calling-sid,ip,rate-limit,type,comp,state,uptime\fR).
+.br
+.B Possible columns:
+.br
+.B ifname
+- interface name
+.br
+.B username
+- user name
+.br
+.B ip
+- IP address
+.br
+.B ip6
+- IPv6 address
+.br
+.B ip6-dp
+- IPv6 delegated prefix
+.br
+.B type
+- connection type [pppoe|ipoe|pptp|l2tp|sstp]
+.br
+.B state
+- state of session
+.br
+.B uptime
+- uptime (human readable)
+.br
+.B uptime-raw
+- uptime (in seconds)
+.br
+.B calling-sid
+- calling station id
+.br
+.B called-sid
+- called station id
+.br
+.B sid
+- session id
+.br
+.B comp
+- compression/encryption method
+.br
+.B inbound-if
+- inbound interface
+.br
+.B service-name
+- PPPoE service name
+.br
+.B rx-bytes
+- received bytes (human readable)
+.br
+.B tx-bytes
+- transmitted bytes (human readable)
+.br
+.B rx-bytes-raw
+- received bytes
+.br
+.B tx-bytes-raw
+- transmitted bytes
+.br
+.B rx-pkts
+- received packets
+.br
+.B tx-pkts
+- transmitted packets
+.br
+.B netns
+- network namespaces
+.br
+.B vrf
+- virtual routing and forwarding
+.br
 Invalid column names are silently discarded.

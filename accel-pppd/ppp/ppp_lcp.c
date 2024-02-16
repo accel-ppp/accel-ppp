@@ -621,7 +621,7 @@ static void send_echo_reply(struct ppp_lcp_t *lcp)
 static void send_echo_request(struct triton_timer_t *t)
 {
 	struct ppp_lcp_t *lcp = container_of(t, typeof(*lcp), echo_timer);
-	struct rtnl_link_stats stats;
+	struct rtnl_link_stats64 stats;
 	struct lcp_echo_req {
 		struct lcp_hdr_t hdr;
 		uint32_t magic;

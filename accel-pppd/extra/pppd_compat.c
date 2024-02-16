@@ -30,7 +30,7 @@
 #include "memdebug.h"
 
 #define ENV_MEM 1024
-#define ENV_MAX 16
+#define ENV_MAX 32
 
 static char *conf_ip_up;
 static char *conf_ip_pre_up;
@@ -684,12 +684,15 @@ static void fill_env(char **env, char *mem, struct pppd_compat_pd *pd)
 	}
 
 	if (pd->ses->stop_time) {
-		uint64_t gword_sz = (uint64_t)UINT32_MAX + 1;
 		uint64_t tx_bytes;
 		uint64_t rx_bytes;
+		uint64_t tx_packets;
+		uint64_t rx_packets;
 
-		tx_bytes = ses->acct_tx_bytes + gword_sz * ses->acct_output_gigawords;
-		rx_bytes = ses->acct_rx_bytes + gword_sz * ses->acct_input_gigawords;
+		tx_bytes = ses->acct_tx_bytes;
+		rx_bytes = ses->acct_rx_bytes;
+		tx_packets = ses->acct_tx_packets;
+		rx_packets = ses->acct_rx_packets;
 
 		env[n] = mem;
 		write_sz = snprintf(mem, mem_sz, "CONNECT_TIME=%lu",
@@ -713,6 +716,24 @@ static void fill_env(char **env, char *mem, struct pppd_compat_pd *pd)
 		env[n] = mem;
 		write_sz = snprintf(mem, mem_sz, "BYTES_RCVD=%" PRIu64,
 				    rx_bytes);
+		if (write_sz < 0 || write_sz >= mem_sz)
+			goto out;
+		mem_sz -= write_sz + 1;
+		mem += write_sz + 1;
+		++n;
+
+		env[n] = mem;
+		write_sz = snprintf(mem, mem_sz, "PACKETS_SENT=%" PRIu64,
+			tx_packets);
+		if (write_sz < 0 || write_sz >= mem_sz)
+			goto out;
+		mem_sz -= write_sz + 1;
+		mem += write_sz + 1;
+		++n;
+
+		env[n] = mem;
+		write_sz = snprintf(mem, mem_sz, "PACKETS_RCVD=%" PRIu64,
+			rx_packets);
 		if (write_sz < 0 || write_sz >= mem_sz)
 			goto out;
 		++n;

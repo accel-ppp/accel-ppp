@@ -79,7 +79,7 @@ struct sockaddr_t {
 		struct sockaddr_in6 sin6;
 		struct sockaddr_un sun;
 	} u;
-} __attribute__((packed));
+};
 
 struct hash_t {
 	unsigned int len;
@@ -284,7 +284,7 @@ static int _vstrsep(char *buf, const char *sep, ...)
 	return n;
 }
 
-static in_addr_t sockaddr_ipv4(struct sockaddr_t *addr)
+static in_addr_t sockaddr_ipv4(const struct sockaddr_t *addr)
 {
 	switch (addr->u.sa.sa_family) {
 	case AF_INET:
@@ -298,9 +298,10 @@ static in_addr_t sockaddr_ipv4(struct sockaddr_t *addr)
 	}
 }
 
-static int sockaddr_ntop(struct sockaddr_t *addr, char *dst, socklen_t size, int flags)
+static int sockaddr_ntop(const struct sockaddr_t *addr, char *dst, socklen_t size, int flags)
 {
-	char ipv6_buf[INET6_ADDRSTRLEN], *path, sign;
+	char ipv6_buf[INET6_ADDRSTRLEN], sign;
+	const char *path;
 
 	switch (addr->u.sa.sa_family) {
 	case AF_INET:
@@ -588,7 +589,7 @@ error:
 
 /* proxy */
 
-static int proxy_parse(struct buffer_t *buf, struct sockaddr_t *peer, struct sockaddr_t *addr)
+static int proxy_parse(const struct buffer_t *buf, struct sockaddr_t *peer, struct sockaddr_t *addr)
 {
 	static const uint8_t proxy_sig[] = PROXY_SIG;
 	struct proxy_hdr *hdr;
@@ -647,7 +648,7 @@ error:
 	return -1;
 }
 
-static int proxy_parse_v2(struct buffer_t *buf, struct sockaddr_t *peer, struct sockaddr_t *addr)
+static int proxy_parse_v2(const struct buffer_t *buf, struct sockaddr_t *peer, struct sockaddr_t *addr)
 {
 	static const uint8_t proxy2_sig[] = PROXY2_SIG;
 	struct proxy2_hdr *hdr;
@@ -978,7 +979,7 @@ static int ppp_allocate_pty(int *master, int *slave, int flags)
 	struct termios tios;
 	int value, mfd, sfd;
 
-	if (openpty(&mfd, &sfd, NULL, &tios, NULL) < 0) {
+	if (openpty(&mfd, &sfd, NULL, NULL, NULL) < 0) {
 		log_ppp_error("sstp: allocate pty: %s\n", strerror(errno));
 		return -1;
 	}
@@ -989,6 +990,10 @@ static int ppp_allocate_pty(int *master, int *slave, int flags)
 		flags &= ~O_CLOEXEC;
 	}
 
+	if (tcgetattr(sfd, &tios) < 0) {
+		log_ppp_error("sstp: ppp: get pty attributes: %s\n", strerror(errno));
+		goto error;
+	}
 	tios.c_cflag &= ~(CSIZE | CSTOPB | PARENB);
 	tios.c_cflag |= CS8 | CREAD | CLOCAL;
 	tios.c_iflag  = IGNBRK | IGNPAR;
@@ -997,7 +1002,7 @@ static int ppp_allocate_pty(int *master, int *slave, int flags)
 	tios.c_cc[VMIN] = 1;
 	tios.c_cc[VTIME] = 0;
 	if (tcsetattr(sfd, TCSAFLUSH, &tios) < 0) {
-		log_ppp_warn("sstp: ppp: set pty attributes: %s\n", strerror(errno));
+		log_ppp_error("sstp: ppp: set pty attributes: %s\n", strerror(errno));
 		goto error;
 	}
 
@@ -2415,12 +2420,12 @@ static int sstp_connect(struct triton_md_handler_t *h)
 
 		triton_context_register(&conn->ctx, &conn->ppp.ses);
 		triton_context_call(&conn->ctx, (triton_event_func)sstp_start, conn);
+		triton_timer_add(&conn->ctx, &conn->timeout_timer, 0);
 		triton_context_wakeup(&conn->ctx);
 
-		__sync_add_and_fetch(&stat_starting, 1);
 		triton_event_fire(EV_CTRL_STARTING, &conn->ppp.ses);
 
-		triton_timer_add(&conn->ctx, &conn->timeout_timer, 0);
+		__sync_add_and_fetch(&stat_starting, 1);
 	}
 
 	return 0;

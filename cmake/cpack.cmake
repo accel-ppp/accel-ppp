@@ -1,6 +1,13 @@
 INCLUDE(InstallRequiredSystemLibraries)
 
 string(REPLACE "." ";" VERSION_LIST ${ACCEL_PPP_VERSION})
+
+# Verify if VERSION_LIST has 3 elements
+# If not assign dummy variables
+list(LENGTH VERSION_LIST VERSION_LIST_LENGTH)
+if(NOT VERSION_LIST_LENGTH EQUAL 3)
+	set(VERSION_LIST 1;12;0)
+endif()
 list(GET VERSION_LIST 0 CPACK_PACKAGE_VERSION_MAJOR)
 list(GET VERSION_LIST 1 CPACK_PACKAGE_VERSION_MINOR)
 list(GET VERSION_LIST 2 CPACK_PACKAGE_VERSION_PATCH)
@@ -48,6 +55,16 @@ IF(CPACK_TYPE STREQUAL Debian11)
 	INCLUDE(${CMAKE_HOME_DIRECTORY}/cmake/debian/debian.cmake)
 ENDIF(CPACK_TYPE STREQUAL Debian11)
 
+IF(CPACK_TYPE STREQUAL Debian12)
+	SET(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6 (>= 2.34), libssl3 (>= 3.0.5), libpcre3 (>= 8.39)")
+	INCLUDE(${CMAKE_HOME_DIRECTORY}/cmake/debian/debian.cmake)
+ENDIF(CPACK_TYPE STREQUAL Debian12)
+
+IF(CPACK_TYPE STREQUAL Debian13)
+	SET(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6 (>= 2.37), libssl3 (>= 3.0.9), libpcre3 (>= 8.39)")
+	INCLUDE(${CMAKE_HOME_DIRECTORY}/cmake/debian/debian.cmake)
+ENDIF(CPACK_TYPE STREQUAL Debian13)
+
 IF(CPACK_TYPE STREQUAL Ubuntu16)
 	SET(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6 (>= 2.23), libssl1.0.0 (>= 1.0.0), libpcre3 (>= 8.39)")
 	INCLUDE(${CMAKE_HOME_DIRECTORY}/cmake/debian/debian.cmake)
@@ -63,6 +80,16 @@ IF(CPACK_TYPE STREQUAL Ubuntu20)
         INCLUDE(${CMAKE_HOME_DIRECTORY}/cmake/debian/debian.cmake)
 ENDIF(CPACK_TYPE STREQUAL Ubuntu20)
 
+IF(CPACK_TYPE STREQUAL Ubuntu22)
+        SET(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6 (>= 2.35), libssl3 (>= 3.0.2), libpcre3 (>= 8.39)")
+        INCLUDE(${CMAKE_HOME_DIRECTORY}/cmake/debian/debian.cmake)
+ENDIF(CPACK_TYPE STREQUAL Ubuntu22)
+
+IF(CPACK_TYPE STREQUAL Ubuntu24)
+        SET(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6 (>= 2.35), libssl3 (>= 3.0.2), libpcre3 (>= 8.39)")
+        INCLUDE(${CMAKE_HOME_DIRECTORY}/cmake/debian/debian.cmake)
+ENDIF(CPACK_TYPE STREQUAL Ubuntu24)
+
 IF(CPACK_TYPE STREQUAL Centos7)
 	SET(CPACK_RPM_PACKAGE_LICENSE "GPL")
 	SET(CPACK_RPM_PACKAGE_URL "http://accel-ppp.org")
@@ -76,6 +103,14 @@ IF(CPACK_TYPE STREQUAL Centos8)
         SET(CPACK_RPM_PACKAGE_URL "http://accel-ppp.org")
         SET(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION "/usr/sbin")
         SET(CPACK_RPM_PACKAGE_REQUIRES "glibc >= 2.28, openssl-libs >= 1.1.1, pcre >= 8.42")
+        INCLUDE(${CMAKE_HOME_DIRECTORY}/cmake/centos/centos.cmake)
+ENDIF()
+
+IF(CPACK_TYPE STREQUAL Centos9)
+        SET(CPACK_RPM_PACKAGE_LICENSE "GPL")
+        SET(CPACK_RPM_PACKAGE_URL "http://accel-ppp.org")
+        SET(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION "/usr/sbin")
+        SET(CPACK_RPM_PACKAGE_REQUIRES "glibc >= 2.34, openssl-libs >= 3.0.1, pcre >= 8.44")
         INCLUDE(${CMAKE_HOME_DIRECTORY}/cmake/centos/centos.cmake)
 ENDIF()
 

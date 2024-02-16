@@ -8,7 +8,7 @@
 typedef int (*iplink_list_func)(int index, int flags, const char *name, int iflink, int vid, void *arg);
 
 int iplink_list(iplink_list_func func, void *arg);
-int iplink_get_stats(int ifindex, struct rtnl_link_stats *stats);
+int iplink_get_stats(int ifindex, struct rtnl_link_stats64 *stats);
 int iplink_set_mtu(int ifindex, int mtu);
 
 int iplink_vlan_add(const char *ifname, int ifindex, int vid);

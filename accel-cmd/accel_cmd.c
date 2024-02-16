@@ -480,7 +480,7 @@ static int accel_connect(struct host_params *peer, bool numeric)
 
 	for (ai = res; ai; ai = ai->ai_next) {
 		fd = socket(ai->ai_family,
-			    ai->ai_socktype | SOCK_CLOEXEC,
+			    ai->ai_socktype,
 			    ai->ai_protocol);
 		if (fd < 0) {
 			fverbf(stderr, "%s,%i:"
@@ -488,8 +488,16 @@ static int accel_connect(struct host_params *peer, bool numeric)
 			       " socket() failed: %s\n",
 			       __func__, __LINE__,
 			       ai->ai_family,
-			       ai->ai_socktype | SOCK_CLOEXEC,
+			       ai->ai_socktype,
 			       ai->ai_protocol, strerror(errno));
+			continue;
+		}
+		int ret = fcntl(fd, F_SETFD, FD_CLOEXEC);
+		if (ret == -1) {
+			fverbf(stderr, "%s,%i:"
+			       " fcntl() failed on setting FD_CLOEXEC: %s\n",
+			       __func__, __LINE__,
+			       strerror(errno));
 			continue;
 		}
 		if (connect(fd, ai->ai_addr, ai->ai_addrlen) < 0) {

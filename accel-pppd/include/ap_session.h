@@ -51,6 +51,7 @@ struct ap_ctrl {
 	int mppe;
 	char *calling_station_id;
 	char *called_station_id;
+	char *service_name;
 	unsigned int dont_ifcfg:1;
 	unsigned int ppp:1;
 	unsigned int ppp_npmode:2;
@@ -110,14 +111,14 @@ struct ap_session
 	int session_timeout;
 	struct triton_timer_t timer;
 
-	uint32_t acct_rx_bytes;
-	uint32_t acct_tx_bytes;
-	uint32_t acct_input_gigawords;
-	uint32_t acct_output_gigawords;
-	uint32_t acct_rx_packets_i;
-	uint32_t acct_tx_packets_i;
-	uint32_t acct_rx_bytes_i;
-	uint32_t acct_tx_bytes_i;
+	uint64_t acct_rx_packets;
+	uint64_t acct_tx_packets;
+	uint64_t acct_rx_bytes;
+	uint64_t acct_tx_bytes;
+	uint64_t acct_rx_packets_i;
+	uint64_t acct_tx_packets_i;
+	uint64_t acct_rx_bytes_i;
+	uint64_t acct_tx_bytes_i;
 	int acct_start;
 };
 
@@ -156,7 +157,7 @@ int ap_session_rename(struct ap_session *ses, const char *ifname, int len);
 int ap_session_vrf(struct ap_session *ses, const char *vrf_name, int len);
 #endif
 
-int ap_session_read_stats(struct ap_session *ses, struct rtnl_link_stats *stats);
+int ap_session_read_stats(struct ap_session *ses, struct rtnl_link_stats64 *stats);
 
 int ap_shutdown_soft(void (*cb)(void), int term);
 

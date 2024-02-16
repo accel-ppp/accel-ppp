@@ -122,7 +122,7 @@ struct ppp_lcp_t
 	struct triton_timer_t echo_timer;
 	int echo_sent;
 	int magic;
-	unsigned long last_ipackets;
+	uint64_t last_ipackets;
 	time_t last_echo_ts;
 
 	struct list_head ropt_list; // last received ConfReq

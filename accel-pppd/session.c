@@ -72,7 +72,7 @@ void __export ap_session_init(struct ap_session *ses)
 
 void __export ap_session_set_ifindex(struct ap_session *ses)
 {
-	struct rtnl_link_stats stats;
+	struct rtnl_link_stats64 stats;
 
 	if (iplink_get_stats(ses->ifindex, &stats))
 		log_ppp_warn("failed to get interface statistics\n");
@@ -83,8 +83,6 @@ void __export ap_session_set_ifindex(struct ap_session *ses)
 		ses->acct_tx_bytes_i = stats.tx_bytes;
 		ses->acct_rx_bytes = 0;
 		ses->acct_tx_bytes = 0;
-		ses->acct_input_gigawords = 0;
-		ses->acct_output_gigawords = 0;
 	}
 }
 
@@ -380,9 +378,9 @@ static void generate_sessionid(struct ap_session *ses)
 	}
 }
 
-int __export ap_session_read_stats(struct ap_session *ses, struct rtnl_link_stats *stats)
+int __export ap_session_read_stats(struct ap_session *ses, struct rtnl_link_stats64 *stats)
 {
-	struct rtnl_link_stats lstats;
+	struct rtnl_link_stats64 lstats;
 
 	if (ses->ifindex == -1)
 		return -1;
@@ -403,12 +401,9 @@ int __export ap_session_read_stats(struct ap_session *ses, struct rtnl_link_stat
 	if (stats->rx_bytes != ses->acct_rx_bytes)
 		ses->idle_time = _time();
 
-	if (stats->rx_bytes < ses->acct_rx_bytes)
-		ses->acct_input_gigawords++;
+	ses->acct_rx_packets = stats->rx_packets;
+	ses->acct_tx_packets = stats->tx_packets;
 	ses->acct_rx_bytes = stats->rx_bytes;
-
-	if (stats->tx_bytes < ses->acct_tx_bytes)
-		ses->acct_output_gigawords++;
 	ses->acct_tx_bytes = stats->tx_bytes;
 
 	return 0;

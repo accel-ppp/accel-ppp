@@ -284,7 +284,9 @@ static int ipv6_nd_start(struct ap_session *ses)
 	int val;
 	struct ipv6_nd_handler_t *h;
 
+	net->enter_ns();
 	sock = net->socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6);
+	net->exit_ns();
 
 	if (sock < 0) {
 		log_ppp_error("socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6): %s\n", strerror(errno));

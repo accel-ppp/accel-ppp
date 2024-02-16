@@ -76,7 +76,10 @@ static void ev_ses_started(struct ap_session *ses)
 	if (a->prefix_len == 0 || IN6_IS_ADDR_UNSPECIFIED(&a->addr))
 		return;
 
+	net->enter_ns();
 	sock = net->socket(AF_INET6, SOCK_DGRAM, 0);
+	net->exit_ns();
+
 	if (!sock) {
 		log_ppp_error("dhcpv6: socket: %s\n", strerror(errno));
 		return;
@@ -85,7 +88,7 @@ static void ev_ses_started(struct ap_session *ses)
 	net->setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &f, sizeof(f));
 
 	if (net->setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, ses->ifname, strlen(ses->ifname))) {
-		log_ppp_error("ipv6_nd: setsockopt(SO_BINDTODEVICE): %s\n", strerror(errno));
+		log_ppp_error("dhcpv6: setsockopt(SO_BINDTODEVICE): %s\n", strerror(errno));
 		close(sock);
 		return;
 	}
@@ -241,8 +244,8 @@ static void dhcpv6_send_reply(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, i
 	struct dhcpv6_opt_ia_na *ia_na;
 	struct dhcpv6_opt_ia_addr *ia_addr;
 	struct dhcpv6_opt_ia_prefix *ia_prefix;
+	struct in6_addr addr, prefix;
 	struct ipv6db_addr_t *a;
-	struct in6_addr addr;
 	struct ap_session *ses = req->ses;
 	int f = 0, f1, f2 = 0;
 
@@ -279,7 +282,8 @@ static void dhcpv6_send_reply(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, i
 					opt2 = dhcpv6_nested_option_alloc(reply, opt1, D6_OPTION_IAADDR, sizeof(*ia_addr) - sizeof(struct dhcpv6_opt_hdr));
 					ia_addr = (struct dhcpv6_opt_ia_addr *)opt2->hdr;
 
-					build_ip6_addr(a, ses->ipv6->peer_intf_id, &ia_addr->addr);
+					build_ip6_addr(a, ses->ipv6->peer_intf_id, &addr);
+					memcpy(&ia_addr->addr, &addr, sizeof(addr));
 
 					ia_addr->pref_lifetime = htonl(conf_pref_lifetime);
 					ia_addr->valid_lifetime = htonl(conf_valid_lifetime);
@@ -306,8 +310,9 @@ static void dhcpv6_send_reply(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, i
 					list_for_each_entry(opt2, &opt->opt_list, entry) {
 						if (ntohs(opt2->hdr->code) == D6_OPTION_IAADDR) {
 							ia_addr = (struct dhcpv6_opt_ia_addr *)opt2->hdr;
+							addr = ia_addr->addr;
 
-							if (IN6_IS_ADDR_UNSPECIFIED(&ia_addr->addr))
+							if (IN6_IS_ADDR_UNSPECIFIED(&addr))
 								continue;
 
 							f1 = 0;
@@ -386,8 +391,9 @@ static void dhcpv6_send_reply(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, i
 					list_for_each_entry(opt2, &opt->opt_list, entry) {
 						if (ntohs(opt2->hdr->code) == D6_OPTION_IAPREFIX) {
 							ia_prefix = (struct dhcpv6_opt_ia_prefix *)opt2->hdr;
+							prefix = ia_prefix->prefix;
 
-							if (ia_prefix->prefix_len == 0 || IN6_IS_ADDR_UNSPECIFIED(&ia_prefix->prefix))
+							if (ia_prefix->prefix_len == 0 || IN6_IS_ADDR_UNSPECIFIED(&prefix))
 								continue;
 
 							f1 = 0;
@@ -461,7 +467,7 @@ static void dhcpv6_send_reply2(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, 
 	struct dhcpv6_opt_ia_addr *ia_addr;
 	struct dhcpv6_opt_ia_prefix *ia_prefix;
 	struct ipv6db_addr_t *a;
-	struct in6_addr addr;
+	struct in6_addr addr, prefix;
 	struct ap_session *ses = req->ses;
 	int f = 0, f1, f2 = 0, f3;
 
@@ -485,8 +491,8 @@ static void dhcpv6_send_reply2(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, 
 			list_for_each_entry(opt2, &opt->opt_list, entry) {
 				if (ntohs(opt2->hdr->code) == D6_OPTION_IAADDR) {
 					ia_addr = (struct dhcpv6_opt_ia_addr *)opt2->hdr;
-
-					if (IN6_IS_ADDR_UNSPECIFIED(&ia_addr->addr))
+					addr = ia_addr->addr;
+					if (IN6_IS_ADDR_UNSPECIFIED(&addr))
 						continue;
 
 					f1 = 0;
@@ -547,8 +553,9 @@ static void dhcpv6_send_reply2(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, 
 			list_for_each_entry(opt2, &opt->opt_list, entry) {
 				if (ntohs(opt2->hdr->code) == D6_OPTION_IAPREFIX) {
 					ia_prefix = (struct dhcpv6_opt_ia_prefix *)opt2->hdr;
+					prefix = ia_prefix->prefix;
 
-					if (ia_prefix->prefix_len == 0 || IN6_IS_ADDR_UNSPECIFIED(&ia_prefix->prefix))
+					if (ia_prefix->prefix_len == 0 || IN6_IS_ADDR_UNSPECIFIED(&prefix))
 						continue;
 
 					f1 = 0;

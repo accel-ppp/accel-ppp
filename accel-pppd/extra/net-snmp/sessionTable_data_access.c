@@ -201,7 +201,7 @@ sessionTable_container_load(netsnmp_container *container)
     sessionTable_rowreq_ctx *rowreq_ctx;
     size_t                 count = 0;
 		struct ap_session *ses;
-		struct rtnl_link_stats stats;
+		struct rtnl_link_stats64 stats;
 
     DEBUGMSGTL(("verbose:sessionTable:sessionTable_container_load","called\n"));
 
@@ -240,10 +240,10 @@ sessionTable_container_load(netsnmp_container *container)
 				ap_session_read_stats(ses, &stats);
 				rowreq_ctx->data->rx_pkts = stats.rx_packets;
 				rowreq_ctx->data->rx_bytes = stats.rx_bytes;
-				rowreq_ctx->data->rx_gw = ses->acct_input_gigawords;
+				rowreq_ctx->data->rx_gw = stats.rx_bytes >> (sizeof(uint32_t) * 8);
 				rowreq_ctx->data->tx_pkts = stats.tx_packets;
 				rowreq_ctx->data->tx_bytes = stats.tx_bytes;
-				rowreq_ctx->data->tx_gw = ses->acct_output_gigawords;
+				rowreq_ctx->data->tx_gw = stats.tx_bytes >> (sizeof(uint32_t) * 8);
 
 
         CONTAINER_INSERT(container, rowreq_ctx);

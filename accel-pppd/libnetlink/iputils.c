@@ -103,7 +103,7 @@ out_err:
 	return -1;
 }
 
-int __export iplink_get_stats(int ifindex, struct rtnl_link_stats *stats)
+int __export iplink_get_stats(int ifindex, struct rtnl_link_stats64 *stats)
 {
 	struct iplink_req {
 		struct nlmsghdr n;
@@ -142,8 +142,8 @@ int __export iplink_get_stats(int ifindex, struct rtnl_link_stats *stats)
 		goto out;
 
 	parse_rtattr(tb, IFLA_MAX, IFLA_RTA(ifi), len);
-	if (tb[IFLA_STATS]) {
-		memcpy(stats, RTA_DATA(tb[IFLA_STATS]), sizeof(*stats));
+	if (tb[IFLA_STATS64]) {
+		memcpy(stats, RTA_DATA(tb[IFLA_STATS64]), sizeof(*stats));
 		r = 0;
 	}
 
@@ -314,7 +314,7 @@ int __export iplink_vlan_get_vid(int ifindex, int *iflink)
 
 	parse_rtattr_nested(tb, IFLA_MAX, tb[IFLA_LINKINFO]);
 
-	if (strcmp(RTA_DATA(tb[IFLA_INFO_KIND]), "vlan"))
+	if (!tb[IFLA_INFO_KIND] || strcmp(RTA_DATA(tb[IFLA_INFO_KIND]), "vlan"))
 		goto out;
 
 	parse_rtattr_nested(tb, IFLA_MAX, tb[IFLA_INFO_DATA]);
