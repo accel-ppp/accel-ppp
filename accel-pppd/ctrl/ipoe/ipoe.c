@@ -416,7 +416,13 @@ static void ipoe_session_timeout(struct triton_timer_t *t)
 
 	triton_timer_del(t);
 
-	log_ppp_info2("ipoe: session timed out\n");
+	log_ppp_info2("ipoe: session timed out hwaddr=%02x:%02x:%02x:%02x:%02x:%02x\n",
+			ses->hwaddr[0],
+			ses->hwaddr[1],
+			ses->hwaddr[2],
+			ses->hwaddr[3],
+			ses->hwaddr[4],
+			ses->hwaddr[5]);
 
 	ap_session_terminate(&ses->ses, TERM_LOST_CARRIER, 1);
 }
@@ -427,7 +433,13 @@ static void ipoe_session_l4_redirect_timeout(struct triton_timer_t *t)
 
 	triton_timer_del(t);
 
-	log_ppp_info2("ipoe: session timed out\n");
+	log_ppp_info2("ipoe: session timed out hwaddr=%02x:%02x:%02x:%02x:%02x:%02x\n",
+			ses->hwaddr[0],
+			ses->hwaddr[1],
+			ses->hwaddr[2],
+			ses->hwaddr[3],
+			ses->hwaddr[4],
+			ses->hwaddr[5]);
 
 	ap_session_terminate(&ses->ses, TERM_NAS_REQUEST, 1);
 }
@@ -444,7 +456,13 @@ static void ipoe_relay_timeout(struct triton_timer_t *t)
 	if (++ses->relay_retransmit > conf_relay_retransmit) {
 		triton_timer_del(t);
 
-		log_ppp_info2("ipoe: relay timed out\n");
+		log_ppp_info2("ipoe: relay timed out hwaddr=%02x:%02x:%02x:%02x:%02x:%02x\n",
+				ses->hwaddr[0],
+				ses->hwaddr[1],
+				ses->hwaddr[2],
+				ses->hwaddr[3],
+				ses->hwaddr[4],
+				ses->hwaddr[5]);
 
 		ap_session_terminate(&ses->ses, TERM_LOST_CARRIER, 1);
 	} else
@@ -1004,7 +1022,13 @@ static void __ipoe_session_activate(struct ipoe_session *ses)
 	if (ses->terminating || ses->started)
 		return;
 
-	log_ppp_debug("ipoe: activate session\n");
+	log_ppp_debug("ipoe: activate session hwaddr=%02x:%02x:%02x:%02x:%02x:%02x\n",
+			ses->hwaddr[0],
+			ses->hwaddr[1],
+			ses->hwaddr[2],
+			ses->hwaddr[3],
+			ses->hwaddr[4],
+			ses->hwaddr[5]);
 
 	if (ses->ifindex != -1) {
 		addr = 0;
@@ -1163,7 +1187,13 @@ static void ipoe_session_started(struct ap_session *s)
 {
 	struct ipoe_session *ses = container_of(s, typeof(*ses), ses);
 
-	log_ppp_info1("ipoe: session started\n");
+	log_ppp_info1("ipoe: session started hwaddr=%02x:%02x:%02x:%02x:%02x:%02x\n",
+			ses->hwaddr[0],
+			ses->hwaddr[1],
+			ses->hwaddr[2],
+			ses->hwaddr[3],
+			ses->hwaddr[4],
+			ses->hwaddr[5]);
 
 	if (ses->timer.tpd)
 		triton_timer_mod(&ses->timer, 0);
@@ -1228,7 +1258,13 @@ static void ipoe_session_finished(struct ap_session *s)
 	struct unit_cache *uc;
 	struct ifreq ifr;
 
-	log_ppp_info1("ipoe: session finished\n");
+	log_ppp_info1("ipoe: session finished hwaddr=%02x:%02x:%02x:%02x:%02x:%02x\n",
+			ses->hwaddr[0],
+			ses->hwaddr[1],
+			ses->hwaddr[2],
+			ses->hwaddr[3],
+			ses->hwaddr[4],
+			ses->hwaddr[5]);
 
 	if (ses->ifindex != -1) {
 		if (uc_size < conf_unit_cache) {
