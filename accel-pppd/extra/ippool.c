@@ -100,10 +100,20 @@ struct ippool_t *find_pool(char *name, int create)
 
 static void parse_gw_ip_address(const char *val)
 {
+	char addr[17];
+	char *ptr;
+
 	if (!val)
 		return;
 
-	conf_gw_ip_address = inet_addr(val);
+	ptr = strchr(val, '/');
+	if (ptr) {
+		memcpy(addr, val, ptr - val);
+		addr[ptr - val] = 0;
+		conf_gw_ip_address = inet_addr(addr);
+	}
+	else
+		conf_gw_ip_address = inet_addr(val);
 }
 
 //parses ranges like x.x.x.x/mask
