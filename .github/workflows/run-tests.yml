@@ -46,11 +46,6 @@ jobs:
             untar: true
             format: raw
 
-          - distro: Debian10
-            image: https://cloud.debian.org/images/cloud/buster/latest/debian-10-generic-amd64.tar.xz
-            untar: true
-            format: raw
-
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
@@ -176,8 +171,6 @@ jobs:
 
       - name: Run tests (all)
         timeout-minutes: 5
-        # vlan-mon tests fail on Debian10 due to Debian10 bug so don't run all tests on deb10
-        if: ${{ matrix.distro != 'Debian10' }}
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp/tests && 
           sudo python3 -m pytest -Wall -v"
