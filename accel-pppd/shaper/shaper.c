@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <sys/mman.h>
 #include <pthread.h>
+#include <limits.h>
 
 #include "triton.h"
 #include "events.h"
@@ -801,6 +802,45 @@ static void print_rate(struct ap_session *ses, char *buf)
 		*buf = 0;
 }
 
+static void shaper_refresh_help(char * const *f, int f_Cnt, void *cli)
+{
+	cli_send(cli, "shaper refresh <interface> - refresh shaper settings on specified interface (delete and install shaper)\r\n");
+	cli_send(cli, "shaper refresh all - refresh shaper settings on all interfaces (delete and install shaper)\r\n");
+}
+
+static int shaper_refresh_exec(const char *cmd, char * const *f, int f_cnt, void *cli)
+{
+	struct shaper_pd_t *pd;
+	int all = 0, found = 0;
+
+	if (f_cnt < 3)
+		return CLI_CMD_SYNTAX;
+
+	if (!strcmp(f[2], "all"))
+		all = 1;
+
+	pthread_rwlock_rdlock(&shaper_lock);
+	list_for_each_entry(pd, &shaper_list, entry) {
+		if (all || !strcmp(f[2], pd->ses->ifname)) {
+			if (!pd->cur_tr)
+				pd->cur_tr = get_tr_pd(pd, 0);
+
+			__sync_add_and_fetch(&pd->refs, 1);
+			triton_context_call(pd->ses->ctrl->ctx, (triton_event_func)shaper_change, pd);
+			if (!all) {
+				found = 1;
+				break;
+			}
+		}
+	}
+	pthread_rwlock_unlock(&shaper_lock);
+
+	if (!all && !found)
+		cli_send(cli, "not found\r\n");
+
+	return CLI_CMD_OK;
+}
+
 static void shaper_ctx_close(struct triton_context_t *ctx)
 {
 	struct time_range_t *r;
@@ -1140,6 +1180,8 @@ static void load_config(void)
 			conf_up_limiter = LIM_POLICE;
 		else if (!strcmp(opt, "htb"))
 			conf_up_limiter = LIM_HTB;
+		else if (!strcmp(opt, "adv_shaper"))
+			conf_up_limiter = LIM_ADV_SHAPER;
 		else
 			log_error("shaper: unknown upstream limiter '%s'\n", opt);
 	}
@@ -1150,8 +1192,14 @@ static void load_config(void)
 			conf_down_limiter = LIM_TBF;
 		else if (!strcmp(opt, "htb"))
 			conf_down_limiter = LIM_HTB;
+		else if (!strcmp(opt, "adv_shaper"))
+			conf_down_limiter = LIM_ADV_SHAPER;
 		else
 			log_error("shaper: unknown downstream limiter '%s'\n", opt);
+	}
+
+	if (conf_down_limiter == LIM_ADV_SHAPER || conf_up_limiter == LIM_ADV_SHAPER) {
+		load_advanced_shaper();
 	}
 
 	if (conf_up_limiter == LIM_HTB && !conf_ifb_ifindex) {
@@ -1219,6 +1267,8 @@ static void init(void)
 	//triton_event_register_handler(EV_CTRL_FINISHED, (triton_event_func)ev_ctrl_finished);
 	triton_event_register_handler(EV_SHAPER, (triton_event_func)ev_shaper);
 	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
+
+	cli_register_simple_cmd2(shaper_refresh_exec, shaper_refresh_help, 2, "shaper", "refresh");
 
 	cli_register_simple_cmd2(shaper_change_exec, shaper_change_help, 2, "shaper", "change");
 	cli_register_simple_cmd2(shaper_restore_exec, shaper_restore_help, 2, "shaper", "restore");
