@@ -5,6 +5,8 @@
 #include <netinet/in.h>
 #include <stdint.h>
 
+#include "config.h"
+
 typedef int (*iplink_list_func)(int index, int flags, const char *name, int iflink, int vid, void *arg);
 
 int iplink_list(iplink_list_func func, void *arg);
@@ -14,14 +16,26 @@ int iplink_set_mtu(int ifindex, int mtu);
 int iplink_vlan_add(const char *ifname, int ifindex, int vid);
 int iplink_vlan_del(int ifindex);
 int iplink_vlan_get_vid(int ifindex, int *iflink);
+#ifdef HAVE_VRF
+int iplink_get_vrf_ifindex(int ifindex);
+int iplink_get_vrf_info(int vrf_ifindex, char **vrf_name, uint8_t *table_id);
+#endif /* HAVE_VRF */
 
 int ipaddr_add(int ifindex, in_addr_t addr, int mask);
 int ipaddr_add_peer(int ifindex, in_addr_t addr, in_addr_t peer_addr);
 int ipaddr_del(int ifindex, in_addr_t addr, int mask);
 int ipaddr_del_peer(int ifindex, in_addr_t addr, in_addr_t peer);
 
-int iproute_add(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw, int proto, int mask, uint32_t prio);
-int iproute_del(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw, int proto, int mask, uint32_t prio);
+int iproute_add(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw, int proto, int mask, uint32_t prio
+#ifdef HAVE_VRF
+		, int tableid
+#endif /* HAVE_VRF */
+		);
+int iproute_del(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw, int proto, int mask, uint32_t prio
+#ifdef HAVE_VRF
+		, int tableid
+#endif /* HAVE_VRF */
+		);
 in_addr_t iproute_get(in_addr_t dst, in_addr_t *gw);
 
 int ip6route_add(int ifindex, const struct in6_addr *dst, int pref_len, const struct in6_addr *gw, int proto, uint32_t prio);

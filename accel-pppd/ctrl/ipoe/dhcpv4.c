@@ -241,11 +241,34 @@ void dhcpv4_free(struct dhcpv4_serv *serv)
 	_free(serv);
 }
 
-void dhcpv4_print_packet(struct dhcpv4_packet *pack, int relay, void (*print)(const char *fmt, ...))
+void dhcpv4_print_packet(struct dhcpv4_packet *pack, in_addr_t relay_addr, void (*print)(const char *fmt, ...))
 {
 	const char *msg_name[] = {"Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform"};
 
-	print("[DHCPv4 %s%s xid=%x ", relay ? "relay " : "", msg_name[pack->msg_type - 1], pack->hdr->xid);
+	print("[DHCPv4 ");
+	if (relay_addr) {
+		print("relay ");
+		switch(pack->msg_type) {
+		case DHCPDISCOVER:
+		case DHCPREQUEST:
+		case DHCPDECLINE:
+		case DHCPRELEASE:
+		case DHCPINFORM:
+			print("to ");
+			break;
+		case DHCPOFFER:
+		case DHCPACK:
+		case DHCPNAK:
+			print("from ");
+			break;
+		}
+		print("%u.%u.%u.%u ",
+				relay_addr & 0xFF,
+				(relay_addr >> 8) & 0xFF,
+				(relay_addr >> 16) & 0xFF,
+				(relay_addr >> 24) & 0xFF);
+	}
+	print("%s xid=%x ", msg_name[pack->msg_type - 1], pack->hdr->xid);
 
 	if (pack->hdr->ciaddr) {
 		in_addr_t addr = ntohl(pack->hdr->ciaddr);
@@ -578,6 +601,8 @@ static int dhcpv4_read(struct triton_md_handler_t *h)
 
 static int dhcpv4_relay_read(struct triton_md_handler_t *h)
 {
+	struct sockaddr_in src_addr;
+	socklen_t addr_len = sizeof(struct sockaddr_in);
 	struct dhcpv4_packet *pack;
 	struct dhcpv4_relay *r = container_of(h, typeof(*r), hnd);
 	int n;
@@ -590,7 +615,8 @@ static int dhcpv4_relay_read(struct triton_md_handler_t *h)
 			return 1;
 		}
 
-		n = read(h->fd, pack->data, BUF_SIZE);
+		n = recvfrom(h->fd, pack->data, BUF_SIZE, 0, (struct sockaddr *)&src_addr, &addr_len);
+
 		if (n == -1) {
 			mempool_free(pack);
 			if (errno == EAGAIN)
@@ -608,6 +634,8 @@ static int dhcpv4_relay_read(struct triton_md_handler_t *h)
 			dhcpv4_packet_free(pack);
 			continue;
 		}
+
+		pack->src_addr = src_addr.sin_addr.s_addr;
 
 		pthread_mutex_lock(&relay_lock);
 		list_for_each_entry(c, &r->ctx_list, entry) {
@@ -960,7 +988,12 @@ void dhcpv4_send_notify(struct dhcpv4_serv *serv, struct dhcpv4_packet *req, uns
 	dhcpv4_packet_free(pack);
 }
 
-struct dhcpv4_relay *dhcpv4_relay_create(const char *_addr, in_addr_t giaddr, struct triton_context_t *ctx, triton_event_func recv)
+struct dhcpv4_relay *dhcpv4_relay_create(const char *_addr, in_addr_t giaddr, struct triton_context_t *ctx, triton_event_func recv
+#ifdef HAVE_VRF
+		, const char *vrfname)
+#else
+		)
+#endif
 {
 	char str[17], *ptr;
 	struct dhcpv4_relay *r;
@@ -1008,9 +1041,20 @@ struct dhcpv4_relay *dhcpv4_relay_create(const char *_addr, in_addr_t giaddr, st
 		log_error("socket: %s\n", strerror(errno));
 		goto out_err_unlock;
 	}
-
+#ifdef HAVE_VRF
+#ifdef SO_BINDTODEVICE
+	if (strlen(vrfname) && setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, vrfname, strlen(vrfname) + 1) < 0)
+		log_error("dhcpv4: setsockopt(SO_BINDTODEVICE %s): %s\n", vrfname, strerror(errno));
+#endif /* SO_BINDTODEVICE */
+#endif /* HAVE_VRF */
 	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &f, sizeof(f)))
 		log_error("dhcpv4: setsockopt(SO_REUSEADDR): %s\n", strerror(errno));
+
+#ifdef HAVE_VRF
+	/* allow multiple UDP sockets from the same port but from different VRFs */
+	if (setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &f, sizeof(f)) < 0)
+		log_error("dhcpv4: setsockopt(SO_REUSEPORT): %s\n", strerror(errno));
+#endif /* HAVE_VRF */
 
 	if (bind(sock, &laddr, sizeof(laddr))) {
 		log_error("dhcpv4: relay: %s: bind: %s\n", _addr, strerror(errno));
@@ -1067,6 +1111,9 @@ void dhcpv4_relay_free(struct dhcpv4_relay *r, struct triton_context_t *ctx)
 {
 	struct dhcpv4_relay_ctx *c;
 
+	if (!r)
+		return;
+
 	pthread_mutex_lock(&relay_lock);
 	list_for_each_entry(c, &r->ctx_list, entry) {
 		if (c->ctx == ctx) {
@@ -1083,13 +1130,44 @@ void dhcpv4_relay_free(struct dhcpv4_relay *r, struct triton_context_t *ctx)
 	pthread_mutex_unlock(&relay_lock);
 }
 
-int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request, uint32_t server_id, const char *agent_circuit_id, const char *agent_remote_id, const char *link_selection)
+int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
+		uint32_t server_id, struct list_head *srv_list,
+		const char *agent_circuit_id, const char *agent_remote_id, const char *link_selection)
 {
 	int n;
+	struct ap_dhcpv4_srv *dhcp_srv, *dhcp_srv_iter;
 	int len = request->ptr - request->data;
 	uint32_t giaddr = request->hdr->giaddr;
 	struct dhcpv4_option *opt = NULL;
 	uint32_t _server_id;
+
+	if (!relay)
+		return 0;
+
+	/* Excepted for the DHCPDISCOVER and the initial DHCPREQUEST, the
+	 * client requests should not be forwarded to the servers that did
+	 * send the DHCPOFFER.
+	 *
+	 * The initial DHCPREQUEST (in response to a DHCPDISCOVER) MUST have no
+	 * filled 'client identifier' ciaddr. ciaddr is filled in next
+	 * DHCPREQUEST when renewing the address.
+	 */
+	if (request->msg_type == DHCPDISCOVER)
+		;
+	else if (request->msg_type == DHCPREQUEST && !request->hdr->ciaddr)
+		;
+	else {
+		dhcp_srv = NULL;
+		list_for_each_entry(dhcp_srv_iter, srv_list, entry) {
+			if (dhcp_srv_iter->addr == relay->addr) {
+				dhcp_srv = dhcp_srv_iter;
+				break;
+			}
+		}
+		if (!dhcp_srv)
+		/* Do no relay the client request to the relay->addr server */
+			return 0;
+	}
 
 	if (!request->relay_agent && (agent_remote_id || link_selection) &&
 	    dhcpv4_packet_insert_opt82(request, agent_circuit_id, agent_remote_id, link_selection))
@@ -1115,7 +1193,7 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 
 	if (conf_verbose) {
 		log_ppp_info2("send ");
-		dhcpv4_print_packet(request, 1, log_ppp_info2);
+		dhcpv4_print_packet(request, relay->addr, log_ppp_info2);
 	}
 
 	n = write(relay->hnd.fd, request->data, len);
@@ -1132,12 +1210,30 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 }
 
 int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint32_t xid, uint32_t ciaddr,
-	struct dhcpv4_option *client_id, struct dhcpv4_option *relay_agent,
+	struct dhcpv4_option *client_id, struct dhcpv4_option *relay_agent, struct list_head *srv_list,
         const char *agent_circuit_id, const char *agent_remote_id,
         const char *link_selection)
 {
+	struct ap_dhcpv4_srv *dhcp_srv, *dhcp_srv_iter;
 	struct dhcpv4_packet *pack;
 	int n, len;
+
+	if (!relay)
+		return 0;
+
+	if (relay->addr != server_addr)
+	dhcp_srv = NULL;
+	list_for_each_entry(dhcp_srv_iter, srv_list, entry) {
+		if (dhcp_srv_iter->addr == relay->addr) {
+			dhcp_srv = dhcp_srv_iter;
+			break;
+		}
+	}
+	if (!dhcp_srv)
+		/* Do no send a DHCPRELEASE to a server that does not initiate
+		 * the DHCPOFFER
+		 */
+		return 0;
 
 	pack = dhcpv4_packet_alloc();
 	if (!pack) {
@@ -1185,7 +1281,7 @@ int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint3
 
 	if (conf_verbose) {
 		log_ppp_info2("send ");
-		dhcpv4_print_packet(pack, 1, log_ppp_info2);
+		dhcpv4_print_packet(pack, relay->addr, log_ppp_info2);
 	}
 
 	n = write(relay->hnd.fd, pack->data, len);

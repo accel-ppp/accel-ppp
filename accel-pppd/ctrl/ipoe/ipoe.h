@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <linux/if.h>
 
+#include "config.h"
 #include "triton.h"
 #include "ap_session.h"
 #include "ipdb.h"
@@ -39,15 +40,20 @@ struct ipoe_serv {
 	struct list_head sessions;
 	unsigned int sess_cnt;
 	struct dhcpv4_serv *dhcpv4;
-	struct dhcpv4_relay *dhcpv4_relay;
 	void *arp;
 	struct list_head disc_list;
 	struct list_head arp_list;
 	struct list_head req_list;
+	struct list_head relay_list;
 	struct triton_timer_t disc_timer;
 	struct triton_timer_t timer;
 	pthread_mutex_t lock;
 	int parent_ifindex;
+#ifdef HAVE_VRF
+	int vrf_ifindex;
+	char vrf_name[IFNAMSIZ];
+	uint8_t table_id;
+#endif /* HAVE_VRF */
 	int vid;
 	int parent_vid;
 	int opt_mode;
@@ -115,7 +121,6 @@ struct ipoe_session {
 	unsigned int started:1;
 	unsigned int terminating:1;
 	unsigned int dhcp_addr:1;
-	unsigned int relay_addr:1;
 	unsigned int l4_redirect:1;
 	unsigned int l4_redirect_set:1;
 	unsigned int terminate:1;
