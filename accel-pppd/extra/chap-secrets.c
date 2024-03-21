@@ -739,9 +739,22 @@ static void parse_gw_ip_address(const char *opt)
 	const char *ptr = strchr(opt, '/');
 
 	if (ptr) {
+		// safeguard, we don't want to overflow/underflow addr
+		if (ptr - opt > 16 || ptr - opt < 7) {
+			log_error("chap-secrets: invalid gw-ip-address %s\n", opt);
+			conf_gw_ip_address = 0;
+			conf_netmask = 0;
+			return;
+		}
 		memcpy(addr, opt, ptr - opt);
 		addr[ptr - opt] = 0;
 		conf_gw_ip_address = inet_addr(addr);
+		// safeguard, if / is the last character, then ptr + 1 == NULL
+		if (!ptr[1]) {
+			log_error("chap-secrets: invalid netmask %s\n", ptr);
+			conf_netmask = 32;
+			return;
+		}
 		conf_netmask = atoi(ptr + 1);
 		if (conf_netmask < 0 || conf_netmask > 32) {
 			log_error("chap-secrets: invalid netmask %i\n", conf_netmask);

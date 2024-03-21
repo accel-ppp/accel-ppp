@@ -108,6 +108,9 @@ static void parse_gw_ip_address(const char *val)
 
 	ptr = strchr(val, '/');
 	if (ptr) {
+		// safeguard, don't crash on oversized or undersized strings
+		if (ptr - val > 15 || ptr - val < 7)
+			return;
 		memcpy(addr, val, ptr - val);
 		addr[ptr - val] = 0;
 		conf_gw_ip_address = inet_addr(addr);
