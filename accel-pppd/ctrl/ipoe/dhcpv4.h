@@ -6,6 +6,7 @@
 #include <endian.h>
 #include "list.h"
 
+#include "config.h"
 #include "triton.h"
 
 #define __aligned(n) __attribute__((aligned (n)))
@@ -111,7 +112,12 @@ struct rad_packet_t;
 struct dhcpv4_serv *dhcpv4_create(struct triton_context_t *ctx, const char *ifname, const char *opt);
 void dhcpv4_free(struct dhcpv4_serv *);
 
-struct dhcpv4_relay *dhcpv4_relay_create(const char *addr, in_addr_t giaddr, struct triton_context_t *ctx, triton_event_func recv);
+struct dhcpv4_relay *dhcpv4_relay_create(const char *addr, in_addr_t giaddr, struct triton_context_t *ctx, triton_event_func recv
+#ifdef HAVE_VRF
+		, const char *vrfname);
+#else
+		);
+#endif
 void dhcpv4_relay_free(struct dhcpv4_relay *, struct triton_context_t *);
 int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request, uint32_t server_id,
         const char *agent_circuit_id, const char *agent_remote_id,
