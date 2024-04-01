@@ -18,6 +18,7 @@
 #include <net/netns/generic.h>
 
 #include "vlan_mon.h"
+#include "version.h"
 
 #define VLAN_MON_MAGIC 0x639fa78c
 
@@ -728,7 +729,7 @@ static int __init vlan_mon_init(void)
 	int i;
 #endif
 
-	printk("vlan-mon driver v1.11\n");
+	printk("vlan-mon driver v%s\n", ACCEL_PPP_VERSION);
 
 	INIT_WORK(&vlan_notify_work, vlan_do_notify);
 

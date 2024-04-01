@@ -1,3 +1,4 @@
+
 if (NOT DEFINED KDIR)
 	set(KDIR "/usr/src/linux")
 endif (NOT DEFINED KDIR)
@@ -6,6 +7,7 @@ ADD_CUSTOM_COMMAND(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/driver/ipoe.ko
 	COMMAND rm -rf ${CMAKE_CURRENT_BINARY_DIR}/driver
 	COMMAND mkdir ${CMAKE_CURRENT_BINARY_DIR}/driver
 	COMMAND ln -sf ${CMAKE_CURRENT_SOURCE_DIR}/* ${CMAKE_CURRENT_BINARY_DIR}/driver
+	COMMAND ln -sf ${CMAKE_BINARY_DIR}/version.h ${CMAKE_CURRENT_BINARY_DIR}/driver
 	COMMAND make -C ${KDIR} M=${CMAKE_CURRENT_BINARY_DIR}/driver modules
 	DEPENDS ipoe.c ipoe.h
 )
