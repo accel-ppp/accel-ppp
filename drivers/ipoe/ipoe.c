@@ -33,6 +33,7 @@
 #include <net/ip6_route.h>
 
 #include "ipoe.h"
+#include "version.h"
 
 #define BEGIN_UPDATE 1
 #define UPDATE 2
@@ -1909,7 +1910,7 @@ static int __init ipoe_init(void)
 {
 	int err, i;
 
-	printk("IPoE session driver v1.11\n");
+	printk("IPoE session driver v%s\n", ACCEL_PPP_VERSION);
 
 	/*err = register_pernet_device(&ipoe_net_ops);
 	if (err < 0)
