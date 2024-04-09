@@ -77,7 +77,8 @@ jobs:
           path: build/accel-ppp_*.deb
           if-no-files-found: error
 
-  Build-in-Container:
+  # Debian based distros
+  Build-in-Container-Debian:
     #if: ${{ false }} # disable for now
     strategy:
       fail-fast: false
@@ -215,3 +216,38 @@ jobs:
         run: sleep 1
       - name: Check accel-ppp stat
         run: accel-cmd show stat
+
+  Build-in-Container-Alpine:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Install build tools
+        run: >
+          apk update && apk add --no-cache git cmake make g++ pcre-dev libressl-dev linux-headers libucontext-dev lua5.1-dev
+      - name: Check out repository code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: mkdir build
+        run: mkdir build
+      - name: Disable git security warnings
+        run: git config --global --add safe.directory '*'
+      - name: cmake
+        working-directory: ./build
+        run: >
+          cmake -DBUILD_IPOE_DRIVER=FALSE -DBUILD_VLAN_MON_DRIVER=FALSE -DCMAKE_INSTALL_PREFIX=/usr
+          -DKDIR=/usr/src/linux-headers-`uname -r`
+          -DLUA=TRUE -DSHAPER=FALSE -DRADIUS=TRUE ..
+      - name: make and install
+        working-directory: ./build
+        run: make && make install
+      - name: Copy default config
+        run: cp accel-pppd/accel-ppp.conf /etc/accel-ppp.conf
+      - name: Start accel-ppp with default config
+        run: accel-pppd -d -c /etc/accel-ppp.conf
+      - name: Sleep for 1 sec
+        run: sleep 1
+      - name: Check accel-ppp stat
+        run: accel-cmd show stat
+  
