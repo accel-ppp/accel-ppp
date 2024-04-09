@@ -15,7 +15,9 @@
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <linux/if.h>
+#ifdef HAVE_GOOD_IFARP
 #include <linux/if_arp.h>
+#endif
 #include <linux/route.h>
 
 #include <pcre.h>
