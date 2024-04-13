@@ -125,7 +125,7 @@ jobs:
           libpcre3-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
           libxml2-dev libxslt1-dev zlib1g-dev 
           iproute2 ppp pppoe isc-dhcp-client timelimit && 
-          (sudo pip3 install pytest pytest-dependency gcovr || sudo pip3 install --break-system-packages pytest pytest-dependency gcovr)"
+          (sudo pip3 install pytest pytest-dependency || sudo pip3 install --break-system-packages pytest pytest-dependency)"
       - name: Copy source code to target OS
         run: |
           tar -Jcf accel-ppp.tar.xz accel-ppp
@@ -206,7 +206,7 @@ jobs:
 
       - name: Install testing tools (using pip)
         run: >
-          sudo pip3 install pytest pytest-dependency gcovr
+          sudo pip3 install pytest pytest-dependency
 
       - name: Check out repository code
         uses: actions/checkout@v3
@@ -216,7 +216,7 @@ jobs:
       - name: mkdir build
         run: mkdir build
 
-      - name: cmake (with coverage)
+      - name: cmake
         working-directory: ./build
         run: >
           cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
