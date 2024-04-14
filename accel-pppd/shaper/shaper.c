@@ -1150,6 +1150,8 @@ static void load_config(void)
 			conf_down_limiter = LIM_TBF;
 		else if (!strcmp(opt, "htb"))
 			conf_down_limiter = LIM_HTB;
+		else if (!strcmp(opt, "clsact"))
+			conf_down_limiter = LIM_CLSACT;
 		else
 			log_error("shaper: unknown downstream limiter '%s'\n", opt);
 	}

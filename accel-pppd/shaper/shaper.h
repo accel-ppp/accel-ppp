@@ -4,6 +4,7 @@
 #define LIM_POLICE 0
 #define LIM_TBF 1
 #define LIM_HTB 2
+#define LIM_CLSACT 3
 
 #define LEAF_QDISC_SFQ 1
 #define LEAF_QDISC_FQ_CODEL 2

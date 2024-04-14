@@ -1231,8 +1231,8 @@ Specifies the fwmark for traffic that won't be passed through shaper.
 .BI "up-limiter=" police|htb
 Specifes upstream rate limiting method.
 .TP
-.BI "down-limiter=" tbf|htb
-Specifies downstream rate limiting method.
+.BI "down-limiter=" tbf|htb|clsact
+Specifies downstream rate limiting method. \fIclsact\fR is a policer
 .TP
 .BI "leaf-qdisc=" "qdisc parameters"
 In case if htb is used as up-limiter or down-limiter specified leaf qdisc can be attached automatically.
