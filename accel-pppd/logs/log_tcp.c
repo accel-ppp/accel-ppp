@@ -288,6 +288,7 @@ static int start_log(const char *_opt)
 
 	list_add_tail(&t->entry, &targets);
 
+	free(opt);
 	return 0;
 
 err:
