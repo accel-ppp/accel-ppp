@@ -48,6 +48,7 @@ ENDIF (RADIUS)
 INCLUDE (CheckCSourceCompiles)
 CHECK_C_SOURCE_COMPILES("
 #include <stdlib.h>
+#include <search.h>
 int main(void)
 {
 	__free_fn_t *f;
