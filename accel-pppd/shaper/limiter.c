@@ -498,7 +498,7 @@ static int install_fwmark(struct rtnl_handle *rth, int ifindex, int parent)
 	req.t.tcm_ifindex = ifindex;
 	req.t.tcm_handle = conf_fwmark;
 	req.t.tcm_parent = parent;
-	req.t.tcm_info = TC_H_MAKE(90 << 16, ntohs(ETH_P_IP));
+	req.t.tcm_info = TC_H_MAKE(90 << 16, ntohs(ETH_P_ALL));
 
 	addattr_l(&req.n, sizeof(req), TCA_KIND, "fw", 3);
 	tail = NLMSG_TAIL(&req.n);
@@ -580,8 +580,12 @@ int install_limiter(struct ap_session *ses, int down_speed, int down_burst, int 
 		}
 	}
 
-	if (conf_fwmark)
-		install_fwmark(rth, ses->ifindex, 0x00010000);
+	if (conf_fwmark) {
+		if (conf_down_limiter == LIM_CLSACT)
+			install_fwmark(rth, ses->ifindex, TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_EGRESS));
+		else
+			install_fwmark(rth, ses->ifindex, 0x00010000);
+	}
 
 	net->rtnl_put(rth);
 
