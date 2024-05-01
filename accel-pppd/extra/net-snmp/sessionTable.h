@@ -22,11 +22,11 @@ extern "C" {
 
 /* other required module components */
     /* *INDENT-OFF*  */
-config_add_mib(ACCEL-PPP-MIB)
-config_require(ACCEL-PPP-MIB/sessionTable/sessionTable_interface)
-config_require(ACCEL-PPP-MIB/sessionTable/sessionTable_data_access)
-config_require(ACCEL-PPP-MIB/sessionTable/sessionTable_data_get)
-config_require(ACCEL-PPP-MIB/sessionTable/sessionTable_data_set)
+config_add_mib(ACCEL-PPP-MIB);
+config_require(ACCEL-PPP-MIB/sessionTable/sessionTable_interface);
+config_require(ACCEL-PPP-MIB/sessionTable/sessionTable_data_access);
+config_require(ACCEL-PPP-MIB/sessionTable/sessionTable_data_get);
+config_require(ACCEL-PPP-MIB/sessionTable/sessionTable_data_set);
     /* *INDENT-ON*  */
 
 /* OID and column number definitions for sessionTable */
