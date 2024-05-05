@@ -31,6 +31,7 @@ static void print_status(struct dhcpv6_option *opt, void (*print)(const char *fm
 static void print_reconf(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...));
 static void print_dnssl(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...));
 static void print_ia_prefix(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...));
+static void print_aftr_gw(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...));
 
 static struct dict_option known_options[] = {
 	{ D6_OPTION_CLIENTID, "Client-ID", 1, 0, print_clientid },
@@ -56,6 +57,7 @@ static struct dict_option known_options[] = {
 	{ D6_OPTION_DOMAIN_LIST, "DNSSL", 1, 0, print_dnssl },
 	{ D6_OPTION_IA_PD, "IA-PD", 1, sizeof(struct dhcpv6_opt_ia_na), print_ia_na },
 	{ D6_OPTION_IAPREFIX, "IA-Prefix", 1, sizeof(struct dhcpv6_opt_ia_prefix), print_ia_prefix },
+	{ D6_OPTION_AFTR_NAME, "AFTR-Name", 1, 0, print_aftr_gw },
 	{ 0 }
 };
 
@@ -547,6 +549,24 @@ static void print_reconf(struct dhcpv6_option *opt, void (*print)(const char *fm
 static void print_dnssl(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))
 {
 
+}
+
+static void print_aftr_gw(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...)) {
+	int len = ntohs(opt->hdr->len);
+	int offset = 0;
+	char domain[255];
+	uint8_t label_len;
+
+	memset(domain, 0, 255);
+	while (offset < len) {
+		label_len = opt->hdr->data[offset];
+		if (label_len == 0)
+			break;
+		memcpy(&domain[offset], &opt->hdr->data[offset + 1], label_len);
+		offset += label_len;
+		domain[offset++] = '.';
+	}
+	print(" %s", domain);
 }
 
 static void print_ia_prefix(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))

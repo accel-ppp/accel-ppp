@@ -34,7 +34,7 @@
 #define D6_OPTION_DOMAIN_LIST     24
 #define D6_OPTION_IA_PD           25
 #define D6_OPTION_IAPREFIX        26
-#define D6_OPTION_IAPREFIX        26
+#define D6_OPTION_AFTR_NAME       64
 
 #define D6_SOLICIT                 1
 #define D6_ADVERTISE               2

@@ -73,6 +73,10 @@ IPv4 address assigning module.
 .br
 IPv6 address assigning module.
 .TP
+.BI ipv6_dhcp
+.br
+IPv6 DHCP module.
+.TP
 .BI sigchld
 Helper module to manage child processes, required by pppd_compat
 .TP
@@ -1148,6 +1152,10 @@ Specifies which Radius attribute contains pool name.
 .TP
 .BI "vendor=" vendor
 If attribute is vendor-specific then specify vendor name in this option.
+.SH [ipv6-dhcp]
+.TP
+.BI "aftr-gw=" name
+Specifies the AFTR-Name option value to be returned on DHCPv6 replies upon request from the client.
 .SH [ipv6-pool]
 .br
 Configuration of ipv6pool module.
