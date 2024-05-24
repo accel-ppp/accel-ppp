@@ -10,7 +10,7 @@ on:
 jobs:
   Test-in-Qemu:
     #if: ${{ false }} # disable for now
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: Test in Qemu (${{ matrix.distro }})
     strategy:
       fail-fast: false
@@ -53,14 +53,14 @@ jobs:
 
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           path: "accel-ppp"
       - name: Install qemu and required tools
         run: >
           sudo apt update && 
-          sudo apt -y install qemu-system-x86 qemu-utils cloud-image-utils cpu-checker cloud-image-utils wget openssh-client screen
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install qemu-system-x86 qemu-utils cloud-image-utils cpu-checker cloud-image-utils wget openssh-client screen
       - name: Check kvm support (fail is ok)
         run: sudo kvm-ok || exit 0
       - name: Prepare cloud-init image disk
@@ -193,23 +193,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        distro: ["ubuntu-22.04", "ubuntu-20.04"]
+        distro: ["ubuntu-24.04", "ubuntu-22.04", "ubuntu-20.04"]
 
     runs-on: ${{ matrix.distro }}
     steps:
       - name: Install build tools (using apt)
         run: >
           sudo apt update && 
-          sudo apt -y install git build-essential cmake gcc linux-headers-`uname -r` 
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
+          git build-essential cmake gcc linux-headers-`uname -r`
           libpcre3-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
           iproute2 ppp pppoe isc-dhcp-client
 
       - name: Install testing tools (using pip)
         run: >
-          sudo pip3 install pytest pytest-dependency
+          sudo pip3 install pytest pytest-dependency || sudo pip3 install --break-system-packages pytest pytest-dependency
 
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -245,23 +246,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        distro: ["ubuntu-22.04", "ubuntu-20.04"]
+        distro: ["ubuntu-24.04", "ubuntu-22.04", "ubuntu-20.04"]
 
     runs-on: ${{ matrix.distro }}
     steps:
       - name: Install build tools (using apt)
         run: >
           sudo apt update && 
-          sudo apt -y install git build-essential cmake gcc linux-headers-`uname -r` 
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
+          git build-essential cmake gcc linux-headers-`uname -r`
           libpcre3-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
           iproute2 ppp pppoe isc-dhcp-client
 
       - name: Install testing tools (using pip)
         run: >
-          sudo pip3 install pytest pytest-dependency gcovr
+          sudo pip3 install pytest pytest-dependency gcovr || sudo pip3 install --break-system-packages pytest pytest-dependency gcovr
 
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -305,7 +307,7 @@ jobs:
 
       - name: Upload coverage report
         # if: ${{ false }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-report-on-${{ matrix.distro }}
           path: tests/report/
