@@ -1243,7 +1243,7 @@ Specifes upstream rate limiting method.
 Specifies downstream rate limiting method. \fIclsact\fR is a policer
 .TP
 .BI "leaf-qdisc=" "qdisc parameters"
-In case if htb is used as up-limiter or down-limiter specified leaf qdisc can be attached automatically.
+In case if tbf is used as down-limiter or htb is used as up-limiter or down-limiter specified leaf qdisc can be attached automatically.
 At present sfq and fq_codel qdiscs are implemented. Parameters are same as for tc:
 .br
 sfq [ limit NUMBER ] [ perturn SECS ] [ quantum BYTES ]
