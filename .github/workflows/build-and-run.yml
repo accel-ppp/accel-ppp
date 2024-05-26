@@ -13,19 +13,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        distro: ["ubuntu-22.04", "ubuntu-20.04"]
+        include:
+          - distro: ubuntu-20.04
+            pkg-distro: ubuntu20.04
+            cpack-type: Ubuntu20
+          - distro: ubuntu-22.04
+            pkg-distro: ubuntu22.04
+            cpack-type: Ubuntu22
+          - distro: ubuntu-24.04
+            pkg-distro: ubuntu24.04
+            cpack-type: Ubuntu24
     runs-on: ${{ matrix.distro }}
     steps:
-      - name: Set vars for Ubuntu 20.04
-        if: ${{ matrix.distro == 'ubuntu-20.04' }}
-        run: |
-          echo "DISTRO=ubuntu20.04" >> $GITHUB_ENV
-          echo "CPACK_TYPE=Ubuntu20" >> $GITHUB_ENV
-      - name: Set vars for Ubuntu 22.04
-        if: ${{ matrix.distro == 'ubuntu-22.04' }}
-        run: |
-          echo "DISTRO=ubuntu22.04" >> $GITHUB_ENV
-          echo "CPACK_TYPE=Ubuntu20" >> $GITHUB_ENV
       - name: Set common vars
         run: |
           echo UNAME_R=`uname -r` >> $GITHUB_ENV
@@ -33,7 +32,8 @@ jobs:
       - name: Install build tools
         run: >
           sudo apt update && 
-          sudo apt -y install git build-essential cmake gcc linux-headers-`uname -r` 
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
+          git build-essential cmake gcc linux-headers-`uname -r`
           libpcre3-dev libssl-dev liblua5.1-0-dev kmod
       - name: Check out repository code
         uses: actions/checkout@v3
@@ -47,7 +47,7 @@ jobs:
           cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
           -DKDIR=/usr/src/linux-headers-`uname -r` 
           -DLUA=TRUE -DSHAPER=FALSE -DRADIUS=TRUE 
-          -DCPACK_TYPE=${{ env.CPACK_TYPE }} ..
+          -DCPACK_TYPE=${{ matrix.cpack-type }} ..
       - name: make
         working-directory: ./build
         run: make
@@ -58,10 +58,10 @@ jobs:
         working-directory: ./build
         run: >
           mv -v accel-ppp.deb 
-          accel-ppp_`git describe --tags --long | sed 's/^v//' | sed 's/-/+/' | sed 's/-/~/'`-1+${{ env.DISTRO }}_`uname -m`.deb
+          accel-ppp_`git describe --tags --long | sed 's/^v//' | sed 's/-/+/' | sed 's/-/~/'`-1+${{ matrix.pkg-distro }}_`uname -m`.deb
       - name: Install debian package
         working-directory: ./build
-        run: sudo apt -y install ./accel-ppp*.deb
+        run: NEEDRESTART_SUSPEND=1 sudo -E apt -y install ./accel-ppp*.deb
       - name: Copy default config
         run: sudo cp /etc/accel-ppp.conf.dist /etc/accel-ppp.conf
       - name: Start accel-ppp
@@ -71,7 +71,7 @@ jobs:
       - name: Check accel-ppp stat
         run: accel-cmd show stat
       - name: Upload .deb package as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: deb-package-${{ matrix.distro }}-${{ env.UNAME_M }}-${{ env.UNAME_R }}
           path: build/accel-ppp_*.deb
@@ -93,7 +93,7 @@ jobs:
             "ubuntu:22.04",
             "ubuntu:24.04"
           ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ${{ matrix.distro }}
     steps:
@@ -118,7 +118,7 @@ jobs:
       - name: Install build tools
         run: >
           apt update && apt -y upgrade && apt -y dist-upgrade &&
-          DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true apt -y install git build-essential cmake gcc 
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true apt -y install git build-essential cmake gcc 
           linux-headers-${{ env.HEADERS_SUFFIX }}
           libpcre3-dev libssl-dev liblua5.1-0-dev kmod
       - name: Get kernel name from headers
@@ -163,7 +163,7 @@ jobs:
       - name: Check accel-ppp stat
         run: accel-cmd show stat
       - name: Upload .deb package as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: deb-package-${{ env.DISTRO }}-${{ env.UNAME_M }}-${{ env.KERNEL_NAME }}
           path: build/accel-ppp_*.deb
@@ -218,7 +218,7 @@ jobs:
         run: accel-cmd show stat
 
   Build-in-Container-Alpine:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: alpine:latest
     steps:
