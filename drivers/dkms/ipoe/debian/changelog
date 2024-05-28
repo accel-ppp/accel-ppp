@@ -1,0 +1,5 @@
+accel-ppp-ipoe-dkms (1.13.0) unstable; urgency=low
+
+  * First ipoe dkms package
+
+ -- Sergey V. Lobanov <sergey@lobanov.in>  Wed, 29 May 2024 11:30:13 +0200

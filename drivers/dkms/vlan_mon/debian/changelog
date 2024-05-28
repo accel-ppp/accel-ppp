@@ -1,0 +1,5 @@
+accel-ppp-vlan-mon-dkms (1.13.0) unstable; urgency=low
+
+  * First vlan_mon dkms package
+
+ -- Sergey V. Lobanov <sergey@lobanov.in>  Wed, 29 May 2024 11:30:13 +0200

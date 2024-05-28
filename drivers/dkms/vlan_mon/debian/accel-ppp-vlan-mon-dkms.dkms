@@ -1,0 +1,5 @@
+PACKAGE_NAME="accel-ppp-vlan-mon"
+PACKAGE_VERSION="#MODULE_VERSION#"
+AUTOINSTALL=yes
+BUILT_MODULE_NAME="vlan_mon"
+DEST_MODULE_LOCATION="/updates/dkms"

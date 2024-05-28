@@ -10,7 +10,7 @@ on:
 jobs:
   Test-in-Qemu:
     #if: ${{ false }} # disable for now
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     name: Test in Qemu (${{ matrix.distro }})
     strategy:
       fail-fast: false
@@ -57,10 +57,15 @@ jobs:
         with:
           fetch-depth: 0
           path: "accel-ppp"
+      - name: Set common vars
+        run: |
+          echo NEEDRESTART_SUSPEND=1 >> $GITHUB_ENV
+          echo DEBIAN_FRONTEND=noninteractive  >> $GITHUB_ENV
+          echo DEBCONF_NONINTERACTIVE_SEEN=true >> $GITHUB_ENV
       - name: Install qemu and required tools
         run: >
           sudo apt update && 
-          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install qemu-system-x86 qemu-utils cloud-image-utils cpu-checker cloud-image-utils wget openssh-client screen
+          sudo -E apt -y install qemu-system-x86 qemu-utils cloud-image-utils cpu-checker cloud-image-utils wget openssh-client screen
       - name: Check kvm support (fail is ok)
         run: sudo kvm-ok || exit 0
       - name: Prepare cloud-init image disk
@@ -96,9 +101,9 @@ jobs:
           wget -nv ${{ matrix.image }} -O img/image
           qemu-img resize -f ${{ matrix.format }} img/`ls -1 img` +2G
       - name: Run target OS first time (for cloud-init actions)
-        run: sudo qemu-system-x86_64 -m 4096 -nographic -drive format=${{ matrix.format }},file=img/`ls -1 img` -drive format=raw,file=init.img
+        run: sudo qemu-system-x86_64 -m 3072 -nographic -drive format=${{ matrix.format }},file=img/`ls -1 img` -drive format=raw,file=init.img
       - name: Run target OS
-        run: sudo screen -dmS qemu qemu-system-x86_64 -net nic -net user,hostfwd=tcp::2222-:22 -m 4096 -nographic -drive format=${{ matrix.format }},file=img/`ls -1 img`
+        run: sudo screen -dmS qemu qemu-system-x86_64 -net nic -net user,hostfwd=tcp::2222-:22 -m 3072 -nographic -drive format=${{ matrix.format }},file=img/`ls -1 img`
       - name: Check that target OS is running
         run: |
           sleep 1
@@ -124,8 +129,11 @@ jobs:
           git build-essential cmake gcc linux-headers-\`uname -r\` 
           libpcre3-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
           libxml2-dev libxslt1-dev zlib1g-dev 
+          dkms kmod debhelper devscripts
           iproute2 ppp pppoe isc-dhcp-client timelimit && 
           (sudo pip3 install pytest pytest-dependency || sudo pip3 install --break-system-packages pytest pytest-dependency)"
+      - name: Install additional build tools (using apt) (for some OS)
+        run: ssh -i ssh-key -p2222 user@localhost "sudo -E apt -y install dh-dkms || exit 0"
       - name: Copy source code to target OS
         run: |
           tar -Jcf accel-ppp.tar.xz accel-ppp
@@ -135,10 +143,27 @@ jobs:
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp &&
           mkdir build && cd build &&
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          cmake -DBUILD_IPOE_DRIVER=FALSE -DBUILD_VLAN_MON_DRIVER=FALSE -DCMAKE_INSTALL_PREFIX=/usr 
           -DKDIR=/usr/src/linux-headers-\`uname -r\` 
           -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE .. &&
           make && sudo make install"
+
+      - name: build dkms package for ipoe
+        run: >
+          ssh -i ssh-key -p2222 user@localhost "cd accel-ppp/drivers/dkms/ipoe &&
+          cp -f ../../../build/version.h src/ &&
+          debuild -us -uc -tc -b"
+
+      - name: build dkms package for vlan_mon
+        run: >
+          ssh -i ssh-key -p2222 user@localhost "cd accel-ppp/drivers/dkms/vlan_mon &&
+          cp -f ../../../build/version.h src/ &&
+          debuild -us -uc -tc -b"
+
+      - name: install ipoe and vlan_mon via dkms
+        run: >
+          ssh -i ssh-key -p2222 user@localhost "cd accel-ppp/drivers/dkms &&
+          sudo -E apt -y install ./*.deb"
 
       - name: Run tests (not related to ipoe and vlan_mon drivers)
         timeout-minutes: 5
@@ -154,7 +179,7 @@ jobs:
       - name: Insert ipoe kernel module
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp &&
-          sudo insmod build/drivers/ipoe/driver/ipoe.ko &&
+          sudo modprobe ipoe &&
           lsmod | grep ipoe "
 
       - name: Run tests (not related to vlan_mon drivers)
@@ -172,7 +197,7 @@ jobs:
       - name: Insert vlan_mon kernel module
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp &&
-          sudo insmod build/drivers/vlan_mon/driver/vlan_mon.ko &&
+          sudo modprobe vlan_mon &&
           lsmod | grep vlan_mon"
 
       - name: Run tests (all)
@@ -197,13 +222,21 @@ jobs:
 
     runs-on: ${{ matrix.distro }}
     steps:
+      - name: Set common vars
+        run: |
+          echo NEEDRESTART_SUSPEND=1 >> $GITHUB_ENV
+          echo DEBIAN_FRONTEND=noninteractive  >> $GITHUB_ENV
+          echo DEBCONF_NONINTERACTIVE_SEEN=true >> $GITHUB_ENV
       - name: Install build tools (using apt)
         run: >
           sudo apt update && 
-          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
+          sudo -E apt -y install
           git build-essential cmake gcc linux-headers-`uname -r`
           libpcre3-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
-          iproute2 ppp pppoe isc-dhcp-client
+          iproute2 ppp pppoe isc-dhcp-client dkms debhelper devscripts
+
+      - name: Install additional build tools (using apt) (for some OS)
+        run: sudo -E apt -y install dh-dkms || exit 0
 
       - name: Install testing tools (using pip)
         run: >
@@ -217,22 +250,38 @@ jobs:
       - name: mkdir build
         run: mkdir build
 
-      - name: cmake
+      - name: cmake (without drivers)
         working-directory: ./build
         run: >
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          cmake -DBUILD_IPOE_DRIVER=FALSE -DBUILD_VLAN_MON_DRIVER=FALSE -DCMAKE_INSTALL_PREFIX=/usr 
           -DKDIR=/usr/src/linux-headers-`uname -r` 
           -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE ..
 
-      - name: make && make install
+      - name: make && make install (without drivers)
         working-directory: ./build
         run: make && sudo make install
+
+      - name: build dkms package for ipoe
+        working-directory: ./drivers/dkms/ipoe
+        run: |
+          cp -f ../../../build/version.h src/
+          debuild -us -uc -tc -b
+
+      - name: build dkms package for vlan_mon
+        working-directory: ./drivers/dkms/vlan_mon
+        run: |
+          cp -f ../../../build/version.h src/
+          debuild -us -uc -tc -b
+
+      - name: install ipoe and vlan_mon via dkms
+        working-directory: ./drivers/dkms
+        run: sudo -E apt -y install ./*.deb
 
       - name: Insert and check kernel modules (ipoe and vlan-mon)
         # if: ${{ false }}
         run: |
-          sudo insmod build/drivers/vlan_mon/driver/vlan_mon.ko
-          sudo insmod build/drivers/ipoe/driver/ipoe.ko
+          sudo modprobe vlan_mon
+          sudo modprobe ipoe
           lsmod | grep ipoe
           lsmod | grep vlan_mon
 
@@ -246,14 +295,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        distro: ["ubuntu-24.04", "ubuntu-22.04", "ubuntu-20.04"]
+        distro: ["ubuntu-24.04"]
 
     runs-on: ${{ matrix.distro }}
     steps:
+      - name: Set common vars
+        run: |
+          echo NEEDRESTART_SUSPEND=1 >> $GITHUB_ENV
+          echo DEBIAN_FRONTEND=noninteractive  >> $GITHUB_ENV
+          echo DEBCONF_NONINTERACTIVE_SEEN=true >> $GITHUB_ENV
       - name: Install build tools (using apt)
         run: >
           sudo apt update && 
-          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
+          sudo -E apt -y install
           git build-essential cmake gcc linux-headers-`uname -r`
           libpcre3-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
           iproute2 ppp pppoe isc-dhcp-client

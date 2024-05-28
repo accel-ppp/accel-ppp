@@ -28,15 +28,17 @@ jobs:
       - name: Set common vars
         run: |
           echo UNAME_R=`uname -r` >> $GITHUB_ENV
-          echo UNAME_M=`uname -m` >> $GITHUB_ENV;
+          echo UNAME_M=`uname -m` >> $GITHUB_ENV
+          echo NEEDRESTART_SUSPEND=1 >> $GITHUB_ENV
+          echo DEBIAN_FRONTEND=noninteractive  >> $GITHUB_ENV
+          echo DEBCONF_NONINTERACTIVE_SEEN=true >> $GITHUB_ENV
       - name: Install build tools
         run: >
-          sudo apt update && 
-          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
+          sudo apt update && sudo -E apt -y install
           git build-essential cmake gcc linux-headers-`uname -r`
           libpcre3-dev libssl-dev liblua5.1-0-dev kmod
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: mkdir build
@@ -61,7 +63,7 @@ jobs:
           accel-ppp_`git describe --tags --long | sed 's/^v//' | sed 's/-/+/' | sed 's/-/~/'`-1+${{ matrix.pkg-distro }}_`uname -m`.deb
       - name: Install debian package
         working-directory: ./build
-        run: NEEDRESTART_SUSPEND=1 sudo -E apt -y install ./accel-ppp*.deb
+        run: sudo -E apt -y install ./accel-ppp*.deb
       - name: Copy default config
         run: sudo cp /etc/accel-ppp.conf.dist /etc/accel-ppp.conf
       - name: Start accel-ppp
@@ -70,12 +72,6 @@ jobs:
         run: sudo systemctl status accel-ppp
       - name: Check accel-ppp stat
         run: accel-cmd show stat
-      - name: Upload .deb package as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: deb-package-${{ matrix.distro }}-${{ env.UNAME_M }}-${{ env.UNAME_R }}
-          path: build/accel-ppp_*.deb
-          if-no-files-found: error
 
   # Debian based distros
   Build-in-Container-Debian:
@@ -91,9 +87,9 @@ jobs:
             "debian:trixie",
             "ubuntu:20.04",
             "ubuntu:22.04",
-            "ubuntu:24.04"
+            "ubuntu:24.04",
           ]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     container:
       image: ${{ matrix.distro }}
     steps:
@@ -114,20 +110,25 @@ jobs:
           echo DISTRO=$DISTRO >> $GITHUB_ENV;
           echo CPACK_TYPE=$CPACK_TYPE >> $GITHUB_ENV;
           echo UNAME_M=`uname -m` >> $GITHUB_ENV;
+          echo NEEDRESTART_SUSPEND=1 >> $GITHUB_ENV;
+          echo DEBIAN_FRONTEND=noninteractive  >> $GITHUB_ENV;
+          echo DEBCONF_NONINTERACTIVE_SEEN=true >> $GITHUB_ENV;
           cat $GITHUB_ENV
       - name: Install build tools
         run: >
           apt update && apt -y upgrade && apt -y dist-upgrade &&
-          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true apt -y install git build-essential cmake gcc 
+          apt -y install git build-essential cmake gcc 
           linux-headers-${{ env.HEADERS_SUFFIX }}
-          libpcre3-dev libssl-dev liblua5.1-0-dev kmod
+          libpcre3-dev libssl-dev liblua5.1-0-dev kmod dkms debhelper devscripts
+      - name: Install additional build tools (using apt) (for some OS)
+        run: apt -y install dh-dkms || exit 0
       - name: Get kernel name from headers
         run: >
           echo KERNEL_NAME=`ls -1 /usr/src/ | grep  'linux-headers.*${{ env.HEADERS_SUFFIX }}' | 
           sed 's/linux-headers-//'` >> $GITHUB_ENV;
           cat $GITHUB_ENV
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: mkdir build
@@ -137,7 +138,7 @@ jobs:
       - name: cmake
         working-directory: ./build
         run: >
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          cmake -DBUILD_IPOE_DRIVER=FALSE -DBUILD_VLAN_MON_DRIVER=FALSE -DCMAKE_INSTALL_PREFIX=/usr 
           -DKDIR=/usr/src/linux-headers-${{ env.KERNEL_NAME }}
           -DMODULES_KDIR=${{ env.KERNEL_NAME }}
           -DLUA=TRUE -DSHAPER=FALSE -DRADIUS=TRUE 
@@ -145,7 +146,7 @@ jobs:
       - name: make
         working-directory: ./build
         run: make
-      - name: Generate debian package
+      - name: Generate debian package (without drivers)
         working-directory: ./build
         run: cpack -G DEB
       - name: Rename accel-ppp deb package
@@ -153,6 +154,22 @@ jobs:
         run: >
           mv -v accel-ppp.deb 
           accel-ppp_`git describe --tags --long | sed 's/^v//' | sed 's/-/+/' | sed 's/-/~/'`-1+${{ env.DISTRO }}_${{ env.UNAME_M }}.deb
+      - name: build dkms package for ipoe
+        working-directory: ./drivers/dkms/ipoe
+        run: |
+          cp -f ../../../build/version.h src/
+          debuild -us -uc -tc -b
+      - name: build dkms package for vlan_mon
+        working-directory: ./drivers/dkms/vlan_mon
+        run: |
+          cp -f ../../../build/version.h src/
+          debuild -us -uc -tc -b
+      - name: install ipoe and vlan_mon via dkms
+        working-directory: ./drivers/dkms
+        run: apt -y install ./*.deb
+      - name: install ipoe and vlan_mon via dkms
+        working-directory: ./drivers/dkms
+        run: apt -y install ./*.deb
       - name: Install debian package
         working-directory: ./build
         run: apt -y install ./accel-ppp*.deb
@@ -162,60 +179,18 @@ jobs:
         run: sleep 1
       - name: Check accel-ppp stat
         run: accel-cmd show stat
-      - name: Upload .deb package as artifact
+      - name: Upload accel-ppp .deb package as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: deb-package-${{ env.DISTRO }}-${{ env.UNAME_M }}-${{ env.KERNEL_NAME }}
+          name: deb-accel-ppp-${{ env.DISTRO }}-${{ env.UNAME_M }}
           path: build/accel-ppp_*.deb
           if-no-files-found: error
-
-  Build-in-Container-Mainline:
-    if: ${{ false }} # disable for now
-    runs-on: ubuntu-latest
-    container:
-      image: ubuntu:devel
-    steps:
-      - name: Install build tools
-        run: >
-          apt update && apt -y upgrade && apt -y dist-upgrade &&
-          DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true apt -y install git build-essential cmake gcc
-          linux-headers-generic libpcre3-dev libssl-dev liblua5.1-0-dev kmod software-properties-common
-          pkexec dbus linux-base &&
-          add-apt-repository -y ppa:cappelikan/ppa && apt update &&
-          service dbus start &&
-          apt -y install mainline &&
-          mainline --include-rc install-latest &&
-          apt -y purge linux-headers-generic && apt -y autoremove
-      - name: Get kernel name from headers
-        run: >
-          echo KERNEL_NAME=`ls -1 /usr/src/ | grep  'linux-headers.*generic' |
-          sed 's/linux-headers-//'` >> $GITHUB_ENV;
-          cat $GITHUB_ENV
-      - name: Check out repository code
-        uses: actions/checkout@v3
+      - name: Upload driver .deb packages as artifact
+        uses: actions/upload-artifact@v4
         with:
-          fetch-depth: 0
-      - name: mkdir build
-        run: mkdir build
-      - name: Disable git security warnings
-        run: git config --global --add safe.directory '*'
-      - name: cmake
-        working-directory: ./build
-        run: >
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr
-          -DCMAKE_INSTALL_SYSCONFDIR=/etc
-          -DKDIR=/usr/src/linux-headers-${{ env.KERNEL_NAME }}
-          -DMODULES_KDIR=${{ env.KERNEL_NAME }}
-          -DLUA=TRUE -DSHAPER=FALSE -DRADIUS=TRUE ..
-      - name: make and install
-        working-directory: ./build
-        run: make && make install
-      - name: Start accel-ppp with default config
-        run: accel-pppd -d -c /etc/accel-ppp.conf.dist
-      - name: Sleep for 1 sec
-        run: sleep 1
-      - name: Check accel-ppp stat
-        run: accel-cmd show stat
+          name: deb-accel-ppp-drivers-dkms-${{ env.DISTRO }}
+          path: drivers/dkms/accel-ppp*.deb
+          if-no-files-found: error
 
   Build-in-Container-Alpine:
     runs-on: ubuntu-24.04
@@ -226,7 +201,7 @@ jobs:
         run: >
           apk update && apk add --no-cache git cmake make g++ pcre-dev libressl-dev linux-headers libucontext-dev lua5.1-dev
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: mkdir build
@@ -250,4 +225,3 @@ jobs:
         run: sleep 1
       - name: Check accel-ppp stat
         run: accel-cmd show stat
-  
