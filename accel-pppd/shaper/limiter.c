@@ -554,6 +554,8 @@ int install_limiter(struct ap_session *ses, int down_speed, int down_burst, int 
 
 		if (conf_down_limiter == LIM_TBF)
 			r = install_tbf(rth, ses->ifindex, down_speed, down_burst);
+			if (r == 0)
+				r = install_leaf_qdisc(rth, ses->ifindex, 0x00010000, 0x00020000);
 		else if (conf_down_limiter == LIM_CLSACT)
 			r = install_clsact(rth, ses->ifindex, down_speed, down_burst);
 		else {
