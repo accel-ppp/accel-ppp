@@ -763,6 +763,13 @@ static void ipoe_session_start(struct ipoe_session *ses)
 
 	ap_session_starting(&ses->ses);
 
+#ifdef HAVE_VRF
+	if (strlen(ses->serv->vrf_name)) {
+		ses->ses.vrf_name = _malloc(strlen(ses->serv->vrf_name) + 1);
+		strncpy(ses->ses.vrf_name, ses->serv->vrf_name, strlen(ses->serv->vrf_name) + 1);
+	}
+#endif /* HAVE_VRF */
+
 	if (ses->serv->opt_shared && ipoe_create_interface(ses))
 		return;
 
@@ -1069,10 +1076,18 @@ static void __ipoe_session_activate(struct ipoe_session *ses)
 
 	if (ses->ifindex == -1 && !serv->opt_ifcfg) {
 		if (!serv->opt_ip_unnumbered)
-			iproute_add(serv->ifindex, ses->router, ses->yiaddr, 0, conf_proto, ses->mask, 0);
+			iproute_add(serv->ifindex, ses->router, ses->yiaddr, 0, conf_proto, ses->mask, 0
+#ifdef HAVE_VRF
+					, serv->table_id
+#endif
+					);
 		else
-			iproute_add(serv->ifindex, serv->opt_src ?: ses->router, ses->yiaddr, 0, conf_proto, 32, 0);
-	}
+			iproute_add(serv->ifindex, serv->opt_src ?: ses->router, ses->yiaddr, 0, conf_proto, 32, 0
+#ifdef HAVE_VRF
+					, serv->table_id
+#endif
+					);
+        }
 
 	if (ses->l4_redirect)
 		ipoe_change_l4_redirect(ses, 0);
@@ -1172,8 +1187,11 @@ static void ipoe_session_started(struct ap_session *s)
 
 	if (ses->ses.ipv4->peer_addr != ses->yiaddr)
 		//ipaddr_add_peer(ses->ses.ifindex, ses->router, ses->yiaddr); // breaks quagga
-		iproute_add(ses->ses.ifindex, ses->router, ses->yiaddr, 0, conf_proto, 32, 0);
-
+		iproute_add(ses->ses.ifindex, ses->router, ses->yiaddr, 0, conf_proto, 32, 0
+#ifdef HAVE_VRF
+                            , ses->serv->table_id
+#endif
+                            );
 	if (ses->ifindex != -1 && ses->xid) {
 		ses->dhcpv4 = dhcpv4_create(ses->ctrl.ctx, ses->ses.ifname, "");
 		if (!ses->dhcpv4) {
@@ -1256,9 +1274,17 @@ static void ipoe_session_finished(struct ap_session *s)
 	} else if (ses->started) {
 		if (!serv->opt_ifcfg) {
 			if (!serv->opt_ip_unnumbered)
-				iproute_del(serv->ifindex, ses->router, ses->yiaddr, 0, conf_proto, ses->mask, 0);
+				iproute_del(serv->ifindex, ses->router, ses->yiaddr, 0, conf_proto, ses->mask, 0
+#ifdef HAVE_VRF
+						, serv->table_id
+#endif
+						);
 			else
-				iproute_del(serv->ifindex, serv->opt_src ?: ses->router, ses->yiaddr, 0, conf_proto, 32, 0);
+				iproute_del(serv->ifindex, serv->opt_src ?: ses->router, ses->yiaddr, 0, conf_proto, 32, 0
+#ifdef HAVE_VRF
+						, serv->table_id
+#endif
+						);
 		}
 	}
 
@@ -3001,6 +3027,9 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	int opt_check_mac_change = conf_check_mac_change;
 	struct ifreq ifr;
 	uint8_t hwaddr[ETH_ALEN];
+#ifdef HAVE_VRF
+	char *vrf_name = NULL;
+#endif /* HAVE_VRF */
 
 	str0 = strchr(opt, ',');
 	if (str0) {
@@ -3127,7 +3156,16 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 
 		serv->active = 1;
 		serv->ifindex = ifindex;
-
+#ifdef HAVE_VRF
+		serv->vrf_ifindex = iplink_get_vrf_ifindex(ifindex);
+		if (serv->vrf_ifindex) {
+			iplink_get_vrf_info(serv->vrf_ifindex, &vrf_name, &serv->table_id);
+			strncpy(serv->vrf_name, vrf_name, IFNAMSIZ);
+		} else {
+			serv->table_id = RT_TABLE_MAIN;
+			serv->vrf_name[0] = '\0';
+		}
+#endif /* HAVE_VRF */
 		if ((opt_shared && !serv->opt_shared) || (!opt_shared && serv->opt_shared)) {
 			ipoe_drop_sessions(serv, NULL);
 			serv->opt_shared = opt_shared;
@@ -3149,7 +3187,12 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		}
 
 		if (!serv->dhcpv4_relay && serv->opt_dhcpv4 && opt_relay)
-			serv->dhcpv4_relay = dhcpv4_relay_create(opt_relay, opt_giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay);
+			serv->dhcpv4_relay = dhcpv4_relay_create(opt_relay, opt_giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay
+#ifdef HAVE_VRF
+					, serv->vrf_name);
+#else
+					);
+#endif
 
 		if (serv->arp && !opt_arp) {
 			arpd_stop(serv->arp);
@@ -3268,6 +3311,16 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	serv->parent_ifindex = parent_ifindex;
 	serv->parent_vid = parent_ifindex ? iplink_vlan_get_vid(parent_ifindex, NULL) : 0;
 	serv->vid = vid;
+#ifdef HAVE_VRF
+	serv->vrf_ifindex = iplink_get_vrf_ifindex(ifindex);
+	if (serv->vrf_ifindex) {
+		iplink_get_vrf_info(serv->vrf_ifindex, &vrf_name, &serv->table_id);
+		strncpy(serv->vrf_name, vrf_name, IFNAMSIZ);
+	} else {
+		serv->table_id = RT_TABLE_MAIN;
+		serv->vrf_name[0] = '\0';
+	}
+#endif /* HAVE_VRF */
 	serv->active = 1;
 	INIT_LIST_HEAD(&serv->sessions);
 	INIT_LIST_HEAD(&serv->disc_list);
@@ -3284,7 +3337,12 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 			serv->dhcpv4->recv = ipoe_recv_dhcpv4;
 
 		if (opt_relay)
-			serv->dhcpv4_relay = dhcpv4_relay_create(opt_relay, opt_giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay);
+			serv->dhcpv4_relay = dhcpv4_relay_create(opt_relay, opt_giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay
+#ifdef HAVE_VRF
+					, serv->vrf_name);
+#else
+					);
+#endif
 	}
 
 	if (serv->opt_arp)
