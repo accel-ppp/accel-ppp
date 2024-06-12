@@ -1925,6 +1925,44 @@ static int sstp_handler(struct sstp_conn_t *conn, struct buffer_t *buf)
 	return 0;
 }
 
+static int sstp_write(struct triton_md_handler_t *h)
+{
+	struct sstp_conn_t *conn = container_of(h, typeof(*conn), hnd);
+	struct buffer_t *buf;
+	int n;
+
+	while (!list_empty(&conn->out_queue)) {
+		buf = list_first_entry(&conn->out_queue, typeof(*buf), entry);
+		while (buf->len) {
+			n = conn->stream->write(conn->stream, buf->head, buf->len);
+			if (n < 0) {
+				if (errno == EINTR)
+					continue;
+				if (errno == EAGAIN)
+					goto defer;
+				if (conf_verbose && errno != EPIPE)
+					log_ppp_info2("sstp: write: %s\n", strerror(errno));
+				goto drop;
+			} else if (n == 0)
+				goto defer;
+			buf_pull(buf, n);
+		}
+		list_del(&buf->entry);
+		free_buf(buf);
+	}
+
+	triton_md_disable_handler(h, MD_MODE_WRITE);
+	return 0;
+
+defer:
+	triton_md_enable_handler(h, MD_MODE_WRITE);
+	return 0;
+
+drop:
+	triton_context_call(&conn->ctx, (triton_event_func)sstp_disconnect, conn);
+	return 1;
+}
+
 static int sstp_read(struct triton_md_handler_t *h)
 {
 	struct sstp_conn_t *conn = container_of(h, typeof(*conn), hnd);
@@ -1956,6 +1994,7 @@ static int sstp_read(struct triton_md_handler_t *h)
 	return 0;
 
 drop:
+	n = sstp_write(h);
 	sstp_disconnect(conn);
 	return 1;
 }
@@ -2046,44 +2085,6 @@ static int sstp_recv(struct triton_md_handler_t *h)
 
 drop:
 	sstp_disconnect(conn);
-	return 1;
-}
-
-static int sstp_write(struct triton_md_handler_t *h)
-{
-	struct sstp_conn_t *conn = container_of(h, typeof(*conn), hnd);
-	struct buffer_t *buf;
-	int n;
-
-	while (!list_empty(&conn->out_queue)) {
-		buf = list_first_entry(&conn->out_queue, typeof(*buf), entry);
-		while (buf->len) {
-			n = conn->stream->write(conn->stream, buf->head, buf->len);
-			if (n < 0) {
-				if (errno == EINTR)
-					continue;
-				if (errno == EAGAIN)
-					goto defer;
-				if (conf_verbose && errno != EPIPE)
-					log_ppp_info2("sstp: write: %s\n", strerror(errno));
-				goto drop;
-			} else if (n == 0)
-				goto defer;
-			buf_pull(buf, n);
-		}
-		list_del(&buf->entry);
-		free_buf(buf);
-	}
-
-	triton_md_disable_handler(h, MD_MODE_WRITE);
-	return 0;
-
-defer:
-	triton_md_enable_handler(h, MD_MODE_WRITE);
-	return 0;
-
-drop:
-	triton_context_call(&conn->ctx, (triton_event_func)sstp_disconnect, conn);
 	return 1;
 }
 
