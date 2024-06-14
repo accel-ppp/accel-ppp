@@ -55,7 +55,7 @@ static __thread struct triton_context_t *this_ctx;
 static __thread jmp_buf jmp_env;
 static __thread void *thread_frame;
 
-//#define log_debug2(fmt, ...)
+#define log_debug2(fmt, ...)
 
 void triton_thread_wakeup(struct _triton_thread_t *thread)
 {
