@@ -187,6 +187,7 @@ static unsigned int stat_active;
 static inline void sstp_queue(struct sstp_conn_t *conn, struct buffer_t *buf);
 static int sstp_send(struct sstp_conn_t *conn, struct buffer_t *buf);
 static inline void sstp_queue_deferred(struct sstp_conn_t *conn, struct buffer_t *buf);
+static int sstp_write(struct triton_md_handler_t *h);
 static int sstp_read_deferred(struct sstp_conn_t *conn);
 static int sstp_abort(struct sstp_conn_t *conn, int disconnect);
 static void sstp_disconnect(struct sstp_conn_t *conn);
@@ -858,7 +859,7 @@ static int http_send_response(struct sstp_conn_t *conn, char *proto, char *statu
 		}
 	}
 
-	return sstp_send(conn, buf);
+	return sstp_send(conn, buf) && sstp_write(&conn->hnd);
 }
 
 static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
