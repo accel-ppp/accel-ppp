@@ -365,10 +365,10 @@ Specifies default value for per-interface
 .B ifcfg
 parameter.
 .TP
-.BI "relay=" ipv4_address
+.BI "relay=" ipv4_address[,ipv4_address]
 Specifies default value for per-interface
 .B relay
-parameter.
+parameter. Several values can be specified for multiple DHCPv4 servers.
 .TP
 .BI "proxy-arp=" n
 Specifies default value for per-interface
@@ -457,7 +457,7 @@ parameter specifies whether accel-ppp should add router IP address and route to 
 .br
 The
 .B relay
-parameter specifies DHCPv4 relay IP address to pass requests to. If specified 
+parameter specifies DHCPv4 relay IP address to pass requests to. The parameter can be specified several times for multiple DHCPv4 servers. If specified
 .B giaddr
 is also needed.
 .br

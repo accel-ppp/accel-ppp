@@ -650,7 +650,11 @@ static void ses_started(struct ap_session *ses)
 	}
 
 	for (fr = rpd->fr; fr; fr = fr->next) {
-		if (iproute_add(fr->gw ? 0 : rpd->ses->ifindex, 0, fr->dst, fr->gw, 3, fr->mask, fr->prio)) {
+		if (iproute_add(fr->gw ? 0 : rpd->ses->ifindex, 0, fr->dst, fr->gw, 3, fr->mask, fr->prio
+#ifdef HAVE_VRF
+				, RT_TABLE_MAIN
+#endif /* HAVE_VRF */
+				)) {
 			char dst[17], gw[17];
 			u_inet_ntoa(fr->dst, dst);
 			u_inet_ntoa(fr->gw, gw);
@@ -694,7 +698,11 @@ static void ses_finishing(struct ap_session *ses)
 
 	for (fr = rpd->fr; fr; fr = fr->next) {
 		if (fr->gw)
-			iproute_del(0, 0, fr->dst, fr->gw, 3, fr->mask, fr->prio);
+			iproute_del(0, 0, fr->dst, fr->gw, 3, fr->mask, fr->prio
+#ifdef HAVE_VRF
+					, RT_TABLE_MAIN
+#endif /* HAVE_VRF */
+					);
 	}
 
 	if (rpd->acct_started || rpd->acct_req)
