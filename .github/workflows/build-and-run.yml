@@ -248,4 +248,41 @@ jobs:
         run: sleep 1
       - name: Check accel-ppp stat
         run: accel-cmd show stat
-  
+
+  Build-in-Container-Gentoo:
+    runs-on: ubuntu-24.04
+    container:
+      image: gentoo/stage3
+    steps:
+      - name: Prepare gentoo
+        run: getuto && emerge --sync
+      - name: Install build tools
+        run: |
+          emerge -g --autounmask-write sys-kernel/gentoo-kernel-bin || (etc-update --verbose --automode -5 && emerge -g sys-kernel/gentoo-kernel-bin)
+          emerge -g dev-vcs/git dev-libs/libpcre dev-build/cmake dev-lang/lua:5.1
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: mkdir build
+        run: mkdir build
+      - name: Disable git security warnings
+        run: git config --global --add safe.directory '*'
+      - name: cmake
+        working-directory: ./build
+        run: >
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr
+          -DCMAKE_INSTALL_SYSCONFDIR=/etc
+          -DKDIR=/usr/src/linux
+          -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE ..
+      - name: make and install
+        working-directory: ./build
+        run: make && make install
+      - name: Copy default config
+        run: cp accel-pppd/accel-ppp.conf /etc/accel-ppp.conf
+      - name: Start accel-ppp with default config
+        run: accel-pppd -d -c /etc/accel-ppp.conf
+      - name: Sleep for 1 sec
+        run: sleep 1
+      - name: Check accel-ppp stat
+        run: accel-cmd show stat
