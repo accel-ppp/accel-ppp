@@ -2016,4 +2016,3 @@ static void __exit ipoe_fini(void)
 module_init(ipoe_init);
 module_exit(ipoe_fini);
 MODULE_LICENSE("GPL");
-MODULE_VERSION(ACCEL_PPP_VERSION);
