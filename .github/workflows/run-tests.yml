@@ -56,8 +56,8 @@ jobs:
         run: >
           sudo apt update && 
           NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install qemu-system-x86 qemu-utils cloud-image-utils cpu-checker cloud-image-utils wget openssh-client screen
-      - name: Check kvm support (fail is ok)
-        run: sudo kvm-ok || exit 0
+      - name: Check kvm support
+        run: sudo kvm-ok
       - name: Prepare cloud-init image disk
         run: |
           ssh-keygen -t ed25519 -q -N "" -f ssh-key
@@ -91,9 +91,9 @@ jobs:
           wget -nv ${{ matrix.image }} -O img/image
           qemu-img resize -f ${{ matrix.format }} img/`ls -1 img` +2G
       - name: Run target OS first time (for cloud-init actions)
-        run: sudo qemu-system-x86_64 -m 4096 -nographic -drive format=${{ matrix.format }},file=img/`ls -1 img` -drive format=raw,file=init.img
+        run: sudo qemu-system-x86_64 -enable-kvm -cpu host -m 4096 -nographic -drive format=${{ matrix.format }},file=img/`ls -1 img` -drive format=raw,file=init.img
       - name: Run target OS
-        run: sudo screen -dmS qemu qemu-system-x86_64 -net nic -net user,hostfwd=tcp::2222-:22 -m 4096 -nographic -drive format=${{ matrix.format }},file=img/`ls -1 img`
+        run: sudo screen -dmS qemu qemu-system-x86_64 -enable-kvm -cpu host -net nic -net user,hostfwd=tcp::2222-:22 -m 4096 -nographic -drive format=${{ matrix.format }},file=img/`ls -1 img`
       - name: Check that target OS is running
         run: |
           sleep 1
