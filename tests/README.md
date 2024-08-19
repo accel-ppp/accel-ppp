@@ -6,7 +6,7 @@ These tests are done for Ubuntu and Debian distros. Please use latest stable Deb
 
 Install pytest
 
-Using apt: `sudo apt install python3-pytest python3-pytest-dependency` or using pip: `sudo pip3 install pytest pytest-dependency`. 
+Using apt: `sudo apt install python3-pytest python3-pytest-dependency python3-pytest-order` or using pip: `sudo pip3 install pytest pytest-dependency pytest-order`.
 
 pytest-dependency version must be >= 0.5 (with 'scope' support)
 
@@ -43,13 +43,13 @@ sudo insmod build/drivers/ipoe/driver/ipoe.ko
 
 ```bash
 # from this dir (tests)
-sudo python3 -m pytest -Wall -v
+sudo python3 -m pytest -Wall --order-dependencies -v
 ```
 
 To skip tests related to ipoe and vlan_mon kernel modules:
 ```bash
 # from this dir (tests)
-sudo python3 -m pytest -Wall -v -m "not ipoe_driver and not vlan_mon_driver"
+sudo python3 -m pytest -Wall --order-dependencies -v -m "not ipoe_driver and not vlan_mon_driver"
 ```
 
 ## Preparations (for coverage report)
@@ -83,7 +83,7 @@ Then insert kernel modules (ipoe.ko and vlan-mon.ko)
 
 ```bash
 # from root dir (parent for this dir)
-sudo python3 -m pytest -Wall tests -v # execute tests to collect coverage data
+sudo python3 -m pytest -Wall --order-dependencies tests -v # execute tests to collect coverage data
 mkdir tests/report
 gcovr --config=tests/gcovr.conf # default report
 gcovr --config=tests/gcovr.conf --csv # csv report

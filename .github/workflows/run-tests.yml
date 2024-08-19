@@ -120,7 +120,7 @@ jobs:
           libpcre3-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
           libxml2-dev libxslt1-dev zlib1g-dev 
           iproute2 ppp pppoe isc-dhcp-client timelimit && 
-          (sudo pip3 install pytest pytest-dependency || sudo pip3 install --break-system-packages pytest pytest-dependency)"
+          (sudo pip3 install pytest pytest-dependency pytest-order || sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order)"
       - name: Copy source code to target OS
         run: |
           tar -Jcf accel-ppp.tar.xz accel-ppp
@@ -139,7 +139,7 @@ jobs:
         timeout-minutes: 5
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp/tests && 
-          sudo python3 -m pytest -Wall -v -m \"not ipoe_driver and not vlan_mon_driver\""
+          sudo python3 -m pytest -Wall --order-dependencies -v -m \"not ipoe_driver and not vlan_mon_driver\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >
@@ -157,7 +157,7 @@ jobs:
         if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp/tests && 
-          sudo python3 -m pytest -Wall -v -m \"not vlan_mon_driver\""
+          sudo python3 -m pytest -Wall --order-dependencies -v -m \"not vlan_mon_driver\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >
@@ -174,7 +174,7 @@ jobs:
         timeout-minutes: 5
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp/tests && 
-          sudo python3 -m pytest -Wall -v"
+          sudo python3 -m pytest -Wall --order-dependencies -v"
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >
@@ -200,7 +200,7 @@ jobs:
 
       - name: Install testing tools (using pip)
         run: >
-          sudo pip3 install pytest pytest-dependency || sudo pip3 install --break-system-packages pytest pytest-dependency
+          sudo pip3 install pytest pytest-dependency pytest-order || sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order
 
       - name: Check out repository code
         uses: actions/checkout@v4
@@ -232,7 +232,7 @@ jobs:
       - name: Run tests
         timeout-minutes: 5
         working-directory: ./tests
-        run: sudo python3 -m pytest -Wall -v
+        run: sudo python3 -m pytest -Wall --order-dependencies -v
 
   Test-in-GH-Coverage:
     #if: ${{ false }} # disable for now
@@ -253,7 +253,7 @@ jobs:
 
       - name: Install testing tools (using pip)
         run: >
-          sudo pip3 install pytest pytest-dependency gcovr || sudo pip3 install --break-system-packages pytest pytest-dependency gcovr
+          sudo pip3 install pytest pytest-dependency pytest-order gcovr || sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order gcovr
 
       - name: Check out repository code
         uses: actions/checkout@v4
@@ -286,7 +286,7 @@ jobs:
       - name: Run tests (for coverage report) (fail is ok)
         timeout-minutes: 5
         working-directory: ./tests
-        run: sudo python3 -m pytest -Wall -v || exit 0
+        run: sudo python3 -m pytest -Wall --order-dependencies -v || exit 0
 
       - name: Generate coverage reports (default(txt), csv, html)
         run: |
