@@ -69,7 +69,7 @@ def test_pppoe_session_wo_auth(pppd_instance, accel_cmd):
         (exit, out, err) = process.run(
             [
                 accel_cmd,
-                "show sessions match username loginAB username,ip,state",
+                "show sessions match username log.nAB username,ip,state",
             ]
         )
         assert exit == 0  # accel-cmd fails

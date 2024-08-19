@@ -28,8 +28,8 @@ def accel_pppd_config(veth_pair_netns):
     noauth=1
     shared=1
     gw-ip-address=192.0.2.1/24
-    interface="""
-        + veth_pair_netns["veth_a"]
+    interface=re:."""
+        + veth_pair_netns["veth_a"][1:]
     )
 
 
