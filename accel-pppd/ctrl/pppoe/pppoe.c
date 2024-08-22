@@ -1394,6 +1394,8 @@ static void pppoe_add_interface_re(const char *opt, void *cli)
 	re = pcre_compile2(pattern, 0, NULL, &pcre_err, &pcre_offset, NULL);
 
 	if (!re) {
+        if (cli)
+			cli_sendv(cli, "pppoe: %s at %i\r\n", pcre_err, pcre_offset);
 		log_error("pppoe: %s at %i\r\n", pcre_err, pcre_offset);
 		return;
 	}
