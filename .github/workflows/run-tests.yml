@@ -181,6 +181,136 @@ jobs:
           ssh -i ssh-key -p2222 user@localhost "ps aux | grep accel- && 
           sudo dmesg"
 
+  Test-in-Alpine:
+    #if: ${{ false }} # disable for now
+    runs-on: ubuntu-24.04
+    name: Test in Qemu (Alpine)
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: "accel-ppp"
+      - name: Install qemu and required tools
+        run: >
+          sudo apt update && 
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install qemu-system-x86 qemu-utils cloud-image-utils cpu-checker cloud-image-utils wget openssh-client screen
+      - name: Check kvm support
+        run: sudo kvm-ok
+      - name: Prepare cloud-init image disk
+        run: |
+          ssh-keygen -t ed25519 -q -N "" -f ssh-key
+          echo "instance-id: $(uuidgen || echo i-abcdefg)" > init-meta
+          echo "#cloud-config" > init-data
+          echo "package_update: true" >> init-data
+          echo "package_upgrade: true" >> init-data
+          echo "package_reboot_if_required: false" >> init-data
+          echo "users:" >> init-data
+          echo "  - default" >> init-data
+          echo "  - name: alpine" >> init-data
+          echo "    shell: /bin/bash" >> init-data
+          echo "    ssh_authorized_keys:" >> init-data
+          echo "      - "`cat ssh-key.pub` >> init-data
+          echo "power_state:">> init-data
+          echo "    mode: poweroff">> init-data
+          cat init-data
+          cloud-localds init.img init-data init-meta
+      - name: Download and resize target OS cloud image
+        run: |
+          mkdir img
+          # we need to use metal image because virt image doesn't provide pppoe driver (https://gitlab.alpinelinux.org/alpine/aports/-/issues/13739)
+          wget -nv https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/cloud/nocloud_alpine-3.20.2-x86_64-bios-cloudinit-metal-r0.qcow2 -O img/image
+          qemu-img resize -f qcow2 img/`ls -1 img` +2G
+      - name: Run target OS first time (for cloud-init actions)
+        run: sudo qemu-system-x86_64 -enable-kvm -cpu host -m 4096 -nographic -drive format=qcow2,file=img/`ls -1 img` -drive format=raw,file=init.img
+      - name: Run target OS
+        run: sudo screen -dmS qemu qemu-system-x86_64 -enable-kvm -cpu host -net nic -net user,hostfwd=tcp::2222-:22 -m 4096 -nographic -drive format=qcow2,file=img/`ls -1 img`
+      - name: Check that target OS is running
+        run: |
+          sleep 1
+          sudo screen -ls
+      - name: Wait for ssh connection
+        timeout-minutes: 30
+        run: >
+          while ! ssh -o StrictHostKeyChecking=accept-new -p2222 -o ConnectTimeout=5 -i ssh-key alpine@localhost "exit 0";
+          do
+          echo "Trying to establish ssh connection";
+          sleep 5;
+          done;
+          cat ~/.ssh/known_hosts
+      - name: Display free space, current dir, kernel version and test doas
+        run: |
+          ssh -i ssh-key -p2222 alpine@localhost "df -h"
+          ssh -i ssh-key -p2222 alpine@localhost "pwd"
+          ssh -i ssh-key -p2222 alpine@localhost "uname -a"
+          ssh -i ssh-key -p2222 alpine@localhost "doas cat /etc/passwd"
+      - name: Install build tools (on target OS)
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "doas apk add --no-cache git cmake make g++ pcre-dev libressl-dev linux-headers libucontext-dev lua5.1-dev linux-lts-dev py3-pip 
+          ppp ppp-pppoe && 
+          (doas pip3 install pytest pytest-dependency pytest-order || doas pip3 install --break-system-packages pytest pytest-dependency pytest-order)"
+      - name: Copy source code to target OS
+        run: |
+          tar -Jcf accel-ppp.tar.xz accel-ppp
+          scp -i ssh-key -P2222 accel-ppp.tar.xz alpine@localhost:
+          ssh -i ssh-key -p2222 alpine@localhost "tar -xf accel-ppp.tar.xz"
+      - name: Build accel-ppp
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
+          mkdir build && cd build &&
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          -DKDIR=/usr/src/linux-headers-\`uname -r\` 
+          -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE .. &&
+          make && doas make install"
+
+      - name: Run tests (not related to ipoe and vlan_mon drivers)
+        timeout-minutes: 5
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp/tests && 
+          doas python3 -m pytest -Wall --order-dependencies -v -m \"not ipoe_driver and not vlan_mon_driver\""
+      - name: Display processes and dmesg after tests
+        if: ${{ always() }}
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "ps aux | grep accel- && 
+          doas dmesg"
+
+      - name: Insert ipoe kernel module
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
+          doas insmod build/drivers/ipoe/driver/ipoe.ko &&
+          lsmod | grep ipoe "
+
+      - name: Run tests (not related to vlan_mon drivers)
+        timeout-minutes: 5
+        if: ${{ always() }}
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp/tests && 
+          doas python3 -m pytest -Wall --order-dependencies -v -m \"not vlan_mon_driver\""
+      - name: Display processes and dmesg after tests
+        if: ${{ always() }}
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "ps aux | grep accel- && 
+          doas dmesg"
+
+      - name: Insert vlan_mon kernel module
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
+          doas insmod build/drivers/vlan_mon/driver/vlan_mon.ko &&
+          lsmod | grep vlan_mon"
+
+      - name: Run tests (all)
+        timeout-minutes: 5
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp/tests && 
+          doas python3 -m pytest -Wall --order-dependencies -v"
+      - name: Display processes and dmesg after tests
+        if: ${{ always() }}
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "ps aux | grep accel- && 
+          doas dmesg"
+
+
   Test-in-GH:
     #if: ${{ false }} # disable for now
     strategy:

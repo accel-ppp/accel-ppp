@@ -9,12 +9,18 @@ def accel_pppd_config(veth_pair_netns):
     return (
         """
     [modules]
+    radius
     pppoe
     auth_pap
     ippool
 
+    [core]
+    log-error=/dev/stderr
+
     [log]
     log-debug=/dev/stdout
+    log-file=/dev/stdout
+    log-emerg=/dev/stderr
     level=5
 
     [auth]
@@ -26,6 +32,8 @@ def accel_pppd_config(veth_pair_netns):
 
     [cli]
     tcp=127.0.0.1:2001
+
+    [radius]
 
     [pppoe]
     interface="""
@@ -47,7 +55,6 @@ def pppd_config(veth_pair_netns):
     mtu 1492
     noaccomp
     default-asyncmap
-    plugin rp-pppoe.so
     user loginAB
     password pass123
     nic-"""
