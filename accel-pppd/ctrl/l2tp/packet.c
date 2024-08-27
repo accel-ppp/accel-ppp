@@ -280,7 +280,7 @@ int l2tp_recv(int fd, struct l2tp_packet_t **p, struct in_pktinfo *pkt_info,
 	ptr = (uint8_t *)(hdr + 1);
 
 	addr_len = sizeof(addr);
-	n = recvfrom(fd, buf, L2TP_MAX_PACKET_SIZE, 0, &addr, &addr_len);
+	n = recvfrom(fd, buf, L2TP_MAX_PACKET_SIZE, 0, (struct sockaddr*)&addr, &addr_len);
 	if (n < 0) {
 		mempool_free(buf);
 		if (errno == EAGAIN) {
@@ -552,7 +552,7 @@ int l2tp_packet_send(int sock, struct l2tp_packet_t *pack)
 	memcpy(buf, &pack->hdr, sizeof(pack->hdr));
 	hdr->flags = htons(pack->hdr.flags);
 
-	n = sendto(sock, buf, len, 0, &pack->addr, sizeof(pack->addr));
+	n = sendto(sock, buf, len, 0, (struct sockaddr*)&pack->addr, sizeof(pack->addr));
 	mempool_free(buf);
 
 	if (n < 0) {
