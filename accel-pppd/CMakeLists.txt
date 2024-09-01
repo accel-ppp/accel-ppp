@@ -176,9 +176,9 @@ CHECK_FUNCTION_EXISTS(getcontext HAVE_GETCONTEXT)
 CHECK_FUNCTION_EXISTS(setcontext HAVE_SETCONTEXT)
 
 IF (HAVE_GETCONTEXT AND HAVE_SETCONTEXT)
-	TARGET_LINK_LIBRARIES(accel-pppd triton rt pthread ${crypto_lib} pcre)
+	TARGET_LINK_LIBRARIES(accel-pppd triton rt pthread ${crypto_lib} pcre2-8)
 ELSE (HAVE_GETCONTEXT AND HAVE_SETCONTEXT)
-	TARGET_LINK_LIBRARIES(accel-pppd triton rt pthread ${crypto_lib} pcre ucontext)
+	TARGET_LINK_LIBRARIES(accel-pppd triton rt pthread ${crypto_lib} pcre2-8 ucontext)
 ENDIF (HAVE_GETCONTEXT AND HAVE_SETCONTEXT)
 
 set_property(TARGET accel-pppd PROPERTY CMAKE_SKIP_BUILD_RPATH FALSE)

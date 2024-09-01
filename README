@@ -34,7 +34,7 @@ Requirment
 4. cmake-2.6 or later
 5. libnl-2.0 or probably later (required for builtin shaper)
 6. libcrypto-0.9.8 or probably later (openssl-0.9.8)
-7. libpcre
+7. libpcre2
 8. net-snmp-5.x 
 9. libssl-0.9.8 or probably later (openssl-0.9.8)
 
