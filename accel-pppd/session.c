@@ -30,6 +30,14 @@
 #define SID_SOURCE_SEQ 0
 #define SID_SOURCE_URANDOM 1
 
+#ifndef __WORDSIZE
+#if defined(__GLIBC__) || defined(__UCLIBC__)
+#include <bits/wordsize.h>
+#else
+#include <bits/reg.h>
+#endif
+#endif
+
 static int conf_sid_ucase;
 static int conf_single_session = -1;
 static int conf_single_session_ignore_case;
