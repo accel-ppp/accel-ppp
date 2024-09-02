@@ -71,6 +71,19 @@ IF (HAVE_GOOD_IFARP)
 	ADD_DEFINITIONS(-DHAVE_GOOD_IFARP)
 ENDIF (HAVE_GOOD_IFARP)
 
+INCLUDE (CheckCSourceCompiles)
+CHECK_C_SOURCE_COMPILES("
+#include <utmp.h>
+int main(void)
+{
+	logwtmp(\"\", \"\", \"\");
+	return 0;
+}" HAVE_LOGWTMP)
+
+IF (HAVE_LOGWTMP)
+	ADD_DEFINITIONS(-DHAVE_LOGWTMP)
+ENDIF (HAVE_LOGWTMP)
+
 
 ADD_SUBDIRECTORY(triton)
 ADD_SUBDIRECTORY(vlan-mon)

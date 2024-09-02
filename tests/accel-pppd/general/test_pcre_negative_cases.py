@@ -6,14 +6,24 @@ from common import process
 def accel_pppd_config():
     return """
     [modules]
+    radius
     pppoe
+
+    [core]
+    log-error=/dev/stderr
 
     [log]
     log-debug=/dev/stdout
+    log-file=/dev/stdout
+    log-emerg=/dev/stderr
     level=5
 
     [cli]
     tcp=127.0.0.1:2001
+
+    [radius]
+
+    [pppoe]
     """
 
 
