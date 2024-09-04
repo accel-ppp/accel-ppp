@@ -13,7 +13,13 @@ SET(sources ${sources} tr101.c)
 ENDIF(RADIUS)
 
 ADD_LIBRARY(pppoe SHARED ${sources})
-TARGET_LINK_LIBRARIES(pppoe vlan-mon connlimit)
+
+IF (RADIUS)
+	TARGET_LINK_LIBRARIES(pppoe vlan-mon connlimit radius)
+ELSE (RADIUS)
+	TARGET_LINK_LIBRARIES(pppoe vlan-mon connlimit)
+ENDIF (RADIUS)
+
 set_property(TARGET pppoe PROPERTY CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 set_property(TARGET pppoe PROPERTY INSTALL_RPATH ${CMAKE_INSTALL_PREFIX}/lib${LIB_SUFFIX}/accel-ppp)
 
