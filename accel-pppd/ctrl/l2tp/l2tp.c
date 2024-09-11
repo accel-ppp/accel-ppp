@@ -856,7 +856,7 @@ static void l2tp_tunnel_free_sessions(struct l2tp_conn_t *conn)
 #ifdef HAVE_FREE_FN_T
 	tdestroy(sessions, (__free_fn_t)l2tp_session_free);
 #else
-	tdestroy(sessions, free);
+	tdestroy(sessions, (void(*)(void *))l2tp_session_free);
 #endif
 	/* Let l2tp_session_free() handle the session counter and
 	 * the reference held by the tunnel.
