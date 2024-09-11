@@ -60,6 +60,7 @@ ENDIF (HAVE_FREE_FN_T)
 
 INCLUDE (CheckCSourceCompiles)
 CHECK_C_SOURCE_COMPILES("
+#include <sys/socket.h>
 #include <linux/if_arp.h>
 #include <net/ethernet.h>
 int main(void)
