@@ -2,6 +2,7 @@
 #define __AP_SESSION_H__
 
 #include <sys/socket.h>
+#include <netinet/in.h>
 
 #include "triton.h"
 #include "ap_net.h"
@@ -66,6 +67,12 @@ struct ap_private
 	void *key;
 };
 
+struct ap_dhcpv4_srv
+{
+	struct list_head entry;
+	in_addr_t addr;
+};
+
 struct ap_session
 {
 	struct list_head entry;
@@ -106,6 +113,7 @@ struct ap_session
 	int terminate_cause;
 
 	struct list_head pd_list;
+	struct list_head dhcpv4_srv_list;
 
 	int idle_timeout;
 	int session_timeout;

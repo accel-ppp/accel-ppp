@@ -52,6 +52,10 @@
 #define MODE_L3 3
 
 #define LEASE_TIME 600
+#define LEASE_REBIND_TIME_RATIO 7 / 8
+#define LEASE_RENEW_TIME_RATIO 1 / 2
+#define LEASE_RENEW_REBIND_TIME_RATIO 	4 / 7
+#define LEASE_TIMEOUT_TIME_RATIO 11 / 10
 
 #define SESSION_TERMINATED "Session was terminated"
 
@@ -70,6 +74,22 @@ struct l4_redirect {
 	struct list_head entry;
 	in_addr_t addr;
 	time_t timeout;
+};
+
+struct conf_relay {
+	struct list_head entry;
+	char str_addr[INET_ADDRSTRLEN];
+};
+
+struct relay {
+	struct list_head entry;
+	/* DHCP server IP address string */
+	char str_addr[INET_ADDRSTRLEN];
+	/* DHCP server IP address */
+	in_addr_t addr;
+	/* relay agent IP address sent when relaying replies from the server to the client */
+	in_addr_t giaddr;
+	struct dhcpv4_relay *dhcpv4_relay;
 };
 
 struct gw_addr {
@@ -158,7 +178,7 @@ static int conf_session_timeout;
 static int conf_idle_timeout;
 static int conf_weight;
 
-static const char *conf_relay;
+static LIST_HEAD(conf_relay);
 
 #ifdef USE_LUA
 static const char *conf_lua_username_func;
@@ -169,10 +189,10 @@ static int conf_relay_timeout = 3;
 static int conf_relay_retransmit = 3;
 static LIST_HEAD(conf_gw_addr);
 static int conf_netmask = 24;
-static int conf_lease_time = LEASE_TIME;
-static int conf_lease_timeout = LEASE_TIME + LEASE_TIME/10;
-static int conf_renew_time = LEASE_TIME/2;
-static int conf_rebind_time = LEASE_TIME/2 + LEASE_TIME/4 + LEASE_TIME/8;
+static int conf_lease_time;
+static int conf_renew_time;
+static int conf_lease_timeout;
+static int conf_rebind_time;
 static int conf_verbose;
 static const char *conf_agent_remote_id;
 static const char *conf_link_selection;
@@ -217,7 +237,9 @@ static void ipoe_serv_release(struct ipoe_serv *serv);
 static void __ipoe_session_activate(struct ipoe_session *ses);
 static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet *pack);
 static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet *pack, int force);
+static void ipoe_recv_dhcpv4_relay(struct dhcpv4_packet *pack);
 static void ipoe_session_keepalive(struct dhcpv4_packet *pack);
+static in_addr_t ipoe_get_giaddr(in_addr_t relay_addr, const char *str_addr);
 static void add_interface(const char *ifname, int ifindex, const char *opt, int parent_ifindex, int vid, int vlan_mon);
 static int get_offer_delay();
 static void __ipoe_session_start(struct ipoe_session *ses);
@@ -437,8 +459,9 @@ static void ipoe_session_l4_redirect_timeout(struct triton_timer_t *t)
 static void ipoe_relay_timeout(struct triton_timer_t *t)
 {
 	struct ipoe_session *ses = container_of(t, typeof(*ses), timer);
+	struct relay *relay;
 
-	if (!ses->serv->dhcpv4_relay || !ses->dhcpv4_request) {
+	if (list_empty(&ses->serv->relay_list) || !ses->dhcpv4_request) {
 		triton_timer_del(t);
 		return;
 	}
@@ -449,8 +472,11 @@ static void ipoe_relay_timeout(struct triton_timer_t *t)
 		log_ppp_info2("ipoe: relay timed out\n");
 
 		ap_session_terminate(&ses->ses, TERM_LOST_CARRIER, 1);
-	} else
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+	} else {
+		list_for_each_entry(relay, &ses->serv->relay_list, entry)
+			dhcpv4_relay_send(relay->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, &ses->ses.dhcpv4_srv_list,
+					ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+	}
 }
 
 
@@ -654,6 +680,7 @@ static int check_exists(struct ipoe_session *self_ipoe, in_addr_t addr)
 
 static void auth_result(struct ipoe_session *ses, int r)
 {
+	struct relay *relay;
 	char *username = ses->username;
 
 	ses->username = NULL;
@@ -716,8 +743,10 @@ cont:
 
 	ap_session_set_ifindex(&ses->ses);
 
-	if (ses->dhcpv4_request && ses->serv->dhcpv4_relay) {
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+	if (ses->dhcpv4_request && !list_empty(&ses->serv->relay_list)) {
+		list_for_each_entry(relay, &ses->serv->relay_list, entry)
+			dhcpv4_relay_send(relay->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, &ses->ses.dhcpv4_srv_list,
+					ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 
 		ses->timer.expire = ipoe_relay_timeout;
 		ses->timer.period = conf_relay_timeout * 1000;
@@ -762,6 +791,13 @@ static void ipoe_session_start(struct ipoe_session *ses)
 	triton_event_fire(EV_CTRL_STARTED, &ses->ses);
 
 	ap_session_starting(&ses->ses);
+
+#ifdef HAVE_VRF
+	if (strlen(ses->serv->vrf_name)) {
+		ses->ses.vrf_name = _malloc(strlen(ses->serv->vrf_name) + 1);
+		strncpy(ses->ses.vrf_name, ses->serv->vrf_name, IFNAMSIZ);
+	}
+#endif /* HAVE_VRF */
 
 	if (ses->serv->opt_shared && ipoe_create_interface(ses))
 		return;
@@ -851,6 +887,8 @@ static void send_arp_reply(struct ipoe_serv *serv, struct _arphdr *arph)
 
 static void __ipoe_session_start(struct ipoe_session *ses)
 {
+	struct relay *relay;
+
 	if (!ses->yiaddr && ses->serv->dhcpv4) {
 		dhcpv4_get_ip(ses->serv->dhcpv4, &ses->yiaddr, &ses->router, &ses->mask);
 		if (ses->yiaddr)
@@ -928,8 +966,14 @@ static void __ipoe_session_start(struct ipoe_session *ses)
 		if (!ses->siaddr)
 			ses->siaddr = ses->serv->opt_src;
 
-		if (!ses->siaddr && ses->serv->dhcpv4_relay)
-			ses->siaddr = ses->serv->dhcpv4_relay->giaddr;
+		if (!ses->siaddr) {
+			list_for_each_entry(relay, &ses->serv->relay_list, entry) {
+				if (relay->giaddr) {
+					ses->siaddr = relay->giaddr;
+					break;
+				}
+			}
+		}
 
 		if (!ses->siaddr) {
 			log_ppp_error("can't determine Server-ID\n");
@@ -1069,10 +1113,18 @@ static void __ipoe_session_activate(struct ipoe_session *ses)
 
 	if (ses->ifindex == -1 && !serv->opt_ifcfg) {
 		if (!serv->opt_ip_unnumbered)
-			iproute_add(serv->ifindex, ses->router, ses->yiaddr, 0, conf_proto, ses->mask, 0);
+			iproute_add(serv->ifindex, ses->router, ses->yiaddr, 0, conf_proto, ses->mask, 0
+#ifdef HAVE_VRF
+					, serv->table_id
+#endif
+					);
 		else
-			iproute_add(serv->ifindex, serv->opt_src ?: ses->router, ses->yiaddr, 0, conf_proto, 32, 0);
-	}
+			iproute_add(serv->ifindex, serv->opt_src ?: ses->router, ses->yiaddr, 0, conf_proto, 32, 0
+#ifdef HAVE_VRF
+					, serv->table_id
+#endif
+					);
+        }
 
 	if (ses->l4_redirect)
 		ipoe_change_l4_redirect(ses, 0);
@@ -1098,26 +1150,25 @@ static void __ipoe_session_activate(struct ipoe_session *ses)
 static void ipoe_session_activate(struct dhcpv4_packet *pack)
 {
 	struct ipoe_session *ses = container_of(triton_context_self(), typeof(*ses), ctx);
-
-	if (ses->ses.state == AP_STATE_ACTIVE) {
-		ipoe_session_keepalive(pack);
-		return;
-	}
+	struct relay *relay;
 
 	if (ses->dhcpv4_request)
 		dhcpv4_packet_free(ses->dhcpv4_request);
 
 	ses->dhcpv4_request = pack;
 
-	if (ses->serv->dhcpv4_relay)
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
-	else
+	if (list_empty(&ses->serv->relay_list))
 		__ipoe_session_activate(ses);
+	else
+		list_for_each_entry(relay, &ses->serv->relay_list, entry)
+			dhcpv4_relay_send(relay->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, &ses->ses.dhcpv4_srv_list,
+					ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 }
 
 static void ipoe_session_keepalive(struct dhcpv4_packet *pack)
 {
 	struct ipoe_session *ses = container_of(triton_context_self(), typeof(*ses), ctx);
+	struct relay *relay;
 
 	if (ses->dhcpv4_request)
 		dhcpv4_packet_free(ses->dhcpv4_request);
@@ -1129,8 +1180,10 @@ static void ipoe_session_keepalive(struct dhcpv4_packet *pack)
 
 	ses->xid = ses->dhcpv4_request->hdr->xid;
 
-	if (/*ses->ses.state == AP_STATE_ACTIVE &&*/ ses->serv->dhcpv4_relay) {
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+	if (/*ses->ses.state == AP_STATE_ACTIVE &&*/ !list_empty(&ses->serv->relay_list)) {
+		list_for_each_entry(relay, &ses->serv->relay_list, entry)
+			dhcpv4_relay_send(relay->dhcpv4_relay, ses->dhcpv4_request, ses->relay_server_id, &ses->ses.dhcpv4_srv_list,
+					ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 		return;
 	}
 
@@ -1147,14 +1200,17 @@ static void ipoe_session_keepalive(struct dhcpv4_packet *pack)
 static void ipoe_session_decline(struct dhcpv4_packet *pack)
 {
 	struct ipoe_session *ses = container_of(triton_context_self(), typeof(*ses), ctx);
+	struct relay *relay;
 
 	if (conf_verbose) {
 		log_ppp_info2("recv ");
 		dhcpv4_print_packet(pack, 0, log_ppp_info2);
 	}
 
-	if (pack->msg_type == DHCPDECLINE && ses->serv->dhcpv4_relay)
-		dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+	if (pack->msg_type == DHCPDECLINE)
+		list_for_each_entry(relay, &ses->serv->relay_list, entry)
+			dhcpv4_relay_send(relay->dhcpv4_relay, pack, 0, &ses->ses.dhcpv4_srv_list,
+					ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 
 	dhcpv4_packet_free(pack);
 
@@ -1172,8 +1228,11 @@ static void ipoe_session_started(struct ap_session *s)
 
 	if (ses->ses.ipv4->peer_addr != ses->yiaddr)
 		//ipaddr_add_peer(ses->ses.ifindex, ses->router, ses->yiaddr); // breaks quagga
-		iproute_add(ses->ses.ifindex, ses->router, ses->yiaddr, 0, conf_proto, 32, 0);
-
+		iproute_add(ses->ses.ifindex, ses->router, ses->yiaddr, 0, conf_proto, 32, 0
+#ifdef HAVE_VRF
+                            , ses->serv->table_id
+#endif
+                            );
 	if (ses->ifindex != -1 && ses->xid) {
 		ses->dhcpv4 = dhcpv4_create(ses->ctrl.ctx, ses->ses.ifname, "");
 		if (!ses->dhcpv4) {
@@ -1227,6 +1286,7 @@ static void ipoe_session_finished(struct ap_session *s)
 {
 	struct ipoe_session *ses = container_of(s, typeof(*ses), ses);
 	struct ipoe_serv *serv = ses->serv;
+	struct relay *relay;
 	struct unit_cache *uc;
 	struct ifreq ifr;
 
@@ -1256,17 +1316,27 @@ static void ipoe_session_finished(struct ap_session *s)
 	} else if (ses->started) {
 		if (!serv->opt_ifcfg) {
 			if (!serv->opt_ip_unnumbered)
-				iproute_del(serv->ifindex, ses->router, ses->yiaddr, 0, conf_proto, ses->mask, 0);
+				iproute_del(serv->ifindex, ses->router, ses->yiaddr, 0, conf_proto, ses->mask, 0
+#ifdef HAVE_VRF
+						, serv->table_id
+#endif
+						);
 			else
-				iproute_del(serv->ifindex, serv->opt_src ?: ses->router, ses->yiaddr, 0, conf_proto, 32, 0);
+				iproute_del(serv->ifindex, serv->opt_src ?: ses->router, ses->yiaddr, 0, conf_proto, 32, 0
+#ifdef HAVE_VRF
+						, serv->table_id
+#endif
+						);
 		}
 	}
 
 	if (ses->dhcp_addr)
 		dhcpv4_put_ip(ses->serv->dhcpv4, ses->yiaddr);
 
-	if (ses->relay_addr && ses->serv->dhcpv4_relay)
-		dhcpv4_relay_send_release(ses->serv->dhcpv4_relay, ses->hwaddr, ses->xid, ses->yiaddr, ses->client_id, ses->relay_agent, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+	if (ses->yiaddr)
+		list_for_each_entry(relay, &ses->serv->relay_list, entry)
+			dhcpv4_relay_send_release(relay->dhcpv4_relay, ses->hwaddr, ses->xid, ses->yiaddr,ses->client_id, ses->relay_agent,
+					&ses->ses.dhcpv4_srv_list, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 
 	if (ses->dhcpv4)
 		dhcpv4_free(ses->dhcpv4);
@@ -1359,6 +1429,7 @@ static void ipoe_session_close(struct triton_context_t *ctx)
 static struct ipoe_session *ipoe_session_create_dhcpv4(struct ipoe_serv *serv, struct dhcpv4_packet *pack)
 {
 	struct ipoe_session *ses;
+	struct relay *relay;
 	int dlen = 0;
 	uint8_t *ptr = NULL;
 
@@ -1377,6 +1448,27 @@ static struct ipoe_session *ipoe_session_create_dhcpv4(struct ipoe_serv *serv, s
 
 	ses->serv = serv;
 	ses->dhcpv4_request = pack;
+
+	list_for_each_entry(relay, &ses->serv->relay_list, entry) {
+		if (relay->dhcpv4_relay && relay->dhcpv4_relay->hnd.read)
+			continue;
+
+		log_error("%s: no socket to the DHCPv4 server %s. Trying again to connect\n", ses->serv->ifname, relay->str_addr);
+
+		if (!relay->giaddr)
+			relay->giaddr = ipoe_get_giaddr(relay->addr, relay->str_addr);
+		if (!relay->giaddr)
+			continue;
+
+		relay->dhcpv4_relay = dhcpv4_relay_create(relay->str_addr,
+				relay->giaddr, &serv->ctx,
+				(triton_event_func)ipoe_recv_dhcpv4_relay
+#ifdef HAVE_VRF
+					, serv->vrf_name);
+#else
+					);
+#endif
+	}
 
 	if (!serv->opt_shared)
 		strncpy(ses->ses.ifname, serv->ifname, AP_IFNAME_LEN);
@@ -1474,6 +1566,7 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 	uint8_t *agent_circuit_id = NULL;
 	uint8_t *agent_remote_id = NULL;
 	uint8_t *link_selection = NULL;
+	struct relay *relay;
 
 	if (conf_verbose) {
 		log_ppp_info2("recv ");
@@ -1533,24 +1626,25 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 
 	if (pack->msg_type == DHCPDISCOVER) {
 		if (ses->yiaddr) {
-			if (ses->serv->dhcpv4_relay) {
-				dhcpv4_packet_ref(pack);
-				ipoe_session_keepalive(pack);
-			} else
+			if (list_empty(&ses->serv->relay_list))
 				dhcpv4_send_reply(DHCPOFFER, dhcpv4, pack, ses->yiaddr, ses->siaddr, ses->router, ses->mask,
 						  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply);
+			else {
+				dhcpv4_packet_ref(pack);
+				ipoe_session_keepalive(pack);
+			}
 		}
 	} else if (pack->msg_type == DHCPREQUEST) {
 		ses->xid = pack->hdr->xid;
-		if (pack->hdr->ciaddr == ses->yiaddr && pack->hdr->xid != ses->xid)
-			ses->xid = pack->hdr->xid;
 		if ((pack->server_id && (pack->server_id != ses->siaddr || pack->request_ip != ses->yiaddr)) ||
-			(pack->hdr->ciaddr && (pack->hdr->xid != ses->xid || pack->hdr->ciaddr != ses->yiaddr))) {
+			(pack->hdr->ciaddr && pack->hdr->ciaddr != ses->yiaddr)) {
 
 			if (pack->server_id == ses->siaddr)
 				dhcpv4_send_nak(dhcpv4, pack, "Wrong session");
-			else if (ses->serv->dhcpv4_relay)
-				dhcpv4_relay_send(ses->serv->dhcpv4_relay, pack, 0, ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
+			else
+				list_for_each_entry(relay, &ses->serv->relay_list, entry)
+					dhcpv4_relay_send(relay->dhcpv4_relay, pack, 0, &ses->ses.dhcpv4_srv_list,
+							ses->serv->ifname, conf_agent_remote_id, conf_link_selection);
 
 			triton_context_call(ses->ctrl.ctx, (triton_event_func)__ipoe_session_terminate, &ses->ses);
 		} else {
@@ -1996,22 +2090,48 @@ static int parse_dhcpv4_mask(uint32_t mask)
 static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 {
 	struct ipoe_session *ses = container_of(triton_context_self(), typeof(*ses), ctx);
+	struct ap_dhcpv4_srv *dhcp_srv, *dhcp_srv_iter;
 	struct dhcpv4_option *opt;
 
-	if (ses->dhcpv4_relay_reply)
+	if (ses->dhcpv4_relay_reply) {
 		dhcpv4_packet_free(ses->dhcpv4_relay_reply);
-
-	if (!ses->dhcpv4_request) {
 		ses->dhcpv4_relay_reply = NULL;
-		return;
 	}
-
-	ses->dhcpv4_relay_reply = pack;
 
 	if (conf_verbose) {
 		log_ppp_info2("recv ");
-		dhcpv4_print_packet(pack, 1, log_ppp_info2);
+		dhcpv4_print_packet(pack, pack->src_addr, log_ppp_info2);
 	}
+
+	if (ses->relay_server_id && ses->relay_server_id != pack->server_id) {
+		if (pack->msg_type != DHCPOFFER) {
+			dhcpv4_packet_free(pack);
+			return;
+		}
+		if (!ses->yiaddr || ses->yiaddr != pack->hdr->yiaddr) {
+			dhcpv4_packet_free(pack);
+			return;
+		}
+		dhcp_srv = NULL;
+		list_for_each_entry(dhcp_srv_iter, &ses->ses.dhcpv4_srv_list, entry) {
+			if (dhcp_srv_iter->addr == pack->src_addr) {
+				dhcp_srv = dhcp_srv_iter;
+				break;
+			}
+		}
+		if (!dhcp_srv) {
+			dhcp_srv = _malloc(sizeof(struct ap_dhcpv4_srv));
+			dhcp_srv->addr = pack->src_addr;
+			list_add_tail(&dhcp_srv->entry, &ses->ses.dhcpv4_srv_list);
+		}
+		dhcpv4_packet_free(pack);
+		return;
+	}
+
+	if (!ses->dhcpv4_request)
+		return;
+
+	ses->dhcpv4_relay_reply = pack;
 
 	opt = dhcpv4_packet_find_opt(pack, 51);
 	if (opt)
@@ -2020,10 +2140,14 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 	opt = dhcpv4_packet_find_opt(pack, 58);
 	if (opt)
 		ses->renew_time = ntohl(*(uint32_t *)opt->data);
+	if (!opt || ses->renew_time >= ses->lease_time)
+		ses->renew_time = ses->lease_time * LEASE_RENEW_TIME_RATIO;
 
 	opt = dhcpv4_packet_find_opt(pack, 59);
 	if (opt)
 		ses->rebind_time = ntohl(*(uint32_t *)opt->data);
+	if (!opt || ses->rebind_time <= ses->renew_time)
+		ses->rebind_time = ses->lease_time * LEASE_REBIND_TIME_RATIO;
 
 	opt = dhcpv4_packet_find_opt(pack, 1);
 	if (opt)
@@ -2039,10 +2163,21 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 
 			ses->relay_server_id = pack->server_id;
 
-			if (!ses->yiaddr) {
-				ses->yiaddr = pack->hdr->yiaddr;
-				ses->relay_addr = 1;
+			dhcp_srv = NULL;
+			list_for_each_entry(dhcp_srv_iter, &ses->ses.dhcpv4_srv_list, entry) {
+				if (dhcp_srv_iter->addr == pack->src_addr) {
+					dhcp_srv = dhcp_srv_iter;
+					break;
+				}
 			}
+			if (!dhcp_srv) {
+				dhcp_srv = _malloc(sizeof(struct ap_dhcpv4_srv));
+				dhcp_srv->addr = pack->src_addr;
+				list_add_tail(&dhcp_srv->entry, &ses->ses.dhcpv4_srv_list);
+			}
+
+			if (!ses->yiaddr)
+				ses->yiaddr = pack->hdr->yiaddr;
 
 			__ipoe_session_start(ses);
 		} else
@@ -2438,23 +2573,23 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
 	}
 
 	if (lease_time_set && !renew_time_set)
-		ses->renew_time = ses->lease_time/2;
+		ses->renew_time = ses->lease_time * LEASE_RENEW_TIME_RATIO;
 	else if (renew_time_set && ses->renew_time > ses->lease_time) {
 		log_ppp_warn("ipoe: overriding renew time\n");
-		ses->renew_time = ses->lease_time/2;
+		ses->renew_time = ses->lease_time * LEASE_RENEW_TIME_RATIO;
 	}
 
 	if (lease_time_set && !rebind_time_set)
 		ses->rebind_time = ses->lease_time/2 + ses->lease_time/4 + ses->lease_time/8;
 	else if (rebind_time_set && ses->rebind_time > ses->lease_time) {
 		log_ppp_warn("ipoe: overriding rebind time\n");
-		ses->rebind_time = ses->lease_time/2 + ses->lease_time/4 + ses->lease_time/8;
+		ses->rebind_time = ses->lease_time * LEASE_REBIND_TIME_RATIO;
 	}
 
 	if (ses->renew_time && ses->rebind_time && ses->renew_time > ses->rebind_time) {
 		if (renew_time_set)
 			log_ppp_warn("ipoe: overriding renew time\n");
-		ses->renew_time = ses->rebind_time*4/7;
+		ses->renew_time = ses->rebind_time * LEASE_RENEW_REBIND_TIME_RATIO;
 	}
 
 	if (!ses->siaddr)
@@ -2511,23 +2646,23 @@ static void ev_radius_coa(struct ev_radius_t *ev)
 	}
 
 	if (lease_time_set && !renew_time_set)
-		ses->renew_time = ses->lease_time/2;
+		ses->renew_time = ses->lease_time * LEASE_RENEW_TIME_RATIO;
 	else if (renew_time_set && ses->renew_time > ses->lease_time) {
 		log_ppp_warn("ipoe: overriding renew time\n");
-		ses->renew_time = ses->lease_time/2;
+		ses->renew_time = ses->lease_time * LEASE_RENEW_TIME_RATIO;
 	}
 
 	if (lease_time_set && !rebind_time_set)
-		ses->rebind_time = ses->lease_time/2 + ses->lease_time/4 + ses->lease_time/8;
+		ses->rebind_time = ses->lease_time * LEASE_REBIND_TIME_RATIO;
 	else if (rebind_time_set && ses->rebind_time > ses->lease_time) {
 		log_ppp_warn("ipoe: overriding rebind time\n");
-		ses->rebind_time = ses->lease_time/2 + ses->lease_time/4 + ses->lease_time/8;
+		ses->rebind_time = ses->lease_time * LEASE_REBIND_TIME_RATIO;
 	}
 
 	if (ses->renew_time && ses->rebind_time && ses->renew_time > ses->rebind_time) {
 		if (renew_time_set)
 			log_ppp_warn("ipoe: overriding renew time\n");
-		ses->renew_time = ses->rebind_time*4/7;
+		ses->renew_time = ses->rebind_time * LEASE_RENEW_REBIND_TIME_RATIO;
 	}
 
 	if (l4_redirect >= 0 && ev->ses->state == AP_STATE_ACTIVE) {
@@ -2587,6 +2722,8 @@ static int ipoe_rad_send_auth_request(struct rad_plugin_t *rad, struct rad_packe
 
 static void ipoe_serv_release(struct ipoe_serv *serv)
 {
+	struct relay *relay;
+
 	pthread_mutex_lock(&serv->lock);
 	if (!list_empty(&serv->sessions)) {
 		pthread_mutex_unlock(&serv->lock);
@@ -2613,9 +2750,6 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 	if (serv->dhcpv4)
 		dhcpv4_free(serv->dhcpv4);
 
-	if (serv->dhcpv4_relay)
-		dhcpv4_relay_free(serv->dhcpv4_relay, &serv->ctx);
-
 	if (serv->arp)
 		arpd_stop(serv->arp);
 
@@ -2641,6 +2775,13 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 		struct request_item *r = list_first_entry(&serv->req_list, typeof(*r), entry);
 		list_del(&r->entry);
 		mempool_free(r);
+	}
+
+	while (!list_empty(&serv->relay_list)) {
+		relay = list_first_entry(&serv->relay_list, typeof(*relay), entry);
+		dhcpv4_relay_free(relay->dhcpv4_relay, &serv->ctx);
+		list_del(&relay->entry);
+		_free(relay);
 	}
 
 	if (serv->disc_timer.tpd)
@@ -2973,6 +3114,109 @@ static void ipoe_ipv6_disable(struct ipoe_serv *serv)
 }
 
 
+static in_addr_t ipoe_get_giaddr(in_addr_t relay_addr, const char *str_addr)
+{
+	struct sockaddr_in addr;
+	int sock;
+	socklen_t len = sizeof(addr);
+	in_addr_t giaddr = 0;
+
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = relay_addr;
+	addr.sin_port = htons(DHCP_SERV_PORT);
+
+	sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+	if (connect(sock, &addr, sizeof(addr))) {
+		log_error("dhcpv4: relay: %s: connect: %s\n", str_addr, strerror(errno));
+		return giaddr;
+	}
+
+	getsockname(sock, &addr, &len);
+	giaddr = addr.sin_addr.s_addr;
+
+	close(sock);
+
+	return giaddr;
+}
+
+static void ipoe_dhcpv4_list_update(struct ipoe_serv *serv, struct list_head *crelay_list, in_addr_t opt_giaddr)
+{
+	struct conf_relay *crelay, *crelay_iter;
+	struct relay *relay, *relay_iter;
+	struct list_head *safe;
+	in_addr_t giaddr;
+
+	if (!crelay_list)
+		return;
+
+	if (!serv->opt_dhcpv4) {
+		list_for_each_entry_safe(relay, safe, &serv->relay_list, entry) {
+			dhcpv4_relay_free(relay->dhcpv4_relay, &serv->ctx);
+			list_del(&relay->entry);
+			_free(relay);
+		}
+		return;
+	}
+
+	/* Add new relay servers */
+	list_for_each_entry(crelay_iter, crelay_list, entry) {
+		relay = NULL;
+		list_for_each_entry(relay_iter, &serv->relay_list, entry) {
+			if (strncmp(crelay_iter->str_addr, relay_iter->str_addr, INET_ADDRSTRLEN))
+				continue;
+			relay = relay_iter;
+			break;
+		}
+		if (!relay) {
+			relay = _malloc(sizeof(struct relay));
+			memset(relay, 0, sizeof(struct relay));
+			strncpy(relay->str_addr, crelay_iter->str_addr, INET_ADDRSTRLEN);
+			relay->addr = inet_addr(relay->str_addr);
+			list_add_tail(&relay->entry, &serv->relay_list);
+		}
+
+		giaddr = opt_giaddr ? opt_giaddr : ipoe_get_giaddr(relay->addr, relay->str_addr);
+		if (!giaddr)
+			continue;
+
+		if (relay->giaddr != giaddr) {
+			relay->giaddr = giaddr;
+			if (relay->dhcpv4_relay) {
+				dhcpv4_relay_free(relay->dhcpv4_relay, &serv->ctx);
+				relay->dhcpv4_relay = NULL;
+			}
+		}
+
+		if (!relay->dhcpv4_relay && serv->opt_dhcpv4)
+			relay->dhcpv4_relay = dhcpv4_relay_create(relay->str_addr, relay->giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay
+#ifdef HAVE_VRF
+					, serv->vrf_name);
+#else
+					);
+#endif
+	}
+
+	/* Remove old relay servers */
+	list_for_each_entry_safe(relay_iter, safe, &serv->relay_list, entry) {
+		crelay = NULL;
+		list_for_each_entry(crelay_iter, crelay_list, entry) {
+			if (strncmp(crelay_iter->str_addr, relay_iter->str_addr, INET_ADDRSTRLEN))
+				continue;
+			crelay = crelay_iter;
+			break;
+		}
+		if (crelay)
+			continue;
+
+		dhcpv4_relay_free(relay_iter->dhcpv4_relay, &serv->ctx);
+		list_del(&relay_iter->entry);
+		_free(relay_iter);
+	}
+}
+
+
 static void add_interface(const char *ifname, int ifindex, const char *opt, int parent_ifindex, int vid, int vlan_mon)
 {
 	char *str0 = NULL, *str, *ptr1, *ptr2;
@@ -2993,14 +3237,19 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 #ifdef USE_LUA
 	char *opt_lua_username_func = NULL;
 #endif
-	const char *opt_relay = conf_relay;
-	in_addr_t relay_addr = conf_relay ? inet_addr(conf_relay) : 0;
+	struct conf_relay *crelay;
+	LIST_HEAD(opt_relay_list);
+	struct list_head *conf_relay_list = NULL;
 	in_addr_t opt_giaddr = 0;
 	in_addr_t opt_src = conf_src;
 	int opt_arp = conf_arp;
 	int opt_check_mac_change = conf_check_mac_change;
 	struct ifreq ifr;
 	uint8_t hwaddr[ETH_ALEN];
+	struct in_addr dummy;
+#ifdef HAVE_VRF
+	char *vrf_name = NULL;
+#endif /* HAVE_VRF */
 
 	str0 = strchr(opt, ',');
 	if (str0) {
@@ -3046,8 +3295,13 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 			} else if (strcmp(str, "ifcfg") == 0) {
 				opt_ifcfg = atoi(ptr1);
 			} else if (strcmp(str, "relay") == 0) {
-				opt_relay = ptr1;
-				relay_addr = inet_addr(ptr1);
+				if (inet_pton(AF_INET, ptr1, &dummy) != 1) {
+					log_error("ipoe: interface %s failed to parse 'relay=%s'\n", ifname, ptr1);
+					goto parse_err;
+				}
+				crelay = _malloc(sizeof(struct conf_relay));
+				strncpy(crelay->str_addr, ptr1, INET_ADDRSTRLEN);
+				list_add_tail(&crelay->entry, &opt_relay_list);
 			} else if (strcmp(str, "giaddr") == 0) {
 				opt_giaddr = inet_addr(ptr1);
 			} else if (strcmp(str, "nat") == 0) {
@@ -3086,6 +3340,12 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		}
 	}
 
+	if (!list_empty(&opt_relay_list)) {
+		/* prefer interface relay */
+		conf_relay_list = &opt_relay_list;
+	} else if (!list_empty(&conf_relay))
+		conf_relay_list = &conf_relay;
+
 	if (!opt_up && !opt_dhcpv4 && !opt_auto) {
 		opt_up = conf_up;
 		opt_dhcpv4 = conf_dhcpv4;
@@ -3097,29 +3357,6 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 
 	opt_auto &= !opt_shared;
 
-	if (opt_relay && !opt_giaddr && opt_dhcpv4) {
-		struct sockaddr_in addr;
-		int sock;
-		socklen_t len = sizeof(addr);
-
-		memset(&addr, 0, sizeof(addr));
-		addr.sin_family = AF_INET;
-		addr.sin_addr.s_addr = relay_addr;
-		addr.sin_port = htons(DHCP_SERV_PORT);
-
-		sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
-
-		if (connect(sock, &addr, sizeof(addr))) {
-			log_error("dhcpv4: relay: %s: connect: %s\n", opt_relay, strerror(errno));
-			goto out_err;
-		}
-
-		getsockname(sock, &addr, &len);
-		opt_giaddr = addr.sin_addr.s_addr;
-
-		close(sock);
-	}
-
 	pthread_mutex_lock(&serv_lock);
 	list_for_each_entry(serv, &serv_list, entry) {
 		if (strcmp(ifname, serv->ifname))
@@ -3127,7 +3364,16 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 
 		serv->active = 1;
 		serv->ifindex = ifindex;
-
+#ifdef HAVE_VRF
+		serv->vrf_ifindex = iplink_get_vrf_ifindex(ifindex);
+		if (serv->vrf_ifindex) {
+			iplink_get_vrf_info(serv->vrf_ifindex, &vrf_name, &serv->table_id);
+			strncpy(serv->vrf_name, vrf_name, IFNAMSIZ);
+		} else {
+			serv->table_id = RT_TABLE_MAIN;
+			serv->vrf_name[0] = '\0';
+		}
+#endif /* HAVE_VRF */
 		if ((opt_shared && !serv->opt_shared) || (!opt_shared && serv->opt_shared)) {
 			ipoe_drop_sessions(serv, NULL);
 			serv->opt_shared = opt_shared;
@@ -3142,14 +3388,13 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 			serv->dhcpv4 = NULL;
 		}
 
-		if (serv->dhcpv4_relay &&
-				(serv->dhcpv4_relay->addr != relay_addr || serv->dhcpv4_relay->giaddr != opt_giaddr)) {
-			dhcpv4_relay_free(serv->dhcpv4_relay, &serv->ctx);
-			serv->dhcpv4_relay = NULL;
-		}
+		ipoe_dhcpv4_list_update(serv, conf_relay_list, opt_giaddr);
 
-		if (!serv->dhcpv4_relay && serv->opt_dhcpv4 && opt_relay)
-			serv->dhcpv4_relay = dhcpv4_relay_create(opt_relay, opt_giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay);
+		while (!list_empty(&opt_relay_list)) {
+			crelay = list_entry(opt_relay_list.next, typeof(*crelay), entry);
+			list_del(&crelay->entry);
+			_free(crelay);
+		}
 
 		if (serv->arp && !opt_arp) {
 			arpd_stop(serv->arp);
@@ -3268,11 +3513,22 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	serv->parent_ifindex = parent_ifindex;
 	serv->parent_vid = parent_ifindex ? iplink_vlan_get_vid(parent_ifindex, NULL) : 0;
 	serv->vid = vid;
+#ifdef HAVE_VRF
+	serv->vrf_ifindex = iplink_get_vrf_ifindex(ifindex);
+	if (serv->vrf_ifindex) {
+		iplink_get_vrf_info(serv->vrf_ifindex, &vrf_name, &serv->table_id);
+		strncpy(serv->vrf_name, vrf_name, IFNAMSIZ);
+	} else {
+		serv->table_id = RT_TABLE_MAIN;
+		serv->vrf_name[0] = '\0';
+	}
+#endif /* HAVE_VRF */
 	serv->active = 1;
 	INIT_LIST_HEAD(&serv->sessions);
 	INIT_LIST_HEAD(&serv->disc_list);
 	INIT_LIST_HEAD(&serv->arp_list);
 	INIT_LIST_HEAD(&serv->req_list);
+	INIT_LIST_HEAD(&serv->relay_list);
 	memcpy(serv->hwaddr, hwaddr, ETH_ALEN);
 	serv->disc_timer.expire = ipoe_serv_disc_timer;
 
@@ -3282,9 +3538,14 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->dhcpv4 = dhcpv4_create(&serv->ctx, serv->ifname, opt);
 		if (serv->dhcpv4)
 			serv->dhcpv4->recv = ipoe_recv_dhcpv4;
+	}
 
-		if (opt_relay)
-			serv->dhcpv4_relay = dhcpv4_relay_create(opt_relay, opt_giaddr, &serv->ctx, (triton_event_func)ipoe_recv_dhcpv4_relay);
+	ipoe_dhcpv4_list_update(serv, conf_relay_list, opt_giaddr);
+
+	while (!list_empty(&opt_relay_list)) {
+		crelay = list_entry(opt_relay_list.next, typeof(*crelay), entry);
+		list_del(&crelay->entry);
+		_free(crelay);
 	}
 
 	if (serv->opt_arp)
@@ -3317,8 +3578,6 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 
 parse_err:
 	log_error("ipoe: failed to parse '%s'\n", opt);
-out_err:
-	_free(str0);
 }
 
 static void load_interface(const char *opt)
@@ -3433,6 +3692,49 @@ static void load_interfaces(struct conf_sect_t *sect)
 			ipoe_drop_sessions(serv, NULL);
 			serv->need_close = 1;
 			triton_context_call(&serv->ctx, (triton_event_func)ipoe_serv_release, serv);
+		}
+	}
+}
+
+static void load_relays(struct conf_sect_t *sect)
+{
+	struct conf_option_t *opt;
+	struct conf_relay *crelay;
+	struct in_addr dummy;
+	char *str;
+
+	while (!list_empty(&conf_relay)) {
+		crelay = list_entry(conf_relay.next, typeof(*crelay), entry);
+		list_del(&crelay->entry);
+		_free(crelay);
+	}
+
+	list_for_each_entry(opt, &sect->items, entry) {
+		if (strcmp(opt->name, "relay"))
+			continue;
+		if (!opt->val)
+			continue;
+
+		/* get substring delimited by "," */
+		str = strtok(opt->val, ",");
+
+		while (str != NULL) {
+		    /* remove any leading spaces */
+			while (str[0] == ' ')
+		        str++;
+
+			if (inet_pton(AF_INET, str, &dummy) != 1) {
+				log_error("ipoe: failed to parse '%s %s'\n", opt->name, str);
+				break;
+			}
+
+			crelay = _malloc(sizeof(struct conf_relay));
+			strncpy(crelay->str_addr, str, INET_ADDRSTRLEN);
+
+			list_add_tail(&crelay->entry, &conf_relay);
+
+			/* get the next substring */
+			str = strtok(NULL, ",");
 		}
 	}
 }
@@ -3903,22 +4205,22 @@ static void load_config(void)
 	if (opt)
 		conf_renew_time = atoi(opt);
 	if (!opt || conf_renew_time > conf_lease_time)
-		conf_renew_time = conf_lease_time/2;
+		conf_renew_time = conf_lease_time * LEASE_RENEW_TIME_RATIO;
 
 	opt = conf_get_opt("ipoe", "rebind-time");
 	if (opt)
 		conf_rebind_time = atoi(opt);
 	if (!opt || conf_rebind_time > conf_lease_time)
-		conf_rebind_time = conf_lease_time/2 + conf_lease_time/4 + conf_lease_time/8;
+		conf_rebind_time = conf_lease_time * LEASE_REBIND_TIME_RATIO;
 
 	if (conf_renew_time && conf_rebind_time && conf_renew_time > conf_rebind_time)
-		conf_renew_time = conf_rebind_time*4/7;
+		conf_renew_time = conf_rebind_time * LEASE_RENEW_REBIND_TIME_RATIO;
 
 	opt = conf_get_opt("ipoe", "max-lease-time");
 	if (opt)
 		conf_lease_timeout = atoi(opt);
 	else
-		conf_lease_timeout = conf_lease_time + conf_lease_time/10;
+		conf_lease_timeout = conf_lease_time * LEASE_TIMEOUT_TIME_RATIO;
 
 	opt = conf_get_opt("ipoe", "unit-cache");
 	if (opt)
@@ -3991,8 +4293,6 @@ static void load_config(void)
 			log_emerg("ipoe: failed to parse 'mode=%s'\n", opt);
 	} else
 		conf_mode = MODE_L2;
-
-	conf_relay = conf_get_opt("ipoe", "relay");
 
 	opt = conf_get_opt("ipoe", "relay-timeout");
 	if (opt && atoi(opt) > 0)
@@ -4136,6 +4436,7 @@ static void load_config(void)
 
 	parse_offer_delay(conf_get_opt("ipoe", "offer-delay"));
 
+	load_relays(s);
 	load_interfaces(s);
 	load_vlan_mon(s);
 	load_gw_addr(s);

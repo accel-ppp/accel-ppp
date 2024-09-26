@@ -73,6 +73,7 @@ void __export ap_session_init(struct ap_session *ses)
 {
 	memset(ses, 0, sizeof(*ses));
 	INIT_LIST_HEAD(&ses->pd_list);
+	INIT_LIST_HEAD(&ses->dhcpv4_srv_list);
 	ses->ifindex = -1;
 	ses->unit_idx = -1;
 	ses->net = net;
@@ -182,6 +183,8 @@ void __export ap_session_activate(struct ap_session *ses)
 
 void __export ap_session_finished(struct ap_session *ses)
 {
+	struct ap_dhcpv4_srv *dhcpv4_srv;
+
 	ses->terminated = 1;
 
 	if (!ses->down) {
@@ -261,6 +264,12 @@ void __export ap_session_finished(struct ap_session *ses)
 
 	if (ses->timer.tpd)
 		triton_timer_del(&ses->timer);
+
+	while (!list_empty(&ses->dhcpv4_srv_list)) {
+		dhcpv4_srv = list_first_entry(&ses->dhcpv4_srv_list, typeof(*dhcpv4_srv), entry);
+		list_del(&dhcpv4_srv->entry);
+		_free(dhcpv4_srv);
+	}
 
 #ifdef USE_BACKUP
 	if (ses->backup)
