@@ -960,7 +960,12 @@ void dhcpv4_send_notify(struct dhcpv4_serv *serv, struct dhcpv4_packet *req, uns
 	dhcpv4_packet_free(pack);
 }
 
-struct dhcpv4_relay *dhcpv4_relay_create(const char *_addr, in_addr_t giaddr, struct triton_context_t *ctx, triton_event_func recv)
+struct dhcpv4_relay *dhcpv4_relay_create(const char *_addr, in_addr_t giaddr, struct triton_context_t *ctx, triton_event_func recv
+#ifdef HAVE_VRF
+		, const char *vrfname)
+#else
+		)
+#endif
 {
 	char str[17], *ptr;
 	struct dhcpv4_relay *r;
@@ -1008,9 +1013,20 @@ struct dhcpv4_relay *dhcpv4_relay_create(const char *_addr, in_addr_t giaddr, st
 		log_error("socket: %s\n", strerror(errno));
 		goto out_err_unlock;
 	}
-
+#ifdef HAVE_VRF
+#ifdef SO_BINDTODEVICE
+	if (strlen(vrfname) && setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, vrfname, strlen(vrfname) + 1) < 0)
+		log_error("dhcpv4: setsockopt(SO_BINDTODEVICE %s): %s\n", vrfname, strerror(errno));
+#endif /* SO_BINDTODEVICE */
+#endif /* HAVE_VRF */
 	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &f, sizeof(f)))
 		log_error("dhcpv4: setsockopt(SO_REUSEADDR): %s\n", strerror(errno));
+
+#ifdef HAVE_VRF
+	/* allow multiple UDP sockets from the same port but from different VRFs */
+	if (setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &f, sizeof(f)) < 0)
+		log_error("dhcpv4: setsockopt(SO_REUSEPORT): %s\n", strerror(errno));
+#endif /* HAVE_VRF */
 
 	if (bind(sock, &laddr, sizeof(laddr))) {
 		log_error("dhcpv4: relay: %s: bind: %s\n", _addr, strerror(errno));
