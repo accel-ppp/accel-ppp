@@ -738,7 +738,10 @@ static void ipv6cp_recv(struct ppp_handler_t*h)
 			if (conf_ppp_verbose)
 				log_ppp_info2("recv [IPV6CP TermReq id=%x]\n", hdr->id);
 			ppp_fsm_recv_term_req(&ipv6cp->fsm);
-			ap_session_terminate(&ipv6cp->ppp->ses, TERM_USER_REQUEST, 0);
+			if (conf_ipv4 == IPV4_REQUIRE)
+				ap_session_terminate(&ipv6cp->ppp->ses, TERM_USER_REQUEST, 0);
+			else
+				ppp_layer_passive(ipv6cp->ppp, &ipv6cp->ld);
 			break;
 		case TERMACK:
 			if (conf_ppp_verbose)
