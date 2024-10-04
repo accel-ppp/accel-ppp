@@ -763,8 +763,10 @@ static void ipoe_session_start(struct ipoe_session *ses)
 
 	ap_session_starting(&ses->ses);
 
-	if (ses->serv->opt_shared && ipoe_create_interface(ses))
+	if (ses->serv->opt_shared && ipoe_create_interface(ses)) {
+		_free(username);
 		return;
+	}
 
 	if (conf_noauth)
 		r = PWDB_SUCCESS;
@@ -785,7 +787,7 @@ static void ipoe_session_start(struct ipoe_session *ses)
 		} else
 			pass = username;
 
-		ses->username = username;
+		ses->username = _strdup(username);
 		r = pwdb_check(&ses->ses, (pwdb_callback)auth_result, ses, username, PPP_PAP, pass);
 
 		if (r == PWDB_WAIT)
@@ -803,6 +805,8 @@ static void ipoe_session_start(struct ipoe_session *ses)
 	}
 
 	auth_result(ses, r);
+
+	_free(username);
 }
 
 static void find_gw_addr(struct ipoe_session *ses)
@@ -1270,6 +1274,9 @@ static void ipoe_session_finished(struct ap_session *s)
 
 	if (ses->dhcpv4)
 		dhcpv4_free(ses->dhcpv4);
+
+	if (ses->username)
+		_free(ses->username);
 
 	triton_event_fire(EV_CTRL_FINISHED, s);
 
@@ -2003,6 +2010,7 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 
 	if (!ses->dhcpv4_request) {
 		ses->dhcpv4_relay_reply = NULL;
+		dhcpv4_packet_free(pack);
 		return;
 	}
 
