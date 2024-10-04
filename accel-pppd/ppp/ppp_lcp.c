@@ -16,6 +16,10 @@
 
 #include "memdebug.h"
 
+#ifndef min
+#define min(x,y) ((x)<(y)?(x):(y))
+#endif
+
 struct recv_opt_t
 {
 	struct list_head entry;
@@ -615,7 +619,7 @@ static void send_echo_reply(struct ppp_lcp_t *lcp)
 	if (conf_ppp_verbose)
 		log_ppp_debug("send [LCP EchoRep id=%x <magic %08x>]\n", hdr->id, lcp->magic);
 
-	ppp_chan_send(lcp->ppp, hdr, ntohs(hdr->len) + 2);
+	ppp_chan_send(lcp->ppp, hdr, min(ntohs(hdr->len), lcp->ppp->mtu) + 2);
 }
 
 static void send_echo_request(struct triton_timer_t *t)
