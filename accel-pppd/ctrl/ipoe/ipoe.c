@@ -3109,12 +3109,12 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 
 		sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
 
-		if (connect(sock, &addr, sizeof(addr))) {
+		if (connect(sock, (struct sockaddr*)&addr, sizeof(addr))) {
 			log_error("dhcpv4: relay: %s: connect: %s\n", opt_relay, strerror(errno));
 			goto out_err;
 		}
 
-		getsockname(sock, &addr, &len);
+		getsockname(sock, (struct sockaddr*)&addr, &len);
 		opt_giaddr = addr.sin_addr.s_addr;
 
 		close(sock);

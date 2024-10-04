@@ -1613,7 +1613,7 @@ static struct l2tp_conn_t *l2tp_tunnel_alloc(const struct sockaddr_in *peer,
 			  strerror(errno));
 		goto err_conn_fd;
 	}
-	if (bind(conn->hnd.fd, host, sizeof(*host))) {
+	if (bind(conn->hnd.fd, (struct sockaddr*)host, sizeof(*host))) {
 		log_error("l2tp: impossible to allocate new tunnel:"
 			  " bind() failed: %s\n", strerror(errno));
 		goto err_conn_fd;
@@ -1646,7 +1646,7 @@ static struct l2tp_conn_t *l2tp_tunnel_alloc(const struct sockaddr_in *peer,
 		goto err_conn_fd;
 	}
 
-	if (getsockname(conn->hnd.fd, &conn->host_addr, &hostaddrlen) < 0) {
+	if (getsockname(conn->hnd.fd, (struct sockaddr*)&conn->host_addr, &hostaddrlen) < 0) {
 		log_error("l2tp: impossible to allocate new tunnel:"
 			  " getsockname() failed: %s\n", strerror(errno));
 		goto err_conn_fd;
@@ -1747,7 +1747,7 @@ static inline int l2tp_tunnel_update_peerport(struct l2tp_conn_t *conn,
 	int res;
 
 	conn->peer_addr.sin_port = port_nbo;
-	res = connect(conn->hnd.fd, &conn->peer_addr, sizeof(conn->peer_addr));
+	res = connect(conn->hnd.fd, (struct sockaddr*)&conn->peer_addr, sizeof(conn->peer_addr));
 	if (res < 0) {
 		log_tunnel(log_error, conn,
 			   "impossible to update peer port from %hu to %hu:"
