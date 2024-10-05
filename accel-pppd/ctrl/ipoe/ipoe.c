@@ -20,8 +20,6 @@
 #endif
 #include <linux/route.h>
 
-#include <pcre.h>
-
 #include "events.h"
 #include "list.h"
 #include "triton.h"
@@ -56,7 +54,7 @@
 #define SESSION_TERMINATED "Session was terminated"
 
 struct iplink_arg {
-	pcre *re;
+	pcre2_code *re;
 	const char *opt;
 	long *arg1;
 };
@@ -2804,10 +2802,10 @@ void ipoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 	struct ifreq ifr;
 	char *ptr;
 	int len, r, svid;
-	pcre *re = NULL;
-	const char *pcre_err;
+	pcre2_code *re = NULL;
+	int pcre_err;
 	char *pattern;
-	int pcre_offset;
+	PCRE2_SIZE pcre_offset;
 	char ifname[IFNAMSIZ];
 
 	if (!sect)
@@ -2905,15 +2903,17 @@ void ipoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 			memcpy(pattern, opt->val + 3, ptr - (opt->val + 3));
 			pattern[ptr - (opt->val + 3)] = 0;
 
-			re = pcre_compile2(pattern, 0, NULL, &pcre_err, &pcre_offset, NULL);
+			re = pcre2_compile((PCRE2_SPTR)pattern, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &pcre_offset, NULL);
 
 			_free(pattern);
 
 			if (!re)
 				continue;
 
-			r = pcre_exec(re, NULL, ifname, len, 0, 0, NULL, 0);
-			pcre_free(re);
+			pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
+			r = pcre2_match(re, (PCRE2_SPTR)ifname, len, 0, 0, match_data, NULL);
+			pcre2_match_data_free(match_data);
+			pcre2_code_free(re);
 
 			if (r < 0)
 				continue;
@@ -3358,8 +3358,12 @@ static void load_interface(const char *opt)
 
 static int __load_interface_re(int index, int flags, const char *name, int iflink, int vid, struct iplink_arg *arg)
 {
-	if (pcre_exec(arg->re, NULL, name, strlen(name), 0, 0, NULL, 0) < 0)
+	pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
+	if (pcre2_match(arg->re, (PCRE2_SPTR)name, strlen(name), 0, 0, match_data, NULL) < 0) {
+		pcre2_match_data_free(match_data);
 		return 0;
+	}
+	pcre2_match_data_free(match_data);
 
 	add_interface(name, index, arg->opt, iflink, vid, 0);
 
@@ -3368,11 +3372,11 @@ static int __load_interface_re(int index, int flags, const char *name, int iflin
 
 static void load_interface_re(const char *opt)
 {
-	pcre *re = NULL;
-	const char *pcre_err;
+	pcre2_code *re = NULL;
+	int pcre_err;
 	char *pattern;
 	const char *ptr;
-	int pcre_offset;
+	PCRE2_SIZE pcre_offset;
 	struct iplink_arg arg;
 	struct ipoe_serv *serv;
 
@@ -3382,10 +3386,12 @@ static void load_interface_re(const char *opt)
 	memcpy(pattern, opt + 3, ptr - (opt + 3));
 	pattern[ptr - (opt + 3)] = 0;
 
-	re = pcre_compile2(pattern, 0, NULL, &pcre_err, &pcre_offset, NULL);
+	re = pcre2_compile((PCRE2_SPTR)pattern, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &pcre_offset, NULL);
 
 	if (!re) {
-		log_error("ipoe: '%s': %s at %i\r\n", pattern, pcre_err, pcre_offset);
+		PCRE2_UCHAR err_msg[64];
+		pcre2_get_error_message(pcre_err, err_msg, sizeof(err_msg));
+		log_error("ipoe: '%s': %s at %i\r\n", pattern, err_msg, (int)pcre_offset);
 		return;
 	}
 
@@ -3398,11 +3404,13 @@ static void load_interface_re(const char *opt)
 		if (serv->active)
 			continue;
 
-		if (pcre_exec(re, NULL, serv->ifname, strlen(serv->ifname), 0, 0, NULL, 0) >= 0)
+		pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
+		if (pcre2_match(re, (PCRE2_SPTR)serv->ifname, strlen(serv->ifname), 0, 0, match_data, NULL) >= 0)
 			add_interface(serv->ifname, serv->ifindex, opt, 0, 0, 0);
+		pcre2_match_data_free(match_data);
 	}
 
-	pcre_free(re);
+	pcre2_code_free(re);
 	_free(pattern);
 }
 
@@ -3670,8 +3678,12 @@ static int __load_vlan_mon_re(int index, int flags, const char *name, int iflink
 	long mask1[4096/8/sizeof(long)];
 	struct ipoe_serv *serv;
 
-	if (pcre_exec(arg->re, NULL, name, strlen(name), 0, 0, NULL, 0) < 0)
+	pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
+	if (pcre2_match(arg->re, (PCRE2_SPTR)name, strlen(name), 0, 0, match_data, NULL) < 0) {
+		pcre2_match_data_free(match_data);
 		return 0;
+	}
+	pcre2_match_data_free(match_data);
 
 	if (!(flags & IFF_UP)) {
 		memset(&ifr, 0, sizeof(ifr));
@@ -3701,11 +3713,11 @@ static int __load_vlan_mon_re(int index, int flags, const char *name, int iflink
 
 static void load_vlan_mon_re(const char *opt, long *mask, int len)
 {
-	pcre *re = NULL;
-	const char *pcre_err;
+	pcre2_code *re = NULL;
+	int pcre_err;
 	char *pattern;
 	const char *ptr;
-	int pcre_offset;
+	PCRE2_SIZE pcre_offset;
 	struct iplink_arg arg;
 
 	for (ptr = opt; *ptr && *ptr != ','; ptr++);
@@ -3714,10 +3726,12 @@ static void load_vlan_mon_re(const char *opt, long *mask, int len)
 	memcpy(pattern, opt + 3, ptr - (opt + 3));
 	pattern[ptr - (opt + 3)] = 0;
 
-	re = pcre_compile2(pattern, 0, NULL, &pcre_err, &pcre_offset, NULL);
+	re = pcre2_compile((PCRE2_SPTR)pattern, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &pcre_offset, NULL);
 
 	if (!re) {
-		log_error("ipoe: '%s': %s at %i\r\n", pattern, pcre_err, pcre_offset);
+		PCRE2_UCHAR err_msg[64];
+		pcre2_get_error_message(pcre_err, err_msg, sizeof(err_msg));
+		log_error("ipoe: '%s': %s at %i\r\n", pattern, err_msg, (int)pcre_offset);
 		return;
 	}
 
@@ -3727,7 +3741,7 @@ static void load_vlan_mon_re(const char *opt, long *mask, int len)
 
 	iplink_list((iplink_list_func)__load_vlan_mon_re, &arg);
 
-	pcre_free(re);
+	pcre2_code_free(re);
 	_free(pattern);
 
 }

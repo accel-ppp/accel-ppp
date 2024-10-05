@@ -128,9 +128,9 @@ static int show_ses_exec(const char *cmd, char * const *f, int f_cnt, void *cli)
 	struct column_t *match_key = NULL;
 	char *match_pattern = NULL;
 	struct column_t *order_key = NULL;
-	pcre *re = NULL;
-	const char *pcre_err;
-	int pcre_offset;
+	pcre2_code *re = NULL;
+	int pcre_err;
+	PCRE2_SIZE pcre_offset;
 	struct column_t *column;
 	struct col_t *col;
 	struct row_t *row;
@@ -169,9 +169,11 @@ static int show_ses_exec(const char *cmd, char * const *f, int f_cnt, void *cli)
 	}
 
 	if (match_key) {
-		re = pcre_compile2(match_pattern, 0, NULL, &pcre_err, &pcre_offset, NULL);
+		re = pcre2_compile((PCRE2_SPTR)match_pattern, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &pcre_offset, NULL);
 		if (!re) {
-			cli_sendv(cli, "match: %s at %i\r\n", pcre_err, pcre_offset);
+			PCRE2_UCHAR err_msg[64];
+			pcre2_get_error_message(pcre_err, err_msg, sizeof(err_msg));
+			cli_sendv(cli, "match: %s at %i\r\n", err_msg, (int)pcre_offset);
 			return CLI_CMD_OK;
 		}
 	}
@@ -262,10 +264,13 @@ static int show_ses_exec(const char *cmd, char * const *f, int f_cnt, void *cli)
 			row = list_entry(t_list.next, typeof(*row), entry);
 			list_del(&row->entry);
 			if (match_key) {
-				if (pcre_exec(re, NULL, row->match_key, strlen(row->match_key), 0, 0, NULL, 0) < 0) {
+				pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
+				if (pcre2_match(re, (PCRE2_SPTR)row->match_key, strlen(row->match_key), 0, 0, match_data, NULL) < 0) {
 					free_row(row);
+					pcre2_match_data_free(match_data);
 					continue;
 				}
+				pcre2_match_data_free(match_data);
 			}
 			if (order_key)
 				insert_row(&r_list, row);
@@ -362,7 +367,7 @@ out:
 	}
 
 	if (re)
-		pcre_free(re);
+		pcre2_code_free(re);
 
 	return CLI_CMD_OK;
 
