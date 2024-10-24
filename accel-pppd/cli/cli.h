@@ -1,7 +1,8 @@
 #ifndef __CLI_H
 #define __CLI_H
 
-#include <pcre.h>
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
 
 #include "list.h"
 
@@ -23,11 +24,11 @@ struct cli_simple_cmd_t
 struct cli_regexp_cmd_t
 {
 	struct list_head entry;
-	pcre *re;
+	pcre2_code *re;
 	const char *pattern;
 	int options;
 	int (*exec)(const char *cmd, void *client);
-	pcre *h_re;
+	pcre2_code *h_re;
 	const char *h_pattern;
 	int h_options;
 	int (*help)(const char *cmd, void *client);
@@ -42,7 +43,6 @@ void cli_register_simple_cmd2(
 	int hdr_len,
 	...
 	);
-void cli_register_regexp_cmd(struct cli_regexp_cmd_t *cmd);
 void cli_show_ses_register(const char *name, const char *desc, void (*print)(struct ap_session *ses, char *buf));
 
 int cli_send(void *client, const char *data);
