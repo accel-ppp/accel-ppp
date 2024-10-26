@@ -123,9 +123,9 @@ static int terminate_exec1(char * const *f, int f_cnt, void *cli)
 {
 	struct ap_session *ses;
 	int hard = 0;
-	pcre *re;
-	const char *pcre_err;
-	int pcre_offset;
+	pcre2_code *re;
+	int pcre_err;
+	PCRE2_SIZE pcre_offset;
 
 	if (f_cnt == 5) {
 		if (!strcmp(f[4], "hard"))
@@ -135,9 +135,11 @@ static int terminate_exec1(char * const *f, int f_cnt, void *cli)
 	} else if (f_cnt != 4)
 		return CLI_CMD_SYNTAX;
 
-	re = pcre_compile2(f[3], 0, NULL, &pcre_err, &pcre_offset, NULL);
+	re = pcre2_compile((PCRE2_SPTR)f[3], PCRE2_ZERO_TERMINATED, 0, &pcre_err, &pcre_offset, NULL);
 	if (!re) {
-		cli_sendv(cli, "match: %s at %i\r\n", pcre_err, pcre_offset);
+		PCRE2_UCHAR err_msg[64];
+		pcre2_get_error_message(pcre_err, err_msg, sizeof(err_msg));
+		cli_sendv(cli, "match: %s at %i\r\n", err_msg, (int)pcre_offset);
 		return CLI_CMD_OK;
 	}
 
@@ -145,8 +147,12 @@ static int terminate_exec1(char * const *f, int f_cnt, void *cli)
 	list_for_each_entry(ses, &ses_list, entry) {
 		if (!ses->username)
 			continue;
-		if (pcre_exec(re, NULL, ses->username, strlen(ses->username), 0, 0, NULL, 0) < 0)
+		pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
+		if (pcre2_match(re, (PCRE2_SPTR)ses->username, strlen(ses->username), 0, 0, match_data, NULL) < 0) {
+			pcre2_match_data_free(match_data);
 			continue;
+		}
+		pcre2_match_data_free(match_data);
 		if (hard)
 			triton_context_call(ses->ctrl->ctx, (triton_event_func)__terminate_hard, ses);
 		else
@@ -154,7 +160,7 @@ static int terminate_exec1(char * const *f, int f_cnt, void *cli)
 	}
 	pthread_rwlock_unlock(&ses_lock);
 
-	pcre_free(re);
+	pcre2_code_free(re);
 
 	return CLI_CMD_OK;
 }

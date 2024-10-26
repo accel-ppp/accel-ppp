@@ -63,51 +63,6 @@ void __export cli_register_simple_cmd2(
 	va_end(ap);
 }
 
-void __export cli_register_regexp_cmd(struct cli_regexp_cmd_t *cmd)
-{
-	int err;
-	int erroffset;
-	const char *errptr;
-
-	if (cmd->exec == NULL) {
-		log_emerg("cli: impossible to register regexp command"
-			  " without an execution callback function\n");
-		_exit(EXIT_FAILURE);
-	}
-	if (cmd->pattern == NULL) {
-		log_emerg("cli: impossible to register regexp command"
-			  " without pattern\n");
-		_exit(EXIT_FAILURE);
-	}
-	cmd->re = pcre_compile2(cmd->pattern, cmd->options, &err,
-				&errptr, &erroffset, NULL);
-	if (!cmd->re) {
-		log_emerg("cli: failed to compile regexp \"%s\": %s (error %i)"
-			  " at positon %i (unprocessed characters: \"%s\")\n",
-			  cmd->pattern, errptr, err, erroffset,
-			  cmd->pattern + erroffset);
-		_exit(EXIT_FAILURE);
-	}
-
-	if (cmd->h_pattern) {
-		cmd->h_re = pcre_compile2(cmd->h_pattern, cmd->h_options, &err,
-					  &errptr, &erroffset, NULL);
-		if (!cmd->h_re) {
-			log_emerg("cli: failed to compile help regexp \"%s\":"
-				  " %s (error %i) at position %i (unprocessed"
-				  " characters: \"%s\")\n",
-				  cmd->h_pattern, errptr, err, erroffset,
-				  cmd->h_pattern + erroffset);
-			_exit(EXIT_FAILURE);
-		}
-	} else {
-		cmd->h_re = NULL;
-		cmd->h_pattern = NULL;
-	}
-
-	list_add_tail(&cmd->entry, &regexp_cmd_list);
-}
-
 int __export cli_send(void *client, const char *data)
 {
 	struct cli_client_t *cln = (struct cli_client_t *)client;
@@ -189,13 +144,15 @@ static int cli_process_help_cmd(struct cli_client_t *cln)
 		cmd_found = 1;
 
 	list_for_each_entry(recmd, &regexp_cmd_list, entry) {
+		pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
 		if (cmd[0] == '\0'
-		    || pcre_exec(recmd->h_re, NULL, cmd, strlen(cmd),
-				 0, 0, NULL, 0) >= 0) {
+		    || pcre2_match(recmd->h_re, (PCRE2_SPTR)cmd, strlen(cmd),
+				 0, 0, match_data, NULL) >= 0) {
 			cmd_found = 1;
 			if (recmd->help)
 				recmd->help(cmd, cln);
 		}
+		pcre2_match_data_free(match_data);
 	}
 
 	nb_items = split(cmd, items);
@@ -230,14 +187,19 @@ static int cli_process_regexp_cmd(struct cli_client_t *cln, int *err)
 	int res;
 
 	cmd = skip_space(cmd);
-	list_for_each_entry(recmd, &regexp_cmd_list, entry)
-		if (pcre_exec(recmd->re, NULL, cmd, strlen(cmd),
-			      0, 0, NULL, 0) >= 0) {
+	list_for_each_entry(recmd, &regexp_cmd_list, entry) {
+		pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
+		if (pcre2_match(recmd->re, (PCRE2_SPTR)cmd, strlen(cmd),
+			      0, 0, match_data, NULL) >= 0) {
 			found = 1;
 			res = recmd->exec(cmd, cln);
-			if (res != CLI_CMD_OK)
+			if (res != CLI_CMD_OK) {
+				pcre2_match_data_free(match_data);
 				break;
+			}
 		}
+		pcre2_match_data_free(match_data);
+	}
 	if (found)
 		*err = res;
 

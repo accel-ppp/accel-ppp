@@ -117,7 +117,7 @@ jobs:
         run: >
           ssh -i ssh-key -p2222 user@localhost "sudo apt -y install
           git build-essential cmake gcc linux-headers-\`uname -r\` 
-          libpcre3-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
+          libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
           libxml2-dev libxslt1-dev zlib1g-dev 
           iproute2 ppp pppoe isc-dhcp-client timelimit && 
           (sudo pip3 install pytest pytest-dependency pytest-order || sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order)"
@@ -247,7 +247,7 @@ jobs:
           ssh -i ssh-key -p2222 alpine@localhost "doas cat /etc/passwd"
       - name: Install build tools (on target OS)
         run: >
-          ssh -i ssh-key -p2222 alpine@localhost "doas apk add --no-cache git cmake make g++ pcre-dev libressl-dev linux-headers libucontext-dev lua5.1-dev linux-lts-dev py3-pip 
+          ssh -i ssh-key -p2222 alpine@localhost "doas apk add --no-cache git cmake make g++ pcre2-dev libressl-dev linux-headers libucontext-dev lua5.1-dev linux-lts-dev py3-pip 
           ppp ppp-pppoe && 
           (doas pip3 install pytest pytest-dependency pytest-order || doas pip3 install --break-system-packages pytest pytest-dependency pytest-order)"
       - name: Copy source code to target OS
@@ -325,7 +325,7 @@ jobs:
           sudo apt update && 
           NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
           git build-essential cmake gcc linux-headers-`uname -r`
-          libpcre3-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
+          libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
           iproute2 ppp pppoe isc-dhcp-client
 
       - name: Install testing tools (using pip)
@@ -378,7 +378,7 @@ jobs:
           sudo apt update && 
           NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
           git build-essential cmake gcc linux-headers-`uname -r`
-          libpcre3-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
+          libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
           iproute2 ppp pppoe isc-dhcp-client
 
       - name: Install testing tools (using pip)
