@@ -120,7 +120,9 @@ jobs:
           libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
           libxml2-dev libxslt1-dev zlib1g-dev 
           iproute2 ppp pppoe isc-dhcp-client timelimit && 
-          (sudo pip3 install pytest pytest-dependency pytest-order || sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order)"
+          (sudo apt -y install python3-pytest python3-pytest-dependency python3-pytest-order || 
+          sudo pip3 install pytest pytest-dependency pytest-order || 
+          sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order)"
       - name: Copy source code to target OS
         run: |
           tar -Jcf accel-ppp.tar.xz accel-ppp
@@ -330,7 +332,9 @@ jobs:
 
       - name: Install testing tools (using pip)
         run: >
-          sudo pip3 install pytest pytest-dependency pytest-order || sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order
+          sudo apt -y install python3-pytest python3-pytest-dependency python3-pytest-order || 
+          sudo pip3 install pytest pytest-dependency pytest-order || 
+          sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order
 
       - name: Check out repository code
         uses: actions/checkout@v4
@@ -381,9 +385,11 @@ jobs:
           libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
           iproute2 ppp pppoe isc-dhcp-client
 
-      - name: Install testing tools (using pip)
+      - name: Install testing tools
         run: >
-          sudo pip3 install pytest pytest-dependency pytest-order gcovr || sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order gcovr
+          sudo apt -y install python3-pytest python3-pytest-dependency python3-pytest-order gcovr || 
+          sudo pip3 install pytest pytest-dependency pytest-order gcovr || 
+          sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order gcovr
 
       - name: Check out repository code
         uses: actions/checkout@v4
