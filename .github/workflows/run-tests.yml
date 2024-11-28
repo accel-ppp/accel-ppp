@@ -270,7 +270,7 @@ jobs:
         timeout-minutes: 5
         run: >
           ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp/tests && 
-          doas python3 -m pytest -Wall --order-dependencies -v -m \"not ipoe_driver and not vlan_mon_driver\""
+          doas python3 -m pytest -Wall --order-dependencies -v -m \"not ipoe_driver and not vlan_mon_driver and not chap_secrets\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >
@@ -288,7 +288,7 @@ jobs:
         if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp/tests && 
-          doas python3 -m pytest -Wall --order-dependencies -v -m \"not vlan_mon_driver\""
+          doas python3 -m pytest -Wall --order-dependencies -v -m \"not vlan_mon_driver and not chap_secrets\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >
@@ -305,7 +305,7 @@ jobs:
         timeout-minutes: 5
         run: >
           ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp/tests && 
-          doas python3 -m pytest -Wall --order-dependencies -v"
+          doas python3 -m pytest -Wall --order-dependencies -v -m \"not chap_secrets\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >

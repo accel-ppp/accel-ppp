@@ -26,6 +26,10 @@ def pytest_configure(config):
         "markers",
         "vlan_mon_driver: marks tests as related to ipoe kernel module (deselect with '-m \"not vlan_mon_driver\"')",
     )
+    config.addinivalue_line(
+        "markers",
+        "chap_secrets: marks tests as related to chap-secrets module (deselect with '-m \"not chap_secrets\"')",
+    )
 
 
 # accel-pppd executable file name

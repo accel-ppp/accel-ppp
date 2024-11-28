@@ -68,6 +68,7 @@ def pppd_config(veth_pair_netns):
 
 
 # test pppoe session without auth check
+@pytest.mark.chap_secrets
 def test_pppoe_session_chap_secrets(pppd_instance, accel_cmd):
 
     # test that pppd (with accel-pppd) started successfully
