@@ -90,7 +90,8 @@ jobs:
             "debian:trixie",
             "ubuntu:20.04",
             "ubuntu:22.04",
-            "ubuntu:24.04"
+            "ubuntu:24.04",
+            "ubuntu:devel"
           ]
     runs-on: ubuntu-24.04
     container:
@@ -104,6 +105,7 @@ jobs:
           debian:trixie) DISTRO=debian13; CPACK_TYPE=Debian13 ;;
           debian:12) DISTRO=debian12; CPACK_TYPE=Debian12 ;;
           debian:11) CPACK_TYPE=Debian11 ;;
+          ubuntu:devel) CPACK_TYPE=Ubuntu24 ; HEADERS_SUFFIX=generic ;;
           ubuntu:24.04) CPACK_TYPE=Ubuntu24 ; HEADERS_SUFFIX=generic ;;
           ubuntu:22.04) CPACK_TYPE=Ubuntu22 ; HEADERS_SUFFIX=generic ;;
           ubuntu:20.04) CPACK_TYPE=Ubuntu20 ; HEADERS_SUFFIX=generic ;;
