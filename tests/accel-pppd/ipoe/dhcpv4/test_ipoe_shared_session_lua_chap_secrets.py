@@ -74,6 +74,7 @@ def accel_pppd_config(veth_pair_netns, chap_secrets_config_file, lua_script_file
 # test dhcpv4 shared session without auth check
 @pytest.mark.dependency(depends=["ipoe_driver_loaded"], scope="session")
 @pytest.mark.ipoe_driver
+@pytest.mark.chap_secrets
 def test_ipoe_shared_session_lua_chap_secrets(
     dhclient_instance, accel_cmd, veth_pair_netns
 ):
