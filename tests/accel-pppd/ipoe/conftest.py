@@ -1,5 +1,5 @@
 import pytest
-from common import dhclient_process
+from common import dhclient_process, config
 import tempfile, os
 
 # dhclient executable file name
@@ -44,3 +44,21 @@ def dhclient_instance(accel_pppd_instance, veth_pair_netns, dhclient, dhclient_a
 
     # test teardown:
     dhclient_process.end(dhclient_thread, dhclient_control)
+
+# lua script as string (should be redefined by specific test)
+@pytest.fixture()
+def lua_script():
+    return ""
+
+
+# lua script file name
+@pytest.fixture()
+def lua_script_file(lua_script):
+    # test setup:
+    filename = config.make_tmp(lua_script)
+
+    # test execution
+    yield filename
+
+    # test teardown:
+    config.delete_tmp(filename)
