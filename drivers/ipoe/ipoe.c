@@ -1105,7 +1105,11 @@ static void ipoe_netdev_setup(struct net_device *dev)
 	dev->iflink = 0;
 #endif
 	dev->addr_len = ETH_ALEN;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,12,0)
+	dev->netns_local = true;
+#else
 	dev->features  |= NETIF_F_NETNS_LOCAL;
+#endif
 	dev->features  &= ~(NETIF_F_HW_VLAN_FILTER | NETIF_F_LRO);
 	dev->header_ops	= &ipoe_hard_header_ops;
 	dev->priv_flags &= ~IFF_XMIT_DST_RELEASE;
