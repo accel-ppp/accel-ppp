@@ -73,6 +73,7 @@ struct ap_session
 	int state;
 	char *chan_name;
 	char ifname[AP_IFNAME_LEN];
+	char serv_ifname[AP_IFNAME_LEN];
 	char *ifname_rename;
 	char *vrf_name;
 	int unit_idx;
