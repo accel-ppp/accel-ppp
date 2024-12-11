@@ -39,8 +39,8 @@ jobs:
         run: |
           ssh-keygen -t ed25519 -q -N "" -f ssh-key
           qemu-img create -f raw disk.raw 5G
-          wget -nv https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/s390x/netboot/vmlinuz-lts
-          wget -nv https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/s390x/netboot/initramfs-lts
+          wget -nv https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/s390x/netboot/vmlinuz-lts
+          wget -nv https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/s390x/netboot/initramfs-lts
       - name: Run http server for ssh-key
         run: |
           sudo ip addr add 192.0.2.1/32 dev lo # stable ip for http server 
@@ -54,8 +54,8 @@ jobs:
           -drive format=raw,file=disk.raw
           -kernel vmlinuz-lts
           -initrd initramfs-lts
-          -append "ip=dhcp alpine_repo=https://dl-cdn.alpinelinux.org/alpine/latest-stable/main
-          modloop=https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/s390x/netboot/modloop-lts
+          -append "ip=dhcp alpine_repo=https://dl-cdn.alpinelinux.org/alpine/v3.20/main
+          modloop=https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/s390x/netboot/modloop-lts
           ssh_key=http://192.0.2.1:8000/ssh-key.pub"
       - name: Check that target OS is running
         run: |
@@ -77,7 +77,7 @@ jobs:
           echo '' >> setup_alpine_conf &&
           echo 'DISKOPTS=\"-m sys /dev/vda\"' >> setup_alpine_conf &&
           echo 'ROOTSSHKEY=\"http://192.0.2.1:8000/ssh-key.pub\"' >> setup_alpine_conf &&
-          echo 'APKREPOSOPTS=\"https://dl-cdn.alpinelinux.org/alpine/latest-stable/main\"' >> setup_alpine_conf &&
+          echo 'APKREPOSOPTS=\"https://dl-cdn.alpinelinux.org/alpine/v3.20/main\"' >> setup_alpine_conf &&
           cat setup_alpine_conf &&
           yes | setup-alpine -e -f setup_alpine_conf"
       - name: Poweroff the VM
