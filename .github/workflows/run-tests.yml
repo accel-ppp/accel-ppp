@@ -222,7 +222,7 @@ jobs:
         run: |
           mkdir img
           # we need to use metal image because virt image doesn't provide pppoe driver (https://gitlab.alpinelinux.org/alpine/aports/-/issues/13739)
-          wget -nv https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/cloud/nocloud_alpine-3.20.2-x86_64-bios-cloudinit-metal-r0.qcow2 -O img/image
+          wget -nv https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/cloud/nocloud_alpine-3.20.3-x86_64-bios-cloudinit-metal-r0.qcow2 -O img/image
           qemu-img resize -f qcow2 img/`ls -1 img` +2G
       - name: Run target OS first time (for cloud-init actions)
         run: sudo qemu-system-x86_64 -enable-kvm -cpu host -m 4096 -nographic -drive format=qcow2,file=img/`ls -1 img` -drive format=raw,file=init.img

@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        distro: [latest-stable, edge]
+        distro: [v3.20]
 
     steps:
       - name: Check out repository code
