@@ -752,6 +752,32 @@ static void dhcpv6_recv_rebind(struct dhcpv6_packet *req)
 	dhcpv6_send_reply2(req, pd, D6_REPLY);
 }
 
+static void dhcpv6_recv_confirm(struct dhcpv6_packet *req)
+{
+	struct dhcpv6_pd *pd = req->pd;
+
+	if (!req->clientid) {
+		log_ppp_error("dhcpv6: no Client-ID option\n");
+		return;
+	}
+
+	if (req->serverid) {
+		log_ppp_error("dhcpv6: unexcpected Server-ID option\n");
+		return;
+	}
+
+	if (!pd->clientid)
+		return;
+	else if (pd->clientid->hdr.len != req->clientid->hdr.len || memcmp(pd->clientid, req->clientid, sizeof(struct dhcpv6_opt_hdr) + ntohs(req->clientid->hdr.len))) {
+		log_ppp_error("dhcpv6: unmatched Client-ID option\n");
+		return;
+	}
+
+	req->serverid = conf_serverid;
+
+	dhcpv6_send_reply(req, pd, D6_REPLY);
+}
+
 static void dhcpv6_recv_release(struct dhcpv6_packet *pkt)
 {
 	// don't answer
@@ -782,6 +808,9 @@ static void dhcpv6_recv_packet(struct dhcpv6_packet *pkt)
 			break;
 		case D6_REBIND:
 			dhcpv6_recv_rebind(pkt);
+			break;
+		case D6_CONFIRM:
+			dhcpv6_recv_confirm(pkt);
 			break;
 		case D6_RELEASE:
 			dhcpv6_recv_release(pkt);
