@@ -46,7 +46,7 @@ static struct known_option options[] = {
 	{  26,  2,   2,  2, "MTU", print_int },
 	{  28,  4,   4,  4, "Broadcast", print_ip },
 	{  33,  8, 255,  8, "Route", print_route },
-	{  42,  4,   4,  4, "NTP", print_ip },
+	{  42,  4, 255,  4, "NTP", print_ip },
 	{  43,  1, 255,  1, "Vendor-Specific", print_hex },
 	{  50,  4,   4,  4, "Request-IP", print_ip },
 	{  51,  4,   4,  4, "Lease-Time", print_uint },
