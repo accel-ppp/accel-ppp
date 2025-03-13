@@ -21,7 +21,7 @@ Features
 11. Extensible user/password database, implemented Radius, pppd compatible chap-secrets sources
 12. Extensible IP pool, implemented Radius, chap-secrets and static pools
 13. Supported pppd compatible ip-up/ip-down scripts
-14. Builtin tbf/htb shaper manager
+14. Builtin tbf/htb shaper and clsact policer manager
 15. Command line interface via telnet
 16. SNMP support (master or subagent via AgentX)
 17. Supported SSTP
@@ -34,7 +34,7 @@ Requirment
 4. cmake-2.6 or later
 5. libnl-2.0 or probably later (required for builtin shaper)
 6. libcrypto-0.9.8 or probably later (openssl-0.9.8)
-7. libpcre
+7. libpcre2
 8. net-snmp-5.x 
 9. libssl-0.9.8 or probably later (openssl-0.9.8)
 
@@ -68,7 +68,7 @@ read man accel-ppp.conf
 
 Built-in shaper
 --------------
-accel-ppp supports tbf and htb based shaper manager.
+accel-ppp supports tbf and htb based shaper manager. It also supports clsact policer manager.
 To enable it uncomment shaper in [modules] section.
 It accepts radius attributes in various formats: rate, down-rate/up-rate and cisco-like. Values have to be in kilobits except cisco-like.
 For example:

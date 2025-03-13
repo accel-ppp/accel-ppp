@@ -18,6 +18,7 @@
 #include <net/netns/generic.h>
 
 #include "vlan_mon.h"
+#include "version.h"
 
 #define VLAN_MON_MAGIC 0x639fa78c
 
@@ -79,7 +80,11 @@ static struct genl_family vlan_mon_nl_family;
 static struct genl_multicast_group vlan_mon_nl_mcg;
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,4,0)
 static DEFINE_SEMAPHORE(vlan_mon_lock);
+#else
+static DEFINE_SEMAPHORE(vlan_mon_lock,1);
+#endif
 
 static inline int vlan_mon_proto(int proto)
 {
@@ -724,7 +729,7 @@ static int __init vlan_mon_init(void)
 	int i;
 #endif
 
-	printk("vlan-mon driver v1.11\n");
+	printk("vlan-mon driver v%s\n", ACCEL_PPP_VERSION);
 
 	INIT_WORK(&vlan_notify_work, vlan_do_notify);
 

@@ -146,6 +146,91 @@ int tc_qdisc_modify(struct rtnl_handle *rth, int ifindex, int cmd, unsigned flag
 	return 0;
 }
 
+static int install_police_clsact(struct rtnl_handle *rth, int ifindex, int rate, int burst, int direction)
+{
+	__u32 rtab[256];
+	struct rtattr *tail, *tail1, *tail2, *tail3;
+	int Rcell_log = -1;
+	int mtu = conf_mtu;
+	unsigned int linklayer  = LINKLAYER_ETHERNET; /* Assume ethernet */
+
+	struct {
+			struct nlmsghdr 	n;
+			struct tcmsg 		t;
+			char buf[TCA_BUF_MAX];
+	} req;
+
+	struct tc_police police = {
+		.action = TC_POLICE_SHOT,
+		.rate.rate = rate,
+		.rate.mpu = conf_mpu,
+		.limit = (double)rate * conf_latency + burst,
+		.burst = tc_calc_xmittime(rate, burst),
+	};
+
+	if (tc_calc_rtable(&police.rate, rtab, Rcell_log, mtu, linklayer) < 0) {
+		log_ppp_error("shaper: failed to calculate ceil rate table.\n");
+		return -1;
+	}
+
+	memset(&req, 0, sizeof(req));
+
+	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct tcmsg));
+	req.n.nlmsg_flags = NLM_F_REQUEST|NLM_F_EXCL|NLM_F_CREATE;
+	req.n.nlmsg_type = RTM_NEWTFILTER;
+	req.t.tcm_family = AF_UNSPEC;
+	req.t.tcm_ifindex = ifindex;
+	req.t.tcm_handle = 0x1;
+	req.t.tcm_parent = TC_H_MAKE(TC_H_CLSACT, direction);
+
+
+	req.t.tcm_info = TC_H_MAKE(100 << 16, ntohs(ETH_P_ALL));
+
+	addattr_l(&req.n, sizeof(req), TCA_KIND, "matchall", 9);
+
+	tail = NLMSG_TAIL(&req.n);
+	addattr_l(&req.n, MAX_MSG, TCA_OPTIONS, NULL, 0);
+
+	tail1 = NLMSG_TAIL(&req.n);
+	addattr_l(&req.n, MAX_MSG, TCA_FW_POLICE, NULL, 0);
+
+	tail2 = NLMSG_TAIL(&req.n);
+	addattr_l(&req.n, MAX_MSG, 1, NULL, 0);
+	addattr_l(&req.n, MAX_MSG, TCA_ACT_KIND, "police", 7);
+
+	tail3 = NLMSG_TAIL(&req.n);
+	addattr_l(&req.n, MAX_MSG, TCA_ACT_OPTIONS, NULL, 0);
+	addattr_l(&req.n, MAX_MSG, TCA_POLICE_TBF, &police, sizeof(police));
+	addattr_l(&req.n, MAX_MSG, TCA_POLICE_RATE, rtab, 1024);
+	tail3->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)tail3;
+
+	tail2->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)tail2;
+
+	tail1->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)tail1;
+
+	tail->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)tail;
+
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+		return -1;
+
+	return 0;
+}
+
+static int install_clsact(struct rtnl_handle *rth, int ifindex, int rate, int burst)
+{
+	struct qdisc_opt opt = {
+		.kind = "clsact",
+		.handle = TC_H_MAKE(TC_H_CLSACT, 0),
+		.parent = TC_H_CLSACT,
+	};
+
+	if (tc_qdisc_modify(rth, ifindex, RTM_NEWQDISC, NLM_F_EXCL|NLM_F_CREATE, &opt)) {
+		return -1;
+	}
+
+	return install_police_clsact(rth, ifindex, rate, burst, TC_H_MIN_EGRESS);
+}
+
 static int install_tbf(struct rtnl_handle *rth, int ifindex, int rate, int burst)
 {
 	struct qdisc_opt opt = {
@@ -413,7 +498,7 @@ static int install_fwmark(struct rtnl_handle *rth, int ifindex, int parent)
 	req.t.tcm_ifindex = ifindex;
 	req.t.tcm_handle = conf_fwmark;
 	req.t.tcm_parent = parent;
-	req.t.tcm_info = TC_H_MAKE(90 << 16, ntohs(ETH_P_IP));
+	req.t.tcm_info = TC_H_MAKE(90 << 16, ntohs(ETH_P_ALL));
 
 	addattr_l(&req.n, sizeof(req), TCA_KIND, "fw", 3);
 	tail = NLMSG_TAIL(&req.n);
@@ -467,8 +552,12 @@ int install_limiter(struct ap_session *ses, int down_speed, int down_burst, int 
 		down_speed = down_speed * 1000 / 8;
 		down_burst = down_burst ? down_burst : conf_down_burst_factor * down_speed;
 
-		if (conf_down_limiter == LIM_TBF)
+		if (conf_down_limiter == LIM_TBF) {
 			r = install_tbf(rth, ses->ifindex, down_speed, down_burst);
+			if (r == 0)
+				r = install_leaf_qdisc(rth, ses->ifindex, 0x00010000, 0x00020000);
+		} else if (conf_down_limiter == LIM_CLSACT)
+			r = install_clsact(rth, ses->ifindex, down_speed, down_burst);
 		else {
 			r = install_htb(rth, ses->ifindex, down_speed, down_burst);
 			if (r == 0)
@@ -480,17 +569,25 @@ int install_limiter(struct ap_session *ses, int down_speed, int down_burst, int 
 		up_speed = up_speed * 1000 / 8;
 		up_burst = up_burst ? up_burst : conf_up_burst_factor * up_speed;
 
-		if (conf_up_limiter == LIM_POLICE)
-			r = install_police(rth, ses->ifindex, up_speed, up_burst);
-		else {
+		if (conf_up_limiter == LIM_POLICE) {
+			/* if clsact is used for down_limiter then normal policer doesn't work, use clsact version */
+			if (conf_down_limiter == LIM_CLSACT && down_speed)
+				r = install_police_clsact(rth, ses->ifindex, up_speed, up_burst, TC_H_MIN_INGRESS);
+			else
+				r = install_police(rth, ses->ifindex, up_speed, up_burst);
+		} else {
 			r = install_htb_ifb(rth, ses->ifindex, idx, up_speed, up_burst);
 			if (r == 0)
 				r = install_leaf_qdisc(rth, conf_ifb_ifindex, 0x00010000 + idx, idx << 16);
 		}
 	}
 
-	if (conf_fwmark)
-		install_fwmark(rth, ses->ifindex, 0x00010000);
+	if (conf_fwmark) {
+		if (conf_down_limiter == LIM_CLSACT)
+			install_fwmark(rth, ses->ifindex, TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_EGRESS));
+		else
+			install_fwmark(rth, ses->ifindex, 0x00010000);
+	}
 
 	net->rtnl_put(rth);
 

@@ -518,6 +518,10 @@ static void write_radattr(struct pppd_compat_pd *pd, struct rad_packet_t *pack)
 	int fd, i;
 	in_addr_t addr;
 	char ip_str[50];
+	union {
+		uint64_t ifid;
+		uint16_t u16[4];
+	} ifid_u;
 
 	if (ses->state == AP_STATE_ACTIVE) {
 		sprintf(fname1, "%s.%s", conf_radattr_prefix, ses->ifname);
@@ -571,6 +575,10 @@ static void write_radattr(struct pppd_compat_pd *pd, struct rad_packet_t *pack)
 				case ATTR_TYPE_IPV6ADDR:
 					inet_ntop(AF_INET6, &attr->val.ipv6addr, ip_str, sizeof(ip_str));
 					fprintf(f, "%s\n", ip_str);
+					break;
+				case ATTR_TYPE_IFID:
+					ifid_u.ifid = attr->val.ifid;
+					fprintf(f, "%x:%x:%x:%x\n", ntohs(ifid_u.u16[0]), ntohs(ifid_u.u16[1]), ntohs(ifid_u.u16[2]), ntohs(ifid_u.u16[3]));
 					break;
 			}
 		}

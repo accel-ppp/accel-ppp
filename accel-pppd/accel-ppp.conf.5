@@ -73,6 +73,10 @@ IPv4 address assigning module.
 .br
 IPv6 address assigning module.
 .TP
+.BI ipv6_dhcp
+.br
+IPv6 DHCP module.
+.TP
 .BI sigchld
 Helper module to manage child processes, required by pppd_compat
 .TP
@@ -484,7 +488,7 @@ List must to be sorted by count key.
 Specified timeout waiting DHCP-Request from client in seconds (default 10).
 .TP
 .BI "vlan-mon=" [re:]name[,filter]
-Starts vlan monitor on specified interface (requires ipoe kernel module).
+Starts vlan monitor on specified interface (requires vlan_mon kernel module).
 .br
 The
 .B filter
@@ -493,7 +497,7 @@ parameter specifies list of vlans or ranges of vlans to monitor for and may be i
 vlan-mon=eth1,2,5,10,20-30
 .TP
 .BI "vlan-timeout=" n
-Specifies time of vlan inactivity before it will be removed (seconds).
+Specifies time of vlan inactivity before it will be removed in seconds (default 60). A value of 0 disables removal of inactive vlan.
 .TP
 .BI "vlan-name=" pattern
 Specifies pattern of vlan interface name. Pattern may contain following macros:
@@ -601,6 +605,32 @@ is prefixed with
 then ifname is considered as regular expression. Optional
 .B padi-limit
 parameter specifies limit of PADI packets to reply on this interface in 1 second period.
+.TP
+.BI "vlan-mon=" [re:]name[,filter]
+Starts vlan monitor on specified interface (requires vlan_mon kernel module).
+.br
+The
+.B filter
+parameter specifies list of vlans or ranges of vlans to monitor for and may be in following form:
+.br
+vlan-mon=eth1,2,5,10,20-30
+.TP
+.BI "vlan-timeout=" n
+Specifies time of vlan inactivity before it will be removed in seconds (default 60). A value of 0 disables removal of inactive vlan.
+.TP
+.BI "vlan-name=" pattern
+Specifies pattern of vlan interface name. Pattern may contain following macros:
+.br
+.B %I
+- name of pattern interface.
+.br
+.B %N
+- number of vlan.
+.br
+.B %P
+- number of vlan of parent interface.
+.br
+By default vlan-name=%I.%N.
 .TP
 .BI "ac-name=" ac-name
 Specifies AC-Name tag value. If absent tag will not be sent.
@@ -1122,6 +1152,10 @@ Specifies which Radius attribute contains pool name.
 .TP
 .BI "vendor=" vendor
 If attribute is vendor-specific then specify vendor name in this option.
+.SH [ipv6-dhcp]
+.TP
+.BI "aftr-gw=" name
+Specifies the AFTR-Name option value to be returned on DHCPv6 replies upon request from the client.
 .SH [ipv6-pool]
 .br
 Configuration of ipv6pool module.
@@ -1205,11 +1239,11 @@ Specifies the fwmark for traffic that won't be passed through shaper.
 .BI "up-limiter=" police|htb
 Specifes upstream rate limiting method.
 .TP
-.BI "down-limiter=" tbf|htb
-Specifies downstream rate limiting method.
+.BI "down-limiter=" tbf|htb|clsact
+Specifies downstream rate limiting method. \fIclsact\fR is a policer
 .TP
 .BI "leaf-qdisc=" "qdisc parameters"
-In case if htb is used as up-limiter or down-limiter specified leaf qdisc can be attached automatically.
+In case if tbf is used as down-limiter or htb is used as up-limiter or down-limiter specified leaf qdisc can be attached automatically.
 At present sfq and fq_codel qdiscs are implemented. Parameters are same as for tc:
 .br
 sfq [ limit NUMBER ] [ perturn SECS ] [ quantum BYTES ]
@@ -1257,4 +1291,76 @@ command history (defaults to \fI/var/lib/accel-ppp/history\fR).
 Defines the default set of columns to be displayed by the "show sessions"
 command (defaults to
 \fIifname,username,calling-sid,ip,rate-limit,type,comp,state,uptime\fR).
+.br
+.B Possible columns:
+.br
+.B ifname
+- interface name
+.br
+.B username
+- user name
+.br
+.B ip
+- IP address
+.br
+.B ip6
+- IPv6 address
+.br
+.B ip6-dp
+- IPv6 delegated prefix
+.br
+.B type
+- connection type [pppoe|ipoe|pptp|l2tp|sstp]
+.br
+.B state
+- state of session
+.br
+.B uptime
+- uptime (human readable)
+.br
+.B uptime-raw
+- uptime (in seconds)
+.br
+.B calling-sid
+- calling station id
+.br
+.B called-sid
+- called station id
+.br
+.B sid
+- session id
+.br
+.B comp
+- compression/encryption method
+.br
+.B inbound-if
+- inbound interface
+.br
+.B service-name
+- PPPoE service name
+.br
+.B rx-bytes
+- received bytes (human readable)
+.br
+.B tx-bytes
+- transmitted bytes (human readable)
+.br
+.B rx-bytes-raw
+- received bytes
+.br
+.B tx-bytes-raw
+- transmitted bytes
+.br
+.B rx-pkts
+- received packets
+.br
+.B tx-pkts
+- transmitted packets
+.br
+.B netns
+- network namespaces
+.br
+.B vrf
+- virtual routing and forwarding
+.br
 Invalid column names are silently discarded.

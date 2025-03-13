@@ -139,7 +139,7 @@ int rad_packet_recv(int fd, struct rad_packet_t **p, struct sockaddr_in *addr)
 
 	while (1) {
 		if (addr)
-			n = recvfrom(fd, pack->buf, REQ_LENGTH_MAX, 0, addr, &addr_len);
+			n = recvfrom(fd, pack->buf, REQ_LENGTH_MAX, 0, (struct sockaddr *)addr, &addr_len);
 		else
 			n = read(fd, pack->buf, REQ_LENGTH_MAX);
 		if (n < 0) {
@@ -813,7 +813,7 @@ int rad_packet_send(struct rad_packet_t *pack, int fd, struct sockaddr_in *addr)
 
 	while (1) {
 		if (addr)
-			n = sendto(fd, pack->buf, pack->len, 0, addr, sizeof(*addr));
+			n = sendto(fd, pack->buf, pack->len, 0, (struct sockaddr *)addr, sizeof(*addr));
 		else
 			n = write(fd, pack->buf, pack->len);
 		if (n < 0) {

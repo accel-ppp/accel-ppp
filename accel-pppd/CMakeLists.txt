@@ -44,6 +44,48 @@ IF (RADIUS)
 	ADD_SUBDIRECTORY(radius)
 ENDIF (RADIUS)
 
+# define __free_fn_t in musl
+INCLUDE (CheckCSourceCompiles)
+CHECK_C_SOURCE_COMPILES("
+#include <stdlib.h>
+#include <search.h>
+int main(void)
+{
+	__free_fn_t *f;
+	return 0;
+}" HAVE_FREE_FN_T)
+IF (HAVE_FREE_FN_T)
+	ADD_DEFINITIONS(-DHAVE_FREE_FN_T)
+ENDIF (HAVE_FREE_FN_T)
+
+INCLUDE (CheckCSourceCompiles)
+CHECK_C_SOURCE_COMPILES("
+#include <sys/socket.h>
+#include <linux/if_arp.h>
+#include <net/ethernet.h>
+int main(void)
+{
+	return 0;
+}" HAVE_GOOD_IFARP)
+
+IF (HAVE_GOOD_IFARP)
+	ADD_DEFINITIONS(-DHAVE_GOOD_IFARP)
+ENDIF (HAVE_GOOD_IFARP)
+
+INCLUDE (CheckCSourceCompiles)
+CHECK_C_SOURCE_COMPILES("
+#include <utmp.h>
+int main(void)
+{
+	logwtmp(\"\", \"\", \"\");
+	return 0;
+}" HAVE_LOGWTMP)
+
+IF (HAVE_LOGWTMP)
+	ADD_DEFINITIONS(-DHAVE_LOGWTMP)
+ENDIF (HAVE_LOGWTMP)
+
+
 ADD_SUBDIRECTORY(triton)
 ADD_SUBDIRECTORY(vlan-mon)
 ADD_SUBDIRECTORY(ctrl)
@@ -62,6 +104,12 @@ ENDIF (SHAPER)
 
 INCLUDE(CheckIncludeFile)
 CHECK_INCLUDE_FILE("linux/netfilter/ipset/ip_set.h" HAVE_IPSET)
+# MUSL does not have printf.h
+CHECK_INCLUDE_FILE("printf.h" HAVE_PRINTF_H)
+IF (HAVE_PRINTF_H)
+	ADD_DEFINITIONS(-DHAVE_PRINTF_H)
+ENDIF (HAVE_PRINTF_H)
+
 
 INCLUDE(CheckFunctionExists)
 CHECK_FUNCTION_EXISTS(setns HAVE_SETNS)
@@ -127,7 +175,17 @@ IF (DEFINED HAVE_VRF)
 	target_sources(accel-pppd PRIVATE libnetlink/rt_names.c)
 ENDIF (DEFINED HAVE_VRF)
 
-TARGET_LINK_LIBRARIES(accel-pppd triton rt pthread ${crypto_lib} pcre)
+# check if we have getcontext/setcontext
+INCLUDE(CheckFunctionExists)
+CHECK_FUNCTION_EXISTS(getcontext HAVE_GETCONTEXT)
+CHECK_FUNCTION_EXISTS(setcontext HAVE_SETCONTEXT)
+
+IF (HAVE_GETCONTEXT AND HAVE_SETCONTEXT)
+	TARGET_LINK_LIBRARIES(accel-pppd triton rt pthread ${crypto_lib} pcre2-8)
+ELSE (HAVE_GETCONTEXT AND HAVE_SETCONTEXT)
+	TARGET_LINK_LIBRARIES(accel-pppd triton rt pthread ${crypto_lib} pcre2-8 ucontext)
+ENDIF (HAVE_GETCONTEXT AND HAVE_SETCONTEXT)
+
 set_property(TARGET accel-pppd PROPERTY CMAKE_SKIP_BUILD_RPATH FALSE)
 set_property(TARGET accel-pppd PROPERTY CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 set_property(TARGET accel-pppd PROPERTY INSTALL_RPATH_USE_LINK_PATH FALSE)

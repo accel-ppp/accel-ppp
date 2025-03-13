@@ -26,6 +26,10 @@ def pytest_configure(config):
         "markers",
         "vlan_mon_driver: marks tests as related to ipoe kernel module (deselect with '-m \"not vlan_mon_driver\"')",
     )
+    config.addinivalue_line(
+        "markers",
+        "chap_secrets: marks tests as related to chap-secrets module (deselect with '-m \"not chap_secrets\"')",
+    )
 
 
 # accel-pppd executable file name
@@ -97,3 +101,21 @@ def veth_pair_netns(veth_pair_vlans_config):
 
     # test teardown:
     veth.delete_veth_pair_netns(veth_pair_netns_instance)
+
+# chap-secrets configuration as string (should be redefined by specific test)
+@pytest.fixture()
+def chap_secrets_config():
+    return ""
+
+
+# chap-secrets configuration file name
+@pytest.fixture()
+def chap_secrets_config_file(chap_secrets_config):
+    # test setup:
+    filename = config.make_tmp(chap_secrets_config)
+
+    # test execution
+    yield filename
+
+    # test teardown:
+    config.delete_tmp(filename)

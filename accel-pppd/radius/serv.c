@@ -485,10 +485,15 @@ static void serv_ctx_close(struct triton_context_t *ctx)
 
 static void show_stat(struct rad_server_t *s, void *client)
 {
-	char addr[17];
+	char addr[INET6_ADDRSTRLEN];  // Sufficient size for both IPv4 and IPv6 addresses
 	struct timespec ts;
 
-	u_inet_ntoa(s->addr, addr);
+	if (s->ipv4) {
+		u_inet_ntoa(s->addr, addr);
+	} else {
+		inet_ntop(AF_INET6, &s->addr6, addr, sizeof(addr));
+	}
+
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 
 	cli_sendv(client, "radius(%i, %s):\r\n", s->id, addr);
@@ -725,7 +730,20 @@ static int parse_server1(const char *_opt, struct rad_server_t *s)
 	if (ptr3)
 		*ptr3 = 0;
 
-	s->addr = inet_addr(opt);
+    struct in_addr addr4;
+    if (inet_pton(AF_INET, opt, &addr4) == 1) {
+        s->ipv4 = 1;
+        s->addr = addr4.s_addr;
+    }else {
+        struct in6_addr addr6;
+        if (inet_pton(AF_INET6, opt, &addr6) == 1) {
+            s->ipv4 = 0;
+            s->addr6 = addr6;
+        } else {
+            log_error("Invalid server address");
+            goto out;
+        }
+    }
 
 	if (ptr2) {
 		if (ptr2[1]) {
@@ -774,8 +792,20 @@ static int parse_server2(const char *_opt, struct rad_server_t *s)
 
 	*ptr1 = 0;
 
-	s->addr = inet_addr(opt);
-
+    struct in_addr addr4;
+    if (inet_pton(AF_INET, opt, &addr4) == 1) {
+        s->ipv4 = 1;
+        s->addr = addr4.s_addr;
+    }else {
+        struct in6_addr addr6;
+        if (inet_pton(AF_INET6, opt, &addr6) == 1) {
+            s->ipv4 = 0;
+            s->addr6 = addr6;
+        } else {
+            log_error("Invalid server address");
+            goto out;
+        }
+    }
 	ptr3 = strstr(ptr2, ",auth-port=");
 	if (ptr3) {
 		s->auth_port = strtol(ptr3 + 11, &endptr, 10);

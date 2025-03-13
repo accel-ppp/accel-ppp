@@ -123,6 +123,11 @@ struct l2tp_sess_t
 	struct l2tp_conn_t *paren_conn;
 	uint16_t sid;
 	uint16_t peer_sid;
+/* We will keep l2tp attributes Calling-Number/Called-Number and their length while the session exists */
+	char *calling_num;
+	int calling_num_len;
+	char *called_num;
+	int called_num_len;
 
 	unsigned int ref_count;
 	int state1;
@@ -853,7 +858,11 @@ static void l2tp_tunnel_free_sessions(struct l2tp_conn_t *conn)
 	void *sessions = conn->sessions;
 
 	conn->sessions = NULL;
+#ifdef HAVE_FREE_FN_T
 	tdestroy(sessions, (__free_fn_t)l2tp_session_free);
+#else
+	tdestroy(sessions, (void(*)(void *))l2tp_session_free);
+#endif
 	/* Let l2tp_session_free() handle the session counter and
 	 * the reference held by the tunnel.
 	 */
@@ -979,6 +988,10 @@ static void __session_destroy(struct l2tp_sess_t *sess)
 		_free(sess->ctrl.calling_station_id);
 	if (sess->ctrl.called_station_id)
 		_free(sess->ctrl.called_station_id);
+	if (sess->calling_num)
+		_free(sess->calling_num);
+	if (sess->called_num)
+		_free(sess->called_num);
 
 	log_session(log_info2, sess, "session destroyed\n");
 
@@ -1609,7 +1622,7 @@ static struct l2tp_conn_t *l2tp_tunnel_alloc(const struct sockaddr_in *peer,
 			  strerror(errno));
 		goto err_conn_fd;
 	}
-	if (bind(conn->hnd.fd, host, sizeof(*host))) {
+	if (bind(conn->hnd.fd, (struct sockaddr*)host, sizeof(*host))) {
 		log_error("l2tp: impossible to allocate new tunnel:"
 			  " bind() failed: %s\n", strerror(errno));
 		goto err_conn_fd;
@@ -1642,7 +1655,7 @@ static struct l2tp_conn_t *l2tp_tunnel_alloc(const struct sockaddr_in *peer,
 		goto err_conn_fd;
 	}
 
-	if (getsockname(conn->hnd.fd, &conn->host_addr, &hostaddrlen) < 0) {
+	if (getsockname(conn->hnd.fd, (struct sockaddr*)&conn->host_addr, &hostaddrlen) < 0) {
 		log_error("l2tp: impossible to allocate new tunnel:"
 			  " getsockname() failed: %s\n", strerror(errno));
 		goto err_conn_fd;
@@ -1743,7 +1756,7 @@ static inline int l2tp_tunnel_update_peerport(struct l2tp_conn_t *conn,
 	int res;
 
 	conn->peer_addr.sin_port = port_nbo;
-	res = connect(conn->hnd.fd, &conn->peer_addr, sizeof(conn->peer_addr));
+	res = connect(conn->hnd.fd, (struct sockaddr*)&conn->peer_addr, sizeof(conn->peer_addr));
 	if (res < 0) {
 		log_tunnel(log_error, conn,
 			   "impossible to update peer port from %hu to %hu:"
@@ -1771,25 +1784,52 @@ static int l2tp_session_start_data_channel(struct l2tp_sess_t *sess)
 	sess->ctrl.max_mtu = conf_ppp_max_mtu;
 	sess->ctrl.mppe = conf_mppe;
 
-	sess->ctrl.calling_station_id = _malloc(17);
-	if (sess->ctrl.calling_station_id == NULL) {
-		log_session(log_error, sess,
-			    "impossible to start data channel:"
-			    " allocation of calling station ID failed\n");
-		goto err;
+	/* If l2tp calling number avp exists, we use it, otherwise we use lac ip */
+	if (sess->calling_num != NULL) {
+		sess->ctrl.calling_station_id = _malloc(sess->calling_num_len+1);
+		if (sess->ctrl.calling_station_id == NULL) {
+			log_session(log_error, sess,
+				    "impossible to start data channel:"
+				    " allocation of calling station ID failed\n");
+			goto err;
+		}else {
+			strcpy(sess->ctrl.calling_station_id, sess->calling_num);
+		}
+	} else {
+		sess->ctrl.calling_station_id = _malloc(17);
+		if (sess->ctrl.calling_station_id == NULL) {
+			log_session(log_error, sess,
+				"impossible to start data channel:"
+				" allocation of calling station ID failed\n");
+			goto err;
+		} else {
+			u_inet_ntoa(sess->paren_conn->peer_addr.sin_addr.s_addr,
+				sess->ctrl.calling_station_id);
+		}
 	}
-	u_inet_ntoa(sess->paren_conn->peer_addr.sin_addr.s_addr,
-		    sess->ctrl.calling_station_id);
-
-	sess->ctrl.called_station_id = _malloc(17);
-	if (sess->ctrl.called_station_id == NULL) {
-		log_session(log_error, sess,
-			    "impossible to start data channel:"
-			    " allocation of called station ID failed\n");
-		goto err;
+	/* If l2tp called number avp exists, we use it, otherwise we use my ip */
+	if (sess->called_num != NULL) {
+		sess->ctrl.called_station_id = _malloc(sess->called_num_len+1);
+		if (sess->ctrl.called_station_id == NULL) {
+			log_session(log_error, sess,
+				    "impossible to start data channel:"
+				    " allocation of called station ID failed\n");
+			goto err;
+		} else {
+			strcpy(sess->ctrl.called_station_id, sess->called_num);
+		}
+	} else {
+		sess->ctrl.called_station_id = _malloc(17);
+		if (sess->ctrl.called_station_id == NULL) {
+			log_session(log_error, sess,
+				"impossible to start data channel:"
+				" allocation of called station ID failed\n");
+			goto err;
+		} else {
+			u_inet_ntoa(sess->paren_conn->host_addr.sin_addr.s_addr,
+				sess->ctrl.called_station_id);
+		}
 	}
-	u_inet_ntoa(sess->paren_conn->host_addr.sin_addr.s_addr,
-		    sess->ctrl.called_station_id);
 
 	if (conf_ip_pool) {
 		sess->ppp.ses.ipv4_pool_name = _strdup(conf_ip_pool);
@@ -3295,6 +3335,10 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 	uint16_t sid = 0;
 	uint16_t res = 0;
 	uint16_t err = 0;
+	uint8_t	*calling[254] = {0};
+	uint8_t	*called[254] = {0};
+	int n = 0;
+	int m = 0;
 
 	if (conn->state != STATE_ESTB && conn->lns_mode) {
 		log_tunnel(log_warn, conn, "discarding unexpected ICRQ\n");
@@ -3332,7 +3376,17 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 			case Call_Serial_Number:
 			case Bearer_Type:
 			case Calling_Number:
+			/* Save Calling-Number L2TP attribute locally */
+				if (attr->attr->id == Calling_Number) {
+					n = attr->length;
+					memcpy(calling,attr->val.octets,n);
+				}
 			case Called_Number:
+			/* Save Called-Number L2TP attribute locally */
+				if (attr->attr->id == Called_Number) {
+					m = attr->length;
+					memcpy(called,attr->val.octets,m);
+				}
 			case Sub_Address:
 			case Physical_Channel_ID:
 				break;
@@ -3371,6 +3425,30 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 	sess->peer_sid = peer_sid;
 	sid = sess->sid;
 
+	/* Allocate memory for Calling-Number if exists, and put it to l2tp_sess_t structure */
+	if (calling != NULL && n > 0) {
+		sess->calling_num = _malloc(n+1);
+		if (sess->calling_num == NULL) {
+			log_tunnel(log_warn, conn, "can't allocate memory for Calling Number attribute. Will use LAC IP instead\n");
+		}else{
+			memcpy(sess->calling_num, calling, n);
+			sess->calling_num[n] = '\0';
+			sess->calling_num_len = n;
+		}
+	}
+
+	/* Allocate memory for Called-Number if exists, and put it to l2tp_sess_t structure */
+	if (called != NULL && m > 1) {
+		sess->called_num = _malloc(m+1);
+		if (sess->called_num == NULL) {
+			log_tunnel(log_warn, conn, "can't allocate memory for Called Number attribute. Will use my IP instead\n");
+		} else {
+			memcpy(sess->called_num, called, m);
+			sess->called_num[m] = '\0';
+			sess->called_num_len = m;
+		}
+	}
+
 	if (unknown_attr) {
 		log_tunnel(log_error, conn, "impossible to handle ICRQ:"
 			   " unknown mandatory attribute type %i,"
@@ -3390,8 +3468,8 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 		goto out_reject;
 	}
 
-	log_tunnel(log_info1, conn, "new session %hu-%hu created following"
-		   " reception of ICRQ\n", sid, peer_sid);
+	log_tunnel(log_info1, conn, "new session %hu-%hu with calling num %s len %d, called num %s len %d created following"
+		   " reception of ICRQ\n", sid, peer_sid, sess->calling_num, sess->calling_num_len, sess->called_num, sess->called_num_len);
 
 	return 0;
 

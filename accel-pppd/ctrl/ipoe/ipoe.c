@@ -15,10 +15,10 @@
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <linux/if.h>
+#ifdef HAVE_GOOD_IFARP
 #include <linux/if_arp.h>
+#endif
 #include <linux/route.h>
-
-#include <pcre.h>
 
 #include "events.h"
 #include "list.h"
@@ -54,7 +54,7 @@
 #define SESSION_TERMINATED "Session was terminated"
 
 struct iplink_arg {
-	pcre *re;
+	pcre2_code *re;
 	const char *opt;
 	long *arg1;
 };
@@ -150,7 +150,7 @@ static const char *conf_attr_dhcp_opt82_circuit_id;
 static int conf_l4_redirect_table;
 static int conf_l4_redirect_on_reject;
 static const char *conf_l4_redirect_ipset;
-static int conf_vlan_timeout;
+static int conf_vlan_timeout = 60;
 static int conf_max_request = 3;
 static int conf_session_timeout;
 static int conf_idle_timeout;
@@ -276,14 +276,14 @@ static struct ipoe_session *ipoe_session_lookup(struct ipoe_serv *serv, struct d
 		return ses;
 	}
 
-	if (!conf_check_mac_change || (pack->relay_agent && dhcpv4_parse_opt82(pack->relay_agent, &agent_circuit_id, &agent_remote_id, &link_selection))) {
+	if (!serv->opt_check_mac_change || (pack->relay_agent && dhcpv4_parse_opt82(pack->relay_agent, &agent_circuit_id, &agent_remote_id, &link_selection))) {
 		agent_circuit_id = NULL;
 		agent_remote_id = NULL;
 		link_selection = NULL;
 	}
 
 	list_for_each_entry(ses, &serv->sessions, entry) {
-		opt82_match = conf_check_mac_change && pack->relay_agent != NULL;
+		opt82_match = serv->opt_check_mac_change && pack->relay_agent != NULL;
 
 		if (agent_circuit_id && !ses->agent_circuit_id)
 			opt82_match = 0;
@@ -1521,7 +1521,7 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 			opt82_match = 0;
 	}
 
-	if (conf_check_mac_change && pack->relay_agent && !opt82_match) {
+	if (ses->serv->opt_check_mac_change && pack->relay_agent && !opt82_match) {
 		log_ppp_info2("port change detected\n");
 		if (pack->msg_type == DHCPREQUEST)
 			dhcpv4_send_nak(dhcpv4, pack, SESSION_TERMINATED);
@@ -1877,7 +1877,7 @@ static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet 
 				goto out;
 			}
 
-			if (conf_check_mac_change) {
+			if (serv->opt_check_mac_change) {
 				if ((opt82_ses && ses != opt82_ses) || (!opt82_ses && pack->relay_agent)) {
 					dhcpv4_packet_ref(pack);
 					triton_context_call(&ses->ctx, (triton_event_func)port_change_detected, pack);
@@ -1939,7 +1939,7 @@ static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet 
 				goto out;
 			}
 
-			if (conf_check_mac_change) {
+			if (serv->opt_check_mac_change) {
 				if ((opt82_ses && ses != opt82_ses) || (!opt82_ses && pack->relay_agent)) {
 					dhcpv4_packet_ref(pack);
 					triton_context_call(&ses->ctx, (triton_event_func)port_change_detected, pack);
@@ -2650,7 +2650,7 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 	if (!serv->opt_auto)
 		ipoe_nl_del_interface(serv->ifindex);
 
-	if (serv->vlan_mon) {
+	if (serv->vlan_mon && conf_vlan_timeout) {
 		log_info2("ipoe: remove vlan %s\n", serv->ifname);
 		iplink_vlan_del(serv->ifindex);
 		vlan_mon_add_vid(serv->parent_ifindex, ETH_P_IP, serv->vid);
@@ -2786,11 +2786,13 @@ static int get_offer_delay()
 
 static void set_vlan_timeout(struct ipoe_serv *serv)
 {
-	serv->timer.expire = ipoe_serv_timeout;
-	serv->timer.expire_tv.tv_sec = conf_vlan_timeout;
+	if(conf_vlan_timeout) {
+		serv->timer.expire = ipoe_serv_timeout;
+		serv->timer.expire_tv.tv_sec = conf_vlan_timeout;
 
-	if (list_empty(&serv->sessions))
-		triton_timer_add(&serv->ctx, &serv->timer, 0);
+		if (list_empty(&serv->sessions))
+			triton_timer_add(&serv->ctx, &serv->timer, 0);
+	}
 }
 
 void ipoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
@@ -2800,10 +2802,10 @@ void ipoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 	struct ifreq ifr;
 	char *ptr;
 	int len, r, svid;
-	pcre *re = NULL;
-	const char *pcre_err;
+	pcre2_code *re = NULL;
+	int pcre_err;
 	char *pattern;
-	int pcre_offset;
+	PCRE2_SIZE pcre_offset;
 	char ifname[IFNAMSIZ];
 
 	if (!sect)
@@ -2901,15 +2903,17 @@ void ipoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 			memcpy(pattern, opt->val + 3, ptr - (opt->val + 3));
 			pattern[ptr - (opt->val + 3)] = 0;
 
-			re = pcre_compile2(pattern, 0, NULL, &pcre_err, &pcre_offset, NULL);
+			re = pcre2_compile((PCRE2_SPTR)pattern, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &pcre_offset, NULL);
 
 			_free(pattern);
 
 			if (!re)
 				continue;
 
-			r = pcre_exec(re, NULL, ifname, len, 0, 0, NULL, 0);
-			pcre_free(re);
+			pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
+			r = pcre2_match(re, (PCRE2_SPTR)ifname, len, 0, 0, match_data, NULL);
+			pcre2_match_data_free(match_data);
+			pcre2_code_free(re);
 
 			if (r < 0)
 				continue;
@@ -2994,6 +2998,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	in_addr_t opt_giaddr = 0;
 	in_addr_t opt_src = conf_src;
 	int opt_arp = conf_arp;
+	int opt_check_mac_change = conf_check_mac_change;
 	struct ifreq ifr;
 	uint8_t hwaddr[ETH_ALEN];
 
@@ -3051,6 +3056,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 				opt_src = inet_addr(ptr1);
 			} else if (strcmp(str, "proxy-arp") == 0) {
 				opt_arp = atoi(ptr1);
+			} else if (strcmp(str, "check-mac-change") == 0) {
+				opt_check_mac_change = atoi(ptr1);
 			} else if (strcmp(str, "ipv6") == 0) {
 				opt_ipv6 = atoi(ptr1);
 			} else if (strcmp(str, "mtu") == 0) {
@@ -3102,12 +3109,12 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 
 		sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
 
-		if (connect(sock, &addr, sizeof(addr))) {
+		if (connect(sock, (struct sockaddr*)&addr, sizeof(addr))) {
 			log_error("dhcpv4: relay: %s: connect: %s\n", opt_relay, strerror(errno));
 			goto out_err;
 		}
 
-		getsockname(sock, &addr, &len);
+		getsockname(sock, (struct sockaddr*)&addr, &len);
 		opt_giaddr = addr.sin_addr.s_addr;
 
 		close(sock);
@@ -3166,6 +3173,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->opt_ipv6 = opt_ipv6;
 		serv->opt_weight = opt_weight;
 		serv->opt_ip_unnumbered = opt_ip_unnumbered;
+		serv->opt_check_mac_change = opt_check_mac_change;
 #ifdef USE_LUA
 		if (serv->opt_lua_username_func && (!opt_lua_username_func || strcmp(serv->opt_lua_username_func, opt_lua_username_func))) {
 			_free(serv->opt_lua_username_func);
@@ -3253,6 +3261,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	serv->opt_mtu = opt_mtu;
 	serv->opt_weight = opt_weight;
 	serv->opt_ip_unnumbered = opt_ip_unnumbered;
+	serv->opt_check_mac_change = opt_check_mac_change;
 #ifdef USE_LUA
 	serv->opt_lua_username_func = opt_lua_username_func;
 #endif
@@ -3349,8 +3358,12 @@ static void load_interface(const char *opt)
 
 static int __load_interface_re(int index, int flags, const char *name, int iflink, int vid, struct iplink_arg *arg)
 {
-	if (pcre_exec(arg->re, NULL, name, strlen(name), 0, 0, NULL, 0) < 0)
+	pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
+	if (pcre2_match(arg->re, (PCRE2_SPTR)name, strlen(name), 0, 0, match_data, NULL) < 0) {
+		pcre2_match_data_free(match_data);
 		return 0;
+	}
+	pcre2_match_data_free(match_data);
 
 	add_interface(name, index, arg->opt, iflink, vid, 0);
 
@@ -3359,11 +3372,11 @@ static int __load_interface_re(int index, int flags, const char *name, int iflin
 
 static void load_interface_re(const char *opt)
 {
-	pcre *re = NULL;
-	const char *pcre_err;
+	pcre2_code *re = NULL;
+	int pcre_err;
 	char *pattern;
 	const char *ptr;
-	int pcre_offset;
+	PCRE2_SIZE pcre_offset;
 	struct iplink_arg arg;
 	struct ipoe_serv *serv;
 
@@ -3373,10 +3386,12 @@ static void load_interface_re(const char *opt)
 	memcpy(pattern, opt + 3, ptr - (opt + 3));
 	pattern[ptr - (opt + 3)] = 0;
 
-	re = pcre_compile2(pattern, 0, NULL, &pcre_err, &pcre_offset, NULL);
+	re = pcre2_compile((PCRE2_SPTR)pattern, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &pcre_offset, NULL);
 
 	if (!re) {
-		log_error("ipoe: '%s': %s at %i\r\n", pattern, pcre_err, pcre_offset);
+		PCRE2_UCHAR err_msg[64];
+		pcre2_get_error_message(pcre_err, err_msg, sizeof(err_msg));
+		log_error("ipoe: '%s': %s at %i\r\n", pattern, err_msg, (int)pcre_offset);
 		return;
 	}
 
@@ -3389,11 +3404,13 @@ static void load_interface_re(const char *opt)
 		if (serv->active)
 			continue;
 
-		if (pcre_exec(re, NULL, serv->ifname, strlen(serv->ifname), 0, 0, NULL, 0) >= 0)
+		pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
+		if (pcre2_match(re, (PCRE2_SPTR)serv->ifname, strlen(serv->ifname), 0, 0, match_data, NULL) >= 0)
 			add_interface(serv->ifname, serv->ifindex, opt, 0, 0, 0);
+		pcre2_match_data_free(match_data);
 	}
 
-	pcre_free(re);
+	pcre2_code_free(re);
 	_free(pattern);
 }
 
@@ -3661,8 +3678,12 @@ static int __load_vlan_mon_re(int index, int flags, const char *name, int iflink
 	long mask1[4096/8/sizeof(long)];
 	struct ipoe_serv *serv;
 
-	if (pcre_exec(arg->re, NULL, name, strlen(name), 0, 0, NULL, 0) < 0)
+	pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
+	if (pcre2_match(arg->re, (PCRE2_SPTR)name, strlen(name), 0, 0, match_data, NULL) < 0) {
+		pcre2_match_data_free(match_data);
 		return 0;
+	}
+	pcre2_match_data_free(match_data);
 
 	if (!(flags & IFF_UP)) {
 		memset(&ifr, 0, sizeof(ifr));
@@ -3692,11 +3713,11 @@ static int __load_vlan_mon_re(int index, int flags, const char *name, int iflink
 
 static void load_vlan_mon_re(const char *opt, long *mask, int len)
 {
-	pcre *re = NULL;
-	const char *pcre_err;
+	pcre2_code *re = NULL;
+	int pcre_err;
 	char *pattern;
 	const char *ptr;
-	int pcre_offset;
+	PCRE2_SIZE pcre_offset;
 	struct iplink_arg arg;
 
 	for (ptr = opt; *ptr && *ptr != ','; ptr++);
@@ -3705,10 +3726,12 @@ static void load_vlan_mon_re(const char *opt, long *mask, int len)
 	memcpy(pattern, opt + 3, ptr - (opt + 3));
 	pattern[ptr - (opt + 3)] = 0;
 
-	re = pcre_compile2(pattern, 0, NULL, &pcre_err, &pcre_offset, NULL);
+	re = pcre2_compile((PCRE2_SPTR)pattern, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &pcre_offset, NULL);
 
 	if (!re) {
-		log_error("ipoe: '%s': %s at %i\r\n", pattern, pcre_err, pcre_offset);
+		PCRE2_UCHAR err_msg[64];
+		pcre2_get_error_message(pcre_err, err_msg, sizeof(err_msg));
+		log_error("ipoe: '%s': %s at %i\r\n", pattern, err_msg, (int)pcre_offset);
 		return;
 	}
 
@@ -3718,7 +3741,7 @@ static void load_vlan_mon_re(const char *opt, long *mask, int len)
 
 	iplink_list((iplink_list_func)__load_vlan_mon_re, &arg);
 
-	pcre_free(re);
+	pcre2_code_free(re);
 	_free(pattern);
 
 }
@@ -4006,6 +4029,8 @@ static void load_config(void)
 	opt = conf_get_opt("ipoe", "link-selection");
 	if (opt && inet_pton(AF_INET, opt, &dummy) > 0)
 		conf_link_selection = opt;
+	else
+		conf_link_selection = NULL;
 
 	opt = conf_get_opt("ipoe", "ipv6");
 	if (opt)
@@ -4047,10 +4072,8 @@ static void load_config(void)
 		conf_proto = 3;
 
 	opt = conf_get_opt("ipoe", "vlan-timeout");
-	if (opt && atoi(opt) > 0)
+	if (opt && atoi(opt) >= 0)
 		conf_vlan_timeout = atoi(opt);
-	else
-		conf_vlan_timeout = 60;
 
 	opt = conf_get_opt("ipoe", "offer-timeout");
 	if (opt && atoi(opt) > 0)

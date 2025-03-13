@@ -1,0 +1,162 @@
+name: Run tests (x86_32)
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  Test-in-Alpine-x86-32:
+    #if: ${{ false }} # disable for now
+    runs-on: ubuntu-24.04
+    name: Test in Qemu (x86_32 Alpine)
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [v3.20]
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: "accel-ppp"
+      - name: Install build tools for qemu and required tools
+        run: >
+          sudo apt update && 
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true
+          sudo -E apt -y install qemu-system-x86 qemu-utils wget openssh-client screen
+      - name: Prepare qemu files
+        run: |
+          ssh-keygen -t ed25519 -q -N "" -f ssh-key
+          qemu-img create -f raw disk.raw 5G
+          wget -nv https://dl-cdn.alpinelinux.org/alpine/${{ matrix.distro }}/releases/x86/netboot/vmlinuz-lts
+          wget -nv https://dl-cdn.alpinelinux.org/alpine/${{ matrix.distro }}/releases/x86/netboot/initramfs-lts
+      - name: Run http server for ssh-key
+        run: |
+          sudo ip addr add 192.0.2.1/32 dev lo # stable ip for http server 
+          screen -dmS httpserver python3 -m http.server 8000
+      - name: Run target OS first time (for setup actions)
+        run: >
+          sudo screen -dmS qemu
+          qemu-system-i386 -accel kvm -M q35
+          -m 2048 -smp 2 -nographic
+          -net nic -net user,hostfwd=tcp::2222-:22
+          -drive format=raw,file=disk.raw
+          -kernel vmlinuz-lts
+          -initrd initramfs-lts
+          -append "ip=dhcp alpine_repo=https://dl-cdn.alpinelinux.org/alpine/${{ matrix.distro }}/main
+          modloop=https://dl-cdn.alpinelinux.org/alpine/${{ matrix.distro }}/releases/x86/netboot/modloop-lts
+          ssh_key=http://192.0.2.1:8000/ssh-key.pub"
+      - name: Check that target OS is running
+        run: |
+          sleep 1
+          sudo screen -ls
+      - name: Wait for ssh connection
+        timeout-minutes: 30
+        run: >
+          while ! ssh -o StrictHostKeyChecking=accept-new -p2222 -o ConnectTimeout=5 -i ssh-key root@localhost "exit 0";
+          do
+          echo "Trying to establish ssh connection";
+          sleep 5;
+          done;
+          cat ~/.ssh/known_hosts
+      - name: Setup alpine to disk
+        run: >
+          ssh -i ssh-key -p2222 root@localhost "setup-alpine -c setup_alpine_conf &&
+          sed -i '/^ROOTSSHKEY\|^DISKOPTS\|^APKREPOSOPTS=/d' setup_alpine_conf &&
+          echo '' >> setup_alpine_conf &&
+          echo 'DISKOPTS=\"-m sys /dev/sda\"' >> setup_alpine_conf &&
+          echo 'ROOTSSHKEY=\"http://192.0.2.1:8000/ssh-key.pub\"' >> setup_alpine_conf &&
+          echo 'APKREPOSOPTS=\"https://dl-cdn.alpinelinux.org/alpine/${{ matrix.distro }}/main\"' >> setup_alpine_conf &&
+          cat setup_alpine_conf &&
+          yes | setup-alpine -e -f setup_alpine_conf"
+      - name: Poweroff the VM
+        timeout-minutes: 30
+        run: >
+          ssh -i ssh-key -p2222 root@localhost "poweroff" &&
+          while sudo screen -ls;
+          do
+          echo "Waiting for poweroff";
+          sleep 5;
+          done;
+      - name: Run target OS
+        run: >
+          sudo screen -dmS qemu
+          qemu-system-i386 -accel kvm -M q35
+          -m 2048 -smp 2 -nographic
+          -net nic -net user,hostfwd=tcp::2222-:22
+          -drive format=raw,file=disk.raw
+      - name: Check that target OS is running
+        run: |
+          sleep 1
+          sudo screen -ls
+      - name: Wait for ssh connection
+        timeout-minutes: 30
+        run: >
+          while ! ssh -o StrictHostKeyChecking=accept-new -p2222 -o ConnectTimeout=5 -i ssh-key root@localhost "exit 0";
+          do
+          echo "Trying to establish ssh connection";
+          sleep 5;
+          done;
+          cat ~/.ssh/known_hosts
+      - name: Display free space, current dir, kernel version and users
+        run: |
+          ssh -i ssh-key -p2222 root@localhost "df -h"
+          ssh -i ssh-key -p2222 root@localhost "pwd"
+          ssh -i ssh-key -p2222 root@localhost "uname -a"
+          ssh -i ssh-key -p2222 root@localhost "cat /etc/passwd"
+      - name: Install build tools (on target OS)
+        run: >
+          ssh -i ssh-key -p2222 root@localhost "setup-apkrepos -o && apk add --no-cache git cmake make g++ pcre2-dev openssl-dev linux-headers libucontext-dev lua5.1-dev linux-lts-dev py3-pip 
+          ppp ppp-pppoe iproute2 dhclient && 
+          (pip3 install pytest pytest-dependency pytest-order || pip3 install --break-system-packages pytest pytest-dependency pytest-order)"
+      - name: Copy source code to target OS
+        run: |
+          tar -Jcf accel-ppp.tar.xz accel-ppp
+          scp -i ssh-key -P2222 accel-ppp.tar.xz root@localhost:
+          ssh -i ssh-key -p2222 root@localhost "tar -xf accel-ppp.tar.xz"
+      - name: Build accel-ppp
+        run: >
+          ssh -i ssh-key -p2222 root@localhost "cd accel-ppp && git config --global --add safe.directory '*' &&
+          mkdir build && cd build &&
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          -DKDIR=/usr/src/linux-headers-\`uname -r\` 
+          -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE .. &&
+          make && make install"
+      - name: Run tests (not related to ipoe and vlan_mon drivers)
+        timeout-minutes: 5
+        run: >
+          ssh -i ssh-key -p2222 root@localhost "cd accel-ppp/tests && 
+          python3 -m pytest -Wall --order-dependencies -v -m \"not ipoe_driver and not vlan_mon_driver and not chap_secrets\""
+      - name: Display processes and dmesg after tests
+        if: ${{ always() }}
+        run: ssh -i ssh-key -p2222 -o ConnectTimeout=5  root@localhost "ps aux | grep accel- && dmesg"
+      - name: Insert ipoe kernel module
+        run: >
+          ssh -i ssh-key -p2222 root@localhost "cd accel-ppp &&
+          insmod build/drivers/ipoe/driver/ipoe.ko &&
+          lsmod | grep ipoe"
+      - name: Run tests (not related to vlan_mon drivers)
+        timeout-minutes: 5
+        run: >
+          ssh -i ssh-key -p2222 root@localhost "cd accel-ppp/tests && 
+          python3 -m pytest -Wall --order-dependencies -v -m \"not vlan_mon_driver and not chap_secrets\""
+      - name: Display processes and dmesg after tests
+        if: ${{ always() }}
+        run: ssh -i ssh-key -p2222 -o ConnectTimeout=5  root@localhost "ps aux | grep accel- && dmesg"
+      - name: Insert vlan_mon kernel module
+        run: >
+          ssh -i ssh-key -p2222 root@localhost "cd accel-ppp &&
+          insmod build/drivers/vlan_mon/driver/vlan_mon.ko &&
+          lsmod | grep vlan_mon"
+      - name: Run tests (all)
+        timeout-minutes: 5
+        run: >
+          ssh -i ssh-key -p2222 root@localhost "cd accel-ppp/tests && 
+          python3 -m pytest -Wall --order-dependencies -v -m \"not chap_secrets\""
+      - name: Display processes and dmesg after tests
+        if: ${{ always() }}
+        run: ssh -i ssh-key -p2222 -o ConnectTimeout=5 root@localhost "ps aux | grep accel- && dmesg"

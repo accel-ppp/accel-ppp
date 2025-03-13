@@ -40,6 +40,9 @@ static int conf_pref_lifetime = 604800;
 static int conf_valid_lifetime = 2592000;
 static struct dhcpv6_opt_serverid *conf_serverid = &serverid.hdr;
 static int conf_route_via_gw = 1;
+static uint8_t *conf_aftr_gw;
+static int conf_aftr_gw_size;
+
 
 static struct in6_addr conf_dns[MAX_DNS_COUNT];
 static int conf_dns_count;
@@ -240,6 +243,11 @@ static void insert_oro(struct dhcpv6_packet *reply, struct dhcpv6_option *opt)
 			if (conf_dnssl_size) {
 				opt1 = dhcpv6_option_alloc(reply, D6_OPTION_DOMAIN_LIST, conf_dnssl_size);
 				memcpy(opt1->hdr->data, conf_dnssl, conf_dnssl_size);
+			}
+		} else if (ntohs(*ptr) == D6_OPTION_AFTR_NAME) {
+			if (conf_aftr_gw_size) {
+				opt1 = dhcpv6_option_alloc(reply, D6_OPTION_AFTR_NAME, conf_aftr_gw_size);
+				memcpy(opt1->hdr->data, conf_aftr_gw, conf_aftr_gw_size);
 			}
 		}
 	}
@@ -752,6 +760,32 @@ static void dhcpv6_recv_rebind(struct dhcpv6_packet *req)
 	dhcpv6_send_reply2(req, pd, D6_REPLY);
 }
 
+static void dhcpv6_recv_confirm(struct dhcpv6_packet *req)
+{
+	struct dhcpv6_pd *pd = req->pd;
+
+	if (!req->clientid) {
+		log_ppp_error("dhcpv6: no Client-ID option\n");
+		return;
+	}
+
+	if (req->serverid) {
+		log_ppp_error("dhcpv6: unexcpected Server-ID option\n");
+		return;
+	}
+
+	if (!pd->clientid)
+		return;
+	else if (pd->clientid->hdr.len != req->clientid->hdr.len || memcmp(pd->clientid, req->clientid, sizeof(struct dhcpv6_opt_hdr) + ntohs(req->clientid->hdr.len))) {
+		log_ppp_error("dhcpv6: unmatched Client-ID option\n");
+		return;
+	}
+
+	req->serverid = conf_serverid;
+
+	dhcpv6_send_reply(req, pd, D6_REPLY);
+}
+
 static void dhcpv6_recv_release(struct dhcpv6_packet *pkt)
 {
 	// don't answer
@@ -782,6 +816,9 @@ static void dhcpv6_recv_packet(struct dhcpv6_packet *pkt)
 			break;
 		case D6_REBIND:
 			dhcpv6_recv_rebind(pkt);
+			break;
+		case D6_CONFIRM:
+			dhcpv6_recv_confirm(pkt);
 			break;
 		case D6_RELEASE:
 			dhcpv6_recv_release(pkt);
@@ -837,6 +874,53 @@ static int dhcpv6_read(struct triton_md_handler_t *h)
 	_free(buf);
 
 	return 0;
+}
+
+static void add_aftr_gw(const char *val)
+{
+	int n = strlen(val);
+	const char *ptr;
+	uint8_t *buf;
+
+	if (!val)
+		return;
+
+	if (val[n - 1] == '.')
+		n++;
+	else
+		n += 2;
+
+	if (n > 255) {
+		log_error("dnsv6: AFTR-Name '%s' is too long\n", val);
+		return;
+	}
+
+	if (!conf_aftr_gw)
+		conf_aftr_gw = _malloc(n);
+	else
+		conf_aftr_gw = _realloc(conf_aftr_gw, conf_aftr_gw_size + n);
+
+	buf = conf_aftr_gw + conf_aftr_gw_size;
+
+	while (1) {
+		ptr = strchr(val, '.');
+		if (!ptr)
+			ptr = strchr(val, 0);
+		if (ptr - val > 63) {
+			log_error("dnsv6: AFTR-Name '%s' is invalid\n", val);
+			return;
+		}
+		*buf = ptr - val;
+		memcpy(buf + 1, val, ptr - val);
+		buf += 1 + (ptr - val);
+		val = ptr + 1;
+		if (!*ptr || !*val) {
+			*buf = 0;
+			break;
+		}
+	}
+
+	conf_aftr_gw_size += n;
 }
 
 static void add_dnssl(const char *val)
@@ -966,6 +1050,12 @@ static void load_config(void)
 	opt = conf_get_opt("ipv6-dhcp", "route-via-gw");
 	if (opt)
 		conf_route_via_gw = atoi(opt);
+
+	opt = conf_get_opt("ipv6-dhcp", "aftr-gw");
+	if (opt) {
+		add_aftr_gw(opt);
+	}
+
 
 	opt = conf_get_opt("ipv6-dhcp", "server-id");
 	if (opt)

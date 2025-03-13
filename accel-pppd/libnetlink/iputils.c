@@ -218,7 +218,8 @@ int __export iplink_vlan_add(const char *ifname, int ifindex, int vid)
 
 	data = NLMSG_TAIL(&req.n);
 	addattr_l(&req.n, 4096, IFLA_INFO_DATA, NULL, 0);
-	addattr_l(&req.n, 4096, IFLA_VLAN_ID, &vid, 2);
+	uint16_t vid_16b = (uint16_t)vid;
+	addattr_l(&req.n, 4096, IFLA_VLAN_ID, &vid_16b, 2);
 	data->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)data;
 
 	linkinfo->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)linkinfo;

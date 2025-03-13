@@ -55,6 +55,7 @@ struct ipoe_serv {
 	int opt_arp;
 	int opt_username;
 	int opt_mtu;
+	int opt_check_mac_change;
 #ifdef USE_LUA
 	char *opt_lua_username_func;
 #endif

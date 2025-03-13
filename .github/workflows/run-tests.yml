@@ -10,12 +10,17 @@ on:
 jobs:
   Test-in-Qemu:
     #if: ${{ false }} # disable for now
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: Test in Qemu (${{ matrix.distro }})
     strategy:
       fail-fast: false
       matrix:
         include:
+          - distro: Ubuntu-24.04
+            image: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+            untar: false
+            format: qcow2
+
           - distro: Ubuntu-22.04
             image: https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img
             untar: false
@@ -26,8 +31,13 @@ jobs:
             untar: false
             format: qcow2
 
+          - distro: Debian13
+            image: https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-generic-amd64-daily.tar.xz
+            untar: true
+            format: raw
+
           - distro: Debian12
-            image: https://cloud.debian.org/images/cloud/bookworm/daily/latest/debian-12-generic-amd64-daily.tar.xz
+            image: https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.tar.xz
             untar: true
             format: raw
 
@@ -36,23 +46,18 @@ jobs:
             untar: true
             format: raw
 
-          - distro: Debian10
-            image: https://cloud.debian.org/images/cloud/buster/latest/debian-10-generic-amd64.tar.xz
-            untar: true
-            format: raw
-
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           path: "accel-ppp"
       - name: Install qemu and required tools
         run: >
           sudo apt update && 
-          sudo apt -y install qemu-system-x86 qemu-utils cloud-image-utils cpu-checker cloud-image-utils wget openssh-client screen
-      - name: Check kvm support (fail is ok)
-        run: sudo kvm-ok || exit 0
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install qemu-system-x86 qemu-utils cloud-image-utils cpu-checker cloud-image-utils wget openssh-client screen
+      - name: Check kvm support
+        run: sudo kvm-ok
       - name: Prepare cloud-init image disk
         run: |
           ssh-keygen -t ed25519 -q -N "" -f ssh-key
@@ -86,9 +91,9 @@ jobs:
           wget -nv ${{ matrix.image }} -O img/image
           qemu-img resize -f ${{ matrix.format }} img/`ls -1 img` +2G
       - name: Run target OS first time (for cloud-init actions)
-        run: sudo qemu-system-x86_64 -m 4096 -nographic -drive format=${{ matrix.format }},file=img/`ls -1 img` -drive format=raw,file=init.img
+        run: sudo qemu-system-x86_64 -enable-kvm -cpu host -m 4096 -nographic -drive format=${{ matrix.format }},file=img/`ls -1 img` -drive format=raw,file=init.img
       - name: Run target OS
-        run: sudo screen -dmS qemu qemu-system-x86_64 -net nic -net user,hostfwd=tcp::2222-:22 -m 4096 -nographic -drive format=${{ matrix.format }},file=img/`ls -1 img`
+        run: sudo screen -dmS qemu qemu-system-x86_64 -enable-kvm -cpu host -net nic -net user,hostfwd=tcp::2222-:22 -m 4096 -nographic -drive format=${{ matrix.format }},file=img/`ls -1 img`
       - name: Check that target OS is running
         run: |
           sleep 1
@@ -112,9 +117,12 @@ jobs:
         run: >
           ssh -i ssh-key -p2222 user@localhost "sudo apt -y install
           git build-essential cmake gcc linux-headers-\`uname -r\` 
-          libpcre3-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
+          libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
+          libxml2-dev libxslt1-dev zlib1g-dev 
           iproute2 ppp pppoe isc-dhcp-client timelimit && 
-          (sudo pip3 install pytest pytest-dependency gcovr || sudo pip3 install --break-system-packages pytest pytest-dependency gcovr)"
+          (sudo apt -y install python3-pytest python3-pytest-dependency python3-pytest-order || 
+          sudo pip3 install pytest pytest-dependency pytest-order || 
+          sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order)"
       - name: Copy source code to target OS
         run: |
           tar -Jcf accel-ppp.tar.xz accel-ppp
@@ -133,7 +141,7 @@ jobs:
         timeout-minutes: 5
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp/tests && 
-          sudo python3 -m pytest -Wall -v -m \"not ipoe_driver and not vlan_mon_driver\""
+          sudo python3 -m pytest -Wall --order-dependencies -v -m \"not ipoe_driver and not vlan_mon_driver\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >
@@ -151,7 +159,7 @@ jobs:
         if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp/tests && 
-          sudo python3 -m pytest -Wall -v -m \"not vlan_mon_driver\""
+          sudo python3 -m pytest -Wall --order-dependencies -v -m \"not vlan_mon_driver\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >
@@ -166,45 +174,177 @@ jobs:
 
       - name: Run tests (all)
         timeout-minutes: 5
-        if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp/tests && 
-          sudo python3 -m pytest -Wall -v"
+          sudo python3 -m pytest -Wall --order-dependencies -v"
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 user@localhost "ps aux | grep accel- && 
           sudo dmesg"
 
+  Test-in-Alpine:
+    #if: ${{ false }} # disable for now
+    runs-on: ubuntu-24.04
+    name: Test in Qemu (Alpine)
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: "accel-ppp"
+      - name: Install qemu and required tools
+        run: >
+          sudo apt update && 
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install qemu-system-x86 qemu-utils cloud-image-utils cpu-checker cloud-image-utils wget openssh-client screen
+      - name: Check kvm support
+        run: sudo kvm-ok
+      - name: Prepare cloud-init image disk
+        run: |
+          ssh-keygen -t ed25519 -q -N "" -f ssh-key
+          echo "instance-id: $(uuidgen || echo i-abcdefg)" > init-meta
+          echo "#cloud-config" > init-data
+          echo "package_update: true" >> init-data
+          echo "package_upgrade: true" >> init-data
+          echo "package_reboot_if_required: false" >> init-data
+          echo "users:" >> init-data
+          echo "  - default" >> init-data
+          echo "  - name: alpine" >> init-data
+          echo "    shell: /bin/bash" >> init-data
+          echo "    ssh_authorized_keys:" >> init-data
+          echo "      - "`cat ssh-key.pub` >> init-data
+          echo "power_state:">> init-data
+          echo "    mode: poweroff">> init-data
+          cat init-data
+          cloud-localds init.img init-data init-meta
+      - name: Download and resize target OS cloud image
+        run: |
+          mkdir img
+          # we need to use metal image because virt image doesn't provide pppoe driver (https://gitlab.alpinelinux.org/alpine/aports/-/issues/13739)
+          wget -nv https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/cloud/nocloud_alpine-3.20.3-x86_64-bios-cloudinit-metal-r0.qcow2 -O img/image
+          qemu-img resize -f qcow2 img/`ls -1 img` +2G
+      - name: Run target OS first time (for cloud-init actions)
+        run: sudo qemu-system-x86_64 -enable-kvm -cpu host -m 4096 -nographic -drive format=qcow2,file=img/`ls -1 img` -drive format=raw,file=init.img
+      - name: Run target OS
+        run: sudo screen -dmS qemu qemu-system-x86_64 -enable-kvm -cpu host -net nic -net user,hostfwd=tcp::2222-:22 -m 4096 -nographic -drive format=qcow2,file=img/`ls -1 img`
+      - name: Check that target OS is running
+        run: |
+          sleep 1
+          sudo screen -ls
+      - name: Wait for ssh connection
+        timeout-minutes: 30
+        run: >
+          while ! ssh -o StrictHostKeyChecking=accept-new -p2222 -o ConnectTimeout=5 -i ssh-key alpine@localhost "exit 0";
+          do
+          echo "Trying to establish ssh connection";
+          sleep 5;
+          done;
+          cat ~/.ssh/known_hosts
+      - name: Display free space, current dir, kernel version and test doas
+        run: |
+          ssh -i ssh-key -p2222 alpine@localhost "df -h"
+          ssh -i ssh-key -p2222 alpine@localhost "pwd"
+          ssh -i ssh-key -p2222 alpine@localhost "uname -a"
+          ssh -i ssh-key -p2222 alpine@localhost "doas cat /etc/passwd"
+      - name: Install build tools (on target OS)
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "doas apk add --no-cache git cmake make g++ pcre2-dev libressl-dev linux-headers libucontext-dev lua5.1-dev linux-lts-dev py3-pip 
+          ppp ppp-pppoe && 
+          (doas pip3 install pytest pytest-dependency pytest-order || doas pip3 install --break-system-packages pytest pytest-dependency pytest-order)"
+      - name: Copy source code to target OS
+        run: |
+          tar -Jcf accel-ppp.tar.xz accel-ppp
+          scp -i ssh-key -P2222 accel-ppp.tar.xz alpine@localhost:
+          ssh -i ssh-key -p2222 alpine@localhost "tar -xf accel-ppp.tar.xz"
+      - name: Build accel-ppp
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
+          mkdir build && cd build &&
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          -DKDIR=/usr/src/linux-headers-\`uname -r\` 
+          -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE .. &&
+          make && doas make install"
+
+      - name: Run tests (not related to ipoe and vlan_mon drivers)
+        timeout-minutes: 5
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp/tests && 
+          doas python3 -m pytest -Wall --order-dependencies -v -m \"not ipoe_driver and not vlan_mon_driver and not chap_secrets\""
+      - name: Display processes and dmesg after tests
+        if: ${{ always() }}
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "ps aux | grep accel- && 
+          doas dmesg"
+
+      - name: Insert ipoe kernel module
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
+          doas insmod build/drivers/ipoe/driver/ipoe.ko &&
+          lsmod | grep ipoe "
+
+      - name: Run tests (not related to vlan_mon drivers)
+        timeout-minutes: 5
+        if: ${{ always() }}
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp/tests && 
+          doas python3 -m pytest -Wall --order-dependencies -v -m \"not vlan_mon_driver and not chap_secrets\""
+      - name: Display processes and dmesg after tests
+        if: ${{ always() }}
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "ps aux | grep accel- && 
+          doas dmesg"
+
+      - name: Insert vlan_mon kernel module
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
+          doas insmod build/drivers/vlan_mon/driver/vlan_mon.ko &&
+          lsmod | grep vlan_mon"
+
+      - name: Run tests (all)
+        timeout-minutes: 5
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp/tests && 
+          doas python3 -m pytest -Wall --order-dependencies -v -m \"not chap_secrets\""
+      - name: Display processes and dmesg after tests
+        if: ${{ always() }}
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "ps aux | grep accel- && 
+          doas dmesg"
+
+
   Test-in-GH:
     #if: ${{ false }} # disable for now
     strategy:
       fail-fast: false
       matrix:
-        distro: ["ubuntu-22.04", "ubuntu-20.04"]
+        distro: ["ubuntu-24.04", "ubuntu-22.04", "ubuntu-20.04"]
 
     runs-on: ${{ matrix.distro }}
     steps:
       - name: Install build tools (using apt)
         run: >
           sudo apt update && 
-          sudo apt -y install git build-essential cmake gcc linux-headers-`uname -r` 
-          libpcre3-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
+          git build-essential cmake gcc linux-headers-`uname -r`
+          libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
           iproute2 ppp pppoe isc-dhcp-client
 
       - name: Install testing tools (using pip)
         run: >
-          sudo pip3 install pytest pytest-dependency gcovr
+          sudo apt -y install python3-pytest python3-pytest-dependency python3-pytest-order || 
+          sudo pip3 install pytest pytest-dependency pytest-order || 
+          sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order
 
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: mkdir build
         run: mkdir build
 
-      - name: cmake (with coverage)
+      - name: cmake
         working-directory: ./build
         run: >
           cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
@@ -226,30 +366,33 @@ jobs:
       - name: Run tests
         timeout-minutes: 5
         working-directory: ./tests
-        run: sudo python3 -m pytest -Wall -v
+        run: sudo python3 -m pytest -Wall --order-dependencies -v
 
   Test-in-GH-Coverage:
     #if: ${{ false }} # disable for now
     strategy:
       fail-fast: false
       matrix:
-        distro: ["ubuntu-22.04", "ubuntu-20.04"]
+        distro: ["ubuntu-24.04", "ubuntu-22.04", "ubuntu-20.04"]
 
     runs-on: ${{ matrix.distro }}
     steps:
       - name: Install build tools (using apt)
         run: >
           sudo apt update && 
-          sudo apt -y install git build-essential cmake gcc linux-headers-`uname -r` 
-          libpcre3-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
+          git build-essential cmake gcc linux-headers-`uname -r`
+          libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
           iproute2 ppp pppoe isc-dhcp-client
 
-      - name: Install testing tools (using pip)
+      - name: Install testing tools
         run: >
-          sudo pip3 install pytest pytest-dependency gcovr
+          sudo apt -y install python3-pytest python3-pytest-dependency python3-pytest-order gcovr || 
+          sudo pip3 install pytest pytest-dependency pytest-order gcovr || 
+          sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order gcovr
 
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -279,7 +422,7 @@ jobs:
       - name: Run tests (for coverage report) (fail is ok)
         timeout-minutes: 5
         working-directory: ./tests
-        run: sudo python3 -m pytest -Wall -v || exit 0
+        run: sudo python3 -m pytest -Wall --order-dependencies -v || exit 0
 
       - name: Generate coverage reports (default(txt), csv, html)
         run: |
@@ -293,7 +436,7 @@ jobs:
 
       - name: Upload coverage report
         # if: ${{ false }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-report-on-${{ matrix.distro }}
           path: tests/report/
