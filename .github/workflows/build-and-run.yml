@@ -43,8 +43,12 @@ jobs:
         run: mkdir build
       - name: cmake
         working-directory: ./build
+        # Working around CMAKE upstream bug
+        # https://gitlab.kitware.com/cmake/cmake/-/issues/25852
         run: >
           cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          -DCMAKE_INSTALL_SYSCONFDIR=/etc
+          -DCMAKE_INSTALL_LOCALSTATEDIR=/var
           -DKDIR=/usr/src/linux-headers-`uname -r` 
           -DLUA=TRUE -DSHAPER=FALSE -DRADIUS=TRUE 
           -DCPACK_TYPE=${{ matrix.cpack-type }} ..
@@ -138,6 +142,8 @@ jobs:
         working-directory: ./build
         run: >
           cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          -DCMAKE_INSTALL_SYSCONFDIR=/etc
+          -DCMAKE_INSTALL_LOCALSTATEDIR=/var
           -DKDIR=/usr/src/linux-headers-${{ env.KERNEL_NAME }}
           -DMODULES_KDIR=${{ env.KERNEL_NAME }}
           -DLUA=TRUE -DSHAPER=FALSE -DRADIUS=TRUE 
@@ -204,6 +210,7 @@ jobs:
         run: >
           cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr
           -DCMAKE_INSTALL_SYSCONFDIR=/etc
+          -DCMAKE_INSTALL_LOCALSTATEDIR=/var
           -DKDIR=/usr/src/linux-headers-${{ env.KERNEL_NAME }}
           -DMODULES_KDIR=${{ env.KERNEL_NAME }}
           -DLUA=TRUE -DSHAPER=FALSE -DRADIUS=TRUE ..
@@ -237,6 +244,8 @@ jobs:
         working-directory: ./build
         run: >
           cmake -DBUILD_IPOE_DRIVER=FALSE -DBUILD_VLAN_MON_DRIVER=FALSE -DCMAKE_INSTALL_PREFIX=/usr
+          -DCMAKE_INSTALL_SYSCONFDIR=/etc
+          -DCMAKE_INSTALL_LOCALSTATEDIR=/var
           -DKDIR=/usr/src/linux-headers-`uname -r`
           -DLUA=TRUE -DSHAPER=FALSE -DRADIUS=TRUE ..
       - name: make and install
@@ -275,6 +284,7 @@ jobs:
         run: >
           cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr
           -DCMAKE_INSTALL_SYSCONFDIR=/etc
+          -DCMAKE_INSTALL_LOCALSTATEDIR=/var
           -DKDIR=/usr/src/linux
           -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE ..
       - name: make and install
