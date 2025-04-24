@@ -1,8 +1,6 @@
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility=hidden")
 ADD_DEFINITIONS(-DPTHREAD_SPINLOCK)
 
-include(GNUInstallDirs)
-
 INCLUDE_DIRECTORIES(include)
 
 IF (MEMDEBUG)
@@ -185,13 +183,29 @@ ENDIF (HAVE_GETCONTEXT AND HAVE_SETCONTEXT)
 set_property(TARGET accel-pppd PROPERTY CMAKE_SKIP_BUILD_RPATH FALSE)
 set_property(TARGET accel-pppd PROPERTY CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 set_property(TARGET accel-pppd PROPERTY INSTALL_RPATH_USE_LINK_PATH FALSE)
-set_property(TARGET accel-pppd PROPERTY INSTALL_RPATH ${CMAKE_INSTALL_PREFIX}/lib${LIB_SUFFIX}/accel-ppp)
+
+# Note: Use of absolute path in MODULE_PATH makes it non-relocatable
+# There are ways to get the path dynamically like https://github.com/gpakosz/whereami
+if("${CMAKE_VERSION}" VERSION_LESS "3.7")
+	# Before CMake 3.7 GNUInstallDirs_get_absolute_install_dir is not available
+	# Try to use best guess
+	set(ACELPPP_INSTALL_FULL_LIBDIR "${CMAKE_INSTALL_PREFIX}/${ACCELPPP_INSTALL_LIBDIR}")
+else()
+	if("${CMAKE_VERSION}" VERSION_LESS "3.20")
+		# Before CMake 3.20 GNUInstallDirs_get_absolute_install_dir needed variable dir
+		set(dir LIBDIR)
+	endif()
+	GNUInstallDirs_get_absolute_install_dir(ACELPPP_INSTALL_FULL_LIBDIR ACCELPPP_INSTALL_LIBDIR ${dir})
+endif()
+
+file(RELATIVE_PATH bin_to_lib_path "${CMAKE_INSTALL_FULL_SBINDIR}" "${ACELPPP_INSTALL_FULL_LIBDIR}")
+set_property(TARGET accel-pppd PROPERTY INSTALL_RPATH "$ORIGIN/${bin_to_lib_path}")
 
 INSTALL(TARGETS accel-pppd
-	RUNTIME DESTINATION sbin
+	RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR}
 )
 
-INSTALL(FILES accel-ppp.conf.5 DESTINATION share/man/man5)
+INSTALL(FILES accel-ppp.conf.5 DESTINATION ${CMAKE_INSTALL_MANDIR}/man5)
 
 IF (NOT DEFINED CPACK_TYPE)
 	INSTALL(FILES accel-ppp.conf DESTINATION "${CMAKE_INSTALL_SYSCONFDIR}" RENAME accel-ppp.conf.dist)

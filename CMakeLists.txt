@@ -6,19 +6,18 @@ endif ()
 
 project(accel-ppp C)
 
-SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fno-strict-aliasing -D_GNU_SOURCE -fPIC -rdynamic -Wno-unused-result")
+include(GNUInstallDirs)
 
-IF (NOT DEFINED LIB_SUFFIX)
-	EXECUTE_PROCESS(
-		COMMAND uname -m
-		COMMAND tr -d '\n'
-		OUTPUT_VARIABLE ARCH
-	)
-	message(STATUS "'"  ${ARCH}  "'")
-	IF (ARCH STREQUAL x86_64)
-		SET(LIB_SUFFIX 64)
-	ENDIF (ARCH STREQUAL x86_64)
-ENDIF (NOT DEFINED LIB_SUFFIX)
+SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fno-strict-aliasing -D_GNU_SOURCE -fPIC -rdynamic -Wno-unused-result")
+set(ACCELPPP_INSTALL_LIBDIR "${CMAKE_INSTALL_LIBDIR}/accel-ppp" CACHE PATH
+	"accel-ppp: Library install path"
+)
+set(ACCELPPP_INSTALL_DATADIR "${CMAKE_INSTALL_DATADIR}/accel-ppp" CACHE PATH
+	"accel-ppp: Architecture-independent data install path"
+)
+set(ACCELPPP_INSTALL_LOGDIR "${CMAKE_INSTALL_LOCALSTATEDIR}/log/accel-ppp" CACHE PATH
+	"accel-ppp: Log install path"
+)
 
 #color console example  message(FATAL_ERROR "${Esc}[31m Red Text ${Esc}[m Restore Normal Text")
 string(ASCII 27 Esc)
@@ -86,7 +85,7 @@ if (NOT BUILD_DRIVER_ONLY)
 	add_subdirectory(crypto)
 	add_subdirectory(accel-cmd)
 
-	install(DIRECTORY DESTINATION /var/log/accel-ppp)
+	install(DIRECTORY DESTINATION ${ACCELPPP_INSTALL_LOGDIR})
 endif (NOT BUILD_DRIVER_ONLY)
 
 if (BUILD_PPTP_DRIVER)
