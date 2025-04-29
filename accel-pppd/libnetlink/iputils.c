@@ -464,7 +464,7 @@ int __export ipaddr_del_peer(int ifindex, in_addr_t addr, in_addr_t peer)
 }
 
 #ifdef HAVE_VRF
-__u32 ipvrf_get_table(const char *vrf_name)
+uint32_t ipvrf_get_table(const char *vrf_name)
 {
 	struct iplink_req {
 		struct nlmsghdr n;
@@ -477,7 +477,7 @@ __u32 ipvrf_get_table(const char *vrf_name)
 	struct rtattr *vrf_attr[IFLA_VRF_MAX + 1];
 	struct ifinfomsg *ifi;
 	int len;
-	__u32 tb_id = RT_TABLE_MAIN;
+	uint32_t tb_id = RT_TABLE_MAIN;
 
 	log_ppp_info2("utils: getting route table for %s\n", vrf_name);
 
@@ -494,7 +494,7 @@ __u32 ipvrf_get_table(const char *vrf_name)
 	addattr_l(&req.n, 4096, IFLA_IFNAME, vrf_name, strlen(vrf_name));
 
 	if (rtnl_talk(rth, &req.n, 0, 0, &req.n, NULL, NULL, 0) < 0) {
-    if (errno == ENODEV && !strcmp(vrf_name, "default"))
+    if (errno == ENODEV && !strncmp(vrf_name, "default", strlen("default")))
 			if (rtnl_rttable_a2n(&tb_id, "main"))
 				log_ppp_error(
 					"BUG: route table \"main\" not found.\n");
@@ -519,7 +519,7 @@ __u32 ipvrf_get_table(const char *vrf_name)
 	if (!li[IFLA_INFO_KIND] || !li[IFLA_INFO_DATA])
 		goto out;
 
-	if (strcmp(RTA_DATA(li[IFLA_INFO_KIND]), "vrf"))
+	if (strncmp(RTA_DATA(li[IFLA_INFO_KIND]), "vrf", strlen("vrf")))
 		goto out;
 
 	parse_rtattr_nested(vrf_attr, IFLA_VRF_MAX, li[IFLA_INFO_DATA]);
@@ -543,6 +543,7 @@ int __export iproute_add(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw
 	} req;
 	struct rtnl_handle *rth = net->rtnl_get();
 	int r = 0;
+	uint32_t rt_table = RT_TABLE_MAIN;
 
 	if (!rth)
 		return -1;
@@ -550,9 +551,7 @@ int __export iproute_add(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw
 	memset(&req, 0, sizeof(req) - 4096);
 
 #ifdef HAVE_VRF
-	__u32 rt_table = ipvrf_get_table(vrf_name);
-#else
-	__u32 rt_table = RT_TABLE_MAIN;
+	rt_table = ipvrf_get_table(vrf_name);
 #endif
 
 	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
@@ -592,6 +591,7 @@ int __export iproute_del(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw
 	} req;
 	struct rtnl_handle *rth = net->rtnl_get();
 	int r = 0;
+	uint32_t rt_table = RT_TABLE_MAIN;
 
 	if (!rth)
 		return -1;
@@ -599,9 +599,7 @@ int __export iproute_del(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw
 	memset(&req, 0, sizeof(req) - 4096);
 
 #ifdef HAVE_VRF
-	__u32 rt_table = ipvrf_get_table(vrf_name);
-#else
-	__u32 rt_table = RT_TABLE_MAIN;
+	rt_table = ipvrf_get_table(vrf_name);
 #endif
 
 	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
@@ -641,6 +639,7 @@ int __export ip6route_add(int ifindex, const struct in6_addr *dst, int pref_len,
 	} req;
 	struct rtnl_handle *rth = net->rtnl_get();
 	int r = 0;
+	uint32_t rt_table = RT_TABLE_MAIN;
 
 	if (!rth)
 		return -1;
@@ -648,9 +647,7 @@ int __export ip6route_add(int ifindex, const struct in6_addr *dst, int pref_len,
 	memset(&req, 0, sizeof(req) - 4096);
 
 #ifdef HAVE_VRF
-	__u32 rt_table = ipvrf_get_table(vrf_name);
-#else
-	__u32 rt_table = RT_TABLE_MAIN;
+	rt_table = ipvrf_get_table(vrf_name);
 #endif
 
 	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
@@ -688,6 +685,7 @@ int __export ip6route_del(int ifindex, const struct in6_addr *dst, int pref_len,
 	} req;
 	struct rtnl_handle *rth = net->rtnl_get();
 	int r = 0;
+	uint32_t rt_table = RT_TABLE_MAIN;
 
 	if (!rth)
 		return -1;
@@ -695,9 +693,7 @@ int __export ip6route_del(int ifindex, const struct in6_addr *dst, int pref_len,
 	memset(&req, 0, sizeof(req) - 4096);
 
 #ifdef HAVE_VRF
-	__u32 rt_table = ipvrf_get_table(vrf_name);
-#else
-	__u32 rt_table = RT_TABLE_MAIN;
+	rt_table = ipvrf_get_table(vrf_name);
 #endif
 
 	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));

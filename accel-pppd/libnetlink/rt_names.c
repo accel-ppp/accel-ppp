@@ -57,7 +57,7 @@ static int fread_id_name(FILE *fp, int *id, char *namebuf)
 	return 0;
 }
 
-static void
+static int
 rtnl_hash_initialize(const char *file, struct rtnl_hash_entry **hash, int size)
 {
 	struct rtnl_hash_entry *entry;
@@ -68,14 +68,14 @@ rtnl_hash_initialize(const char *file, struct rtnl_hash_entry **hash, int size)
 
 	fp = fopen(file, "r");
 	if (!fp)
-		return;
+		return -1;
 
 	while ((ret = fread_id_name(fp, &id, &namebuf[0]))) {
 		if (ret == -1) {
 			fprintf(stderr, "Database %s is corrupted at %s\n",
 					file, namebuf);
 			fclose(fp);
-			return;
+			return -1;
 		}
 
 		if (id < 0)
@@ -106,7 +106,7 @@ static struct rtnl_hash_entry *rtnl_rttable_hash[256] = {
 
 static int rtnl_rttable_init;
 
-static void rtnl_rttable_initialize(void)
+static int rtnl_rttable_initialize(void)
 {
 	struct dirent *de;
 	DIR *d;
@@ -122,7 +122,7 @@ static void rtnl_rttable_initialize(void)
 
 	d = opendir(CONFDIR "/rt_tables.d");
 	if (!d)
-		return;
+		return -1;
 
 	while ((de = readdir(d)) != NULL) {
 		char path[PATH_MAX];
@@ -135,7 +135,7 @@ static void rtnl_rttable_initialize(void)
 		len = strlen(de->d_name);
 		if (len <= 5)
 			continue;
-		if (strcmp(de->d_name + len - 5, ".conf"))
+		if (strncmp(de->d_name + len - 5, ".conf", strlen(".conf")))
 			continue;
 
 		snprintf(path, sizeof(path),
@@ -168,7 +168,7 @@ int rtnl_rttable_a2n(__u32 *id, const char *arg)
 	char *end;
 	unsigned long i;
 
-	if (cache && strcmp(cache, arg) == 0) {
+	if (cache && strncmp(cache, arg, strlen(arg)) == 0) {
 		*id = res;
 		return 0;
 	}
@@ -178,7 +178,7 @@ int rtnl_rttable_a2n(__u32 *id, const char *arg)
 
 	for (i = 0; i < 256; i++) {
 		entry = rtnl_rttable_hash[i];
-		while (entry && strcmp(entry->name, arg))
+		while (entry && strncmp(entry->name, arg, strlen(arg)))
 			entry = entry->next;
 		if (entry) {
 			cache = entry->name;

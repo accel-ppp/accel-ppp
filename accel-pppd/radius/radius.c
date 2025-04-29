@@ -645,8 +645,8 @@ static void ses_started(struct ap_session *ses)
 
 		if (ip6route_add(gw_spec ? 0 : rpd->ses->ifindex, &fr6->prefix, fr6->plen, gw_spec ? &fr6->gw : NULL, 3, fr6->prio, rpd->ses->vrf_name)) {
 			log_ppp_warn("radius: failed to add route %s/%hhu %s %u\n",
-						    u_ip6str(&fr6->prefix, nbuf), fr6->plen,
-						    u_ip6str(&fr6->gw, gwbuf), fr6->prio);
+				     u_ip6str(&fr6->prefix, nbuf), fr6->plen,
+				     u_ip6str(&fr6->gw, gwbuf), fr6->prio);
 		}
 	}
 
