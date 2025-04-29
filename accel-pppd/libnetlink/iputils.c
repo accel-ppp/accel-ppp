@@ -598,11 +598,17 @@ int __export iproute_del(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw
 
 	memset(&req, 0, sizeof(req) - 4096);
 
+#ifdef HAVE_VRF
+	__u32 rt_table = ipvrf_get_table(vrf_name);
+#else
+	__u32 rt_table = RT_TABLE_MAIN;
+#endif
+
 	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
 	req.n.nlmsg_flags = NLM_F_REQUEST;
 	req.n.nlmsg_type = RTM_DELROUTE;
 	req.i.rtm_family = AF_INET;
-	req.i.rtm_table = RT_TABLE_MAIN;
+	req.i.rtm_table = rt_table;
 	req.i.rtm_scope = gw ? RT_SCOPE_UNIVERSE : RT_SCOPE_LINK;
 	req.i.rtm_protocol = proto;
 	req.i.rtm_type = RTN_UNICAST;
@@ -688,11 +694,17 @@ int __export ip6route_del(int ifindex, const struct in6_addr *dst, int pref_len,
 
 	memset(&req, 0, sizeof(req) - 4096);
 
+#ifdef HAVE_VRF
+	__u32 rt_table = ipvrf_get_table(vrf_name);
+#else
+	__u32 rt_table = RT_TABLE_MAIN;
+#endif
+
 	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
 	req.n.nlmsg_flags = NLM_F_REQUEST;
 	req.n.nlmsg_type = RTM_DELROUTE;
 	req.i.rtm_family = AF_INET6;
-	req.i.rtm_table = RT_TABLE_MAIN;
+	req.i.rtm_table = rt_table;
 	req.i.rtm_scope = RT_SCOPE_UNIVERSE;
 	req.i.rtm_protocol = proto;
 	req.i.rtm_type = RTN_UNICAST;
