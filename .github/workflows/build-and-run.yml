@@ -14,9 +14,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - distro: ubuntu-20.04
-            pkg-distro: ubuntu20.04
-            cpack-type: Ubuntu20
           - distro: ubuntu-22.04
             pkg-distro: ubuntu22.04
             cpack-type: Ubuntu22
