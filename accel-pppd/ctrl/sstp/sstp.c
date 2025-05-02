@@ -2488,32 +2488,19 @@ static void ssl_info_cb(const SSL *ssl, int where, int ret)
 #endif
 #endif
 
+static void ssl_set_cert_hashes(const X509 *cert) {
+	if (conf_hash_protocol & CERT_HASH_PROTOCOL_SHA1)
+		X509_digest(cert, EVP_sha1(), conf_hash_sha1.hash, &conf_hash_sha1.len);
+	if (conf_hash_protocol & CERT_HASH_PROTOCOL_SHA256)
+		X509_digest(cert, EVP_sha256(), conf_hash_sha256.hash, &conf_hash_sha256.len);
+}
+
 static void ssl_load_config(struct sstp_serv_t *serv, const char *servername)
 {
 	SSL_CTX *old_ctx, *ssl_ctx = NULL;
 	X509 *cert = NULL;
 	BIO *in = NULL;
 	char *opt;
-
-	opt = conf_get_opt("sstp", "ssl-pemfile");
-	if (opt) {
-		in = BIO_new(BIO_s_file());
-		if (!in) {
-			log_error("sstp: %s error: %s\n", "ssl-pemfile", ERR_error_string(ERR_get_error(), NULL));
-			goto error;
-		}
-
-		if (BIO_read_filename(in, opt) <= 0) {
-			log_error("sstp: %s error: %s\n", "ssl-pemfile", ERR_error_string(ERR_get_error(), NULL));
-			goto error;
-		}
-
-		cert = PEM_read_bio_X509(in, NULL, NULL, NULL);
-		if (!cert) {
-			log_error("sstp: %s error: %s\n", "ssl-pemfile", ERR_error_string(ERR_get_error(), NULL));
-			goto error;
-		}
-	}
 
 	opt = conf_get_opt("sstp", "accept");
 	if (opt && strhas(opt, "ssl", ',')) {
@@ -2607,6 +2594,8 @@ static void ssl_load_config(struct sstp_serv_t *serv, const char *servername)
 #else
 			DH *dh;
 
+			in = BIO_new(BIO_s_file());
+
 			if (BIO_read_filename(in, opt) <= 0) {
 				log_error("sstp: %s error: %s\n", "ssl-dhparam", ERR_error_string(ERR_get_error(), NULL));
 				goto error;
@@ -2617,6 +2606,10 @@ static void ssl_load_config(struct sstp_serv_t *serv, const char *servername)
 				log_error("sstp: %s error: %s\n", "ssl-dhparam", ERR_error_string(ERR_get_error(), NULL));
 				goto error;
 			}
+
+			if (!BIO_free(in))
+				abort();
+			in = NULL;
 
 			SSL_CTX_set_tmp_dh(ssl_ctx, dh);
 			DH_free(dh);
@@ -2670,12 +2663,21 @@ static void ssl_load_config(struct sstp_serv_t *serv, const char *servername)
 		if (opt && atoi(opt))
 			SSL_CTX_set_options(ssl_ctx, SSL_OP_CIPHER_SERVER_PREFERENCE);
 
-		if (cert && SSL_CTX_use_certificate(ssl_ctx, cert) != 1) {
-			log_error("sstp: %s error: %s\n", "ssl-pemfile", ERR_error_string(ERR_get_error(), NULL));
-			goto error;
+		opt = conf_get_opt("sstp", "ssl-pemfile");
+		if (opt) {
+			if (SSL_CTX_use_certificate_chain_file(ssl_ctx, opt) != 1) {
+				log_error("sstp: %s error: %s\n", "ssl-pemfile", ERR_error_string(ERR_get_error(), NULL));
+				goto error;
+			}
+			// cert is a reference. Do not free it.
+			X509 *cert_ref = SSL_CTX_get0_certificate(ssl_ctx);
+			if (!cert_ref) {
+				log_error("sstp: %s error: %s\n", "ssl-pemfile", ERR_error_string(ERR_get_error(), NULL));
+				goto error;
+			}
+			ssl_set_cert_hashes(cert_ref);
 		}
-
-		opt = conf_get_opt("sstp", "ssl-keyfile") ? : conf_get_opt("sstp", "ssl-pemfile");
+		opt = conf_get_opt("sstp", "ssl-keyfile") ? : opt;
 		if ((opt && SSL_CTX_use_PrivateKey_file(ssl_ctx, opt, SSL_FILETYPE_PEM) != 1) ||
 		    SSL_CTX_check_private_key(ssl_ctx) != 1) {
 			log_error("sstp: %s error: %s\n", "ssl-keyfile", ERR_error_string(ERR_get_error(), NULL));
@@ -2703,13 +2705,30 @@ static void ssl_load_config(struct sstp_serv_t *serv, const char *servername)
 		opt = conf_get_opt("sstp", "ssl");
 		if (opt && atoi(opt) > 0)
 			goto legacy_ssl;
-	}
 
-	if (cert) {
-		if (conf_hash_protocol & CERT_HASH_PROTOCOL_SHA1)
-			X509_digest(cert, EVP_sha1(), conf_hash_sha1.hash, &conf_hash_sha1.len);
-		if (conf_hash_protocol & CERT_HASH_PROTOCOL_SHA256)
-			X509_digest(cert, EVP_sha256(), conf_hash_sha256.hash, &conf_hash_sha256.len);
+		opt = conf_get_opt("sstp", "ssl-pemfile");
+		if (opt) {
+			in = BIO_new(BIO_s_file());
+			if (!in) {
+				log_error("sstp: %s error: %s\n", "ssl-pemfile", ERR_error_string(ERR_get_error(), NULL));
+				goto error;
+			}
+
+			if (BIO_read_filename(in, opt) <= 0) {
+				log_error("sstp: %s error: %s\n", "ssl-pemfile", ERR_error_string(ERR_get_error(), NULL));
+				goto error;
+			}
+
+			cert = PEM_read_bio_X509(in, NULL, NULL, NULL);
+			if (!cert) {
+				log_error("sstp: %s error: %s\n", "ssl-pemfile", ERR_error_string(ERR_get_error(), NULL));
+				goto error;
+			}
+			if (!BIO_free(in))
+				abort();
+			in = NULL;
+			ssl_set_cert_hashes(cert);
+		}
 	}
 
 	old_ctx = serv->ssl_ctx;
@@ -2721,8 +2740,8 @@ error:
 		SSL_CTX_free(ssl_ctx);
 	if (cert)
 		X509_free(cert);
-	if (in)
-		BIO_free(in);
+	if (in && !BIO_free(in))
+		abort();
 }
 #endif
 
