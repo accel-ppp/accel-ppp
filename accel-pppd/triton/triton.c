@@ -163,6 +163,7 @@ static void* triton_thread(struct _triton_thread_t *thread)
 			if (terminate) {
 				spin_lock(&threads_lock);
 				list_del(&thread->entry);
+				_free(thread);
 				spin_unlock(&threads_lock);
 				return NULL;
 			}
