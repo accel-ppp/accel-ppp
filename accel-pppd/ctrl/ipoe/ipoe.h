@@ -52,6 +52,7 @@ struct ipoe_serv {
 	int parent_vid;
 	int opt_mode;
 	uint32_t opt_src;
+	uint32_t opt_router;
 	int opt_arp;
 	int opt_username;
 	int opt_mtu;
@@ -67,6 +68,7 @@ struct ipoe_serv {
 	unsigned int opt_ifcfg:1;
 	unsigned int opt_nat:1;
 	unsigned int opt_ipv6:1;
+	unsigned int opt_router_force:1;
 	unsigned int opt_ip_unnumbered:1;
 	unsigned int need_close:1;
 	unsigned int active:1;
