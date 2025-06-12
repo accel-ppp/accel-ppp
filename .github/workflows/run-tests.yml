@@ -26,11 +26,6 @@ jobs:
             untar: false
             format: qcow2
 
-          - distro: Ubuntu-20.04
-            image: https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img
-            untar: false
-            format: qcow2
-
           - distro: Debian13
             image: https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-generic-amd64-daily.tar.xz
             untar: true
