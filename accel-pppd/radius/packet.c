@@ -8,13 +8,19 @@
 #include <sys/mman.h>
 #include <linux/mman.h>
 #include <arpa/inet.h>
+#include <openssl/hmac.h>
+#include <openssl/evp.h>
 
 #include "log.h"
 #include "mempool.h"
-
 #include "radius_p.h"
+#include "attr_defs.h"
 
 #include "memdebug.h"
+
+#define HMAC_MD5_LEN 16
+/* Radius header + attribute: type + length */
+#define PACKET_SIGNED_OFFSET (20 + 2)
 
 static mempool_t packet_pool;
 static mempool_t attr_pool;
@@ -46,6 +52,34 @@ void print_buf(uint8_t *buf,int size)
 		printf("%x ",buf[i]);
 	printf("\n");
 }
+
+
+int hmac_md5(const uint8_t *key,  size_t key_len,
+             const uint8_t *data, size_t data_len,
+             uint8_t out[HMAC_MD5_LEN])
+{
+    unsigned int len = 0;
+    HMAC_CTX *ctx = HMAC_CTX_new();
+    if (!ctx)
+        return -1;
+
+    if (HMAC_Init_ex(ctx, key, (int)key_len, EVP_md5(), NULL) != 1)
+        goto err;
+
+    if (HMAC_Update(ctx, data, data_len) != 1)
+        goto err;
+
+    if (HMAC_Final(ctx, out, &len) != 1 || len != HMAC_MD5_LEN)
+        goto err;
+
+    HMAC_CTX_free(ctx);
+    return 0;
+
+err:
+    HMAC_CTX_free(ctx);
+    return -1;
+}
+
 
 int rad_packet_build(struct rad_packet_t *pack, uint8_t *RA)
 {
@@ -301,6 +335,9 @@ void rad_packet_free(struct rad_packet_t *pack)
 	if (pack->buf)
 		mempool_free(pack->buf);
 		//munmap(pack->buf, REQ_LENGTH_MAX);
+
+	if (pack->secret)
+	  _free(pack->secret);
 
 	while(!list_empty(&pack->attrs)) {
 		attr = list_entry(pack->attrs.next, typeof(*attr), entry);
@@ -810,6 +847,18 @@ int rad_packet_send(struct rad_packet_t *pack, int fd, struct sockaddr_in *addr)
 	int n;
 
 	clock_gettime(CLOCK_MONOTONIC, &pack->tv);
+
+	if (pack->secret && pack->message_authenticator) {
+		uint8_t hmac[HMAC_MD5_LEN];
+		uint8_t *ptr = pack->buf;
+		uint8_t *hmac_ptr = ptr + PACKET_SIGNED_OFFSET;
+		if (hmac_md5((const uint8_t *)pack->secret, strlen(pack->secret), pack->buf, pack->len, hmac) < 0) {
+			log_emerg("radius:packet: failed to calculate HMAC\n");
+			return -1;
+		}
+		memcpy(hmac_ptr, hmac, HMAC_MD5_LEN);
+	}
+
 
 	while (1) {
 		if (addr)
