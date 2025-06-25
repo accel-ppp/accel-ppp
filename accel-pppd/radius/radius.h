@@ -103,6 +103,8 @@ struct rad_attr_t
 
 struct rad_packet_t
 {
+	int message_authenticator; // 1 if message authenticator is required
+	uint8_t *secret; // shared secret for this packet for Message-Authenticator signature
 	int code;
 	uint8_t id;
 	int len;
