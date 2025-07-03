@@ -283,3 +283,38 @@ jobs:
         run: sleep 1
       - name: Check accel-ppp stat
         run: accel-cmd show stat
+
+  Build-in-Container-Fedora:
+    runs-on: ubuntu-24.04
+    container:
+      image: fedora:rawhide
+    steps:
+      - name: Install build tools
+        run: |
+          dnf -y install git make cmake gcc pcre2-devel openssl-devel lua-devel kernel-devel
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: mkdir build
+        run: mkdir build
+      - name: Disable git security warnings
+        run: git config --global --add safe.directory '*'
+      - name: cmake
+        working-directory: ./build
+        run: >
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr
+          -DCMAKE_INSTALL_SYSCONFDIR=/etc
+          -DKDIR=/usr/src/kernels/`ls -1 -t /usr/src/kernels | head -n 1`
+          -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE ..
+      - name: make and install
+        working-directory: ./build
+        run: make && make install
+      - name: Copy default config
+        run: cp accel-pppd/accel-ppp.conf /etc/accel-ppp.conf
+      - name: Start accel-ppp with default config
+        run: accel-pppd -d -c /etc/accel-ppp.conf
+      - name: Sleep for 1 sec
+        run: sleep 1
+      - name: Check accel-ppp stat
+        run: accel-cmd show stat
