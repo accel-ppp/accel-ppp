@@ -15,6 +15,8 @@
 
 #include "memdebug.h"
 
+#define HMAC_MD5_LEN 16
+
 static int make_socket(struct rad_req_t *req);
 static mempool_t req_pool;
 
@@ -72,6 +74,17 @@ static struct rad_req_t *__rad_req_alloc(struct radius_pd_t *rpd, int code, cons
 	req->pack = rad_packet_alloc(code);
 	if (!req->pack)
 		goto out_err;
+
+	if (code == CODE_ACCESS_REQUEST && conf_blast_protection) {
+		uint8_t buf[HMAC_MD5_LEN] = {0};
+		req->pack->message_authenticator = 1;
+		req->pack->secret = strdup(req->serv->secret);
+		if (rad_packet_add_octets(req->pack, NULL, "Message-Authenticator", buf, HMAC_MD5_LEN)) {
+                        free(req->pack->secret);
+                        req->pack->secret == NULL;
+			goto out_err;
+                }
+	}
 
 	if (code == CODE_ACCOUNTING_REQUEST && rpd->acct_username)
 		username = rpd->acct_username;

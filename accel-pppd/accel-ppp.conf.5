@@ -1008,6 +1008,11 @@ Specifies should accel-ppp send NAS-Port-Id on Access-Request and Accounting-Req
 .br
 Configuration of log and log_file modules.
 .TP
+.BI "blast-protection=" 0|1
+If this option is given and
+.B 1
+is specified then radius module will include Message-Authenticator attribute in Access-Request packets.
+.TP
 .BI "log-file=" file
 Path to file to write general log.
 .TP
