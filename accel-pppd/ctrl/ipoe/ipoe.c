@@ -1122,9 +1122,6 @@ static void ipoe_session_keepalive(struct dhcpv4_packet *pack)
 
 	ses->dhcpv4_request = pack;
 
-	if (ses->timer.tpd)
-		triton_timer_mod(&ses->timer, 0);
-
 	ses->xid = ses->dhcpv4_request->hdr->xid;
 
 	if (/*ses->ses.state == AP_STATE_ACTIVE &&*/ ses->serv->dhcpv4_relay) {
@@ -1135,6 +1132,8 @@ static void ipoe_session_keepalive(struct dhcpv4_packet *pack)
 	if (ses->ses.state == AP_STATE_ACTIVE) {
 		dhcpv4_send_reply(DHCPACK, ses->dhcpv4 ?: ses->serv->dhcpv4, ses->dhcpv4_request, ses->yiaddr, ses->siaddr, ses->router, ses->mask,
 				  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply);
+		if (ses->timer.tpd)
+			triton_timer_mod(&ses->timer, 0);
 	} else
 		dhcpv4_send_nak(ses->dhcpv4 ?: ses->serv->dhcpv4, ses->dhcpv4_request, SESSION_TERMINATED);
 
@@ -2049,9 +2048,12 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 	} else if (pack->msg_type == DHCPACK) {
 		if (ses->ses.state == AP_STATE_STARTING)
 			__ipoe_session_activate(ses);
-		else
+		else {
 			dhcpv4_send_reply(DHCPACK, ses->dhcpv4 ?: ses->serv->dhcpv4, ses->dhcpv4_request, ses->yiaddr, ses->siaddr, ses->router, ses->mask,
 					  ses->lease_time, ses->renew_time, ses->rebind_time, ses->dhcpv4_relay_reply);
+			if (ses->timer.tpd)
+				triton_timer_mod(&ses->timer, 0);
+		}
 
 	} else if (pack->msg_type == DHCPNAK) {
 		dhcpv4_send_nak(ses->dhcpv4 ?: ses->serv->dhcpv4, ses->dhcpv4_request, "Session is terminated");
