@@ -106,6 +106,7 @@ static int dm_coa_send_nak(int fd, struct rad_packet_t *req, struct sockaddr_in 
 	if (err_code)
 		rad_packet_add_int(reply, NULL, "Error-Cause", err_code);
 
+	// TODO: We need to add Message-Authenticator attribute here
 	if (rad_packet_build(reply, RA)) {
 		rad_packet_free(reply);
 		return -1;

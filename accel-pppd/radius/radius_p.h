@@ -198,6 +198,7 @@ extern int conf_acct_interim_jitter;
 extern int conf_accounting;
 extern const char *conf_attr_tunnel_type;
 extern int conf_acct_delay_start;
+extern int conf_blast_protection;
 
 int rad_check_nas_pack(struct rad_packet_t *pack);
 struct radius_pd_t *rad_find_session(const char *sessionid, const char *username, const char *port_id, int port, in_addr_t ipaddr, const char *csid);
