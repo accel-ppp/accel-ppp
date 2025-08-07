@@ -764,9 +764,10 @@ static void ipoe_session_start(struct ipoe_session *ses)
 	if (ses->serv->opt_shared && ipoe_create_interface(ses))
 		return;
 
-	if (conf_noauth)
+	if (conf_noauth) {
+		ses->username = username;
 		r = PWDB_SUCCESS;
-	else {
+	} else {
 #ifdef RADIUS
 		if (radius_loaded) {
 			ses->radius.send_access_request = ipoe_rad_send_auth_request;
