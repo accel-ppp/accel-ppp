@@ -20,6 +20,21 @@ IF (NOT DEFINED LIB_SUFFIX)
 	ENDIF (ARCH STREQUAL x86_64)
 ENDIF (NOT DEFINED LIB_SUFFIX)
 
+# Set flag if we are building with MUSL
+IF (CMAKE_SYSTEM_NAME STREQUAL Linux AND CMAKE_C_COMPILER_ID STREQUAL GNU)
+    execute_process(
+        COMMAND sh -c "ldd --version 2>&1 || true"
+        OUTPUT_VARIABLE LDD_VERSION
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+	if (LDD_VERSION MATCHES "[Mm]usl")
+		set(MUSL ON)
+	else ()
+		set(MUSL OFF)
+	endif ()
+	message(STATUS "Building with MUSL: ${MUSL}")
+ENDIF (CMAKE_SYSTEM_NAME STREQUAL Linux AND CMAKE_C_COMPILER_ID STREQUAL GNU)
+
 #color console example  message(FATAL_ERROR "${Esc}[31m Red Text ${Esc}[m Restore Normal Text")
 string(ASCII 27 Esc)
 

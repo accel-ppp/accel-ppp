@@ -13,7 +13,12 @@ SET(sources ${sources} tr101.c)
 ENDIF(RADIUS)
 
 ADD_LIBRARY(pppoe SHARED ${sources})
-TARGET_LINK_LIBRARIES(pppoe vlan-mon connlimit)
+# if MUSL is set then we need to link with the connlimit library
+IF (MUSL)
+	TARGET_LINK_LIBRARIES(pppoe vlan-mon connlimit)
+ELSE (MUSL)
+	TARGET_LINK_LIBRARIES(pppoe vlan-mon)
+ENDIF (MUSL)
 set_property(TARGET pppoe PROPERTY CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 set_property(TARGET pppoe PROPERTY INSTALL_RPATH ${CMAKE_INSTALL_PREFIX}/lib${LIB_SUFFIX}/accel-ppp)
 
