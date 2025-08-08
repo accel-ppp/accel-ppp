@@ -13,6 +13,7 @@
 #include "ap_session_backup.h"
 
 #include "ipdb.h"
+#include "cli.h"
 
 #ifdef RADIUS
 #include "radius.h"
@@ -612,6 +613,81 @@ static void ippool_init1(void)
 	ipdb_register(&ipdb);
 }
 
+static int show_ippool_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
+{
+	struct ippool_t *pool;
+	uint32_t total, available, used;
+	struct ippool_item_t *it;
+
+	cli_send(client, "IP Pool Usage Report\r\n");
+	cli_send(client, "====================\r\n");
+
+	// Show default pool first
+	if (def_pool) {
+		spin_lock(&def_pool->lock);
+
+		total = 0;
+		available = 0;
+
+		if (def_pool->startip && def_pool->endip) {
+			total = def_pool->endip - def_pool->startip + 1;
+		}
+
+		list_for_each_entry(it, &def_pool->items, entry) {
+			available++;
+		}
+
+		used = total - available;
+		spin_unlock(&def_pool->lock);
+
+		if (total > 0) {
+			cli_sendv(client, "<default>\r\n    total: %u\r\n    used: %u\r\n    available: %u\r\n    usage: %u%%\r\n",
+				total, used, available,
+				total ? (used * 100 / total) : 0);
+		}
+	}
+
+	// Show named pools
+	list_for_each_entry(pool, &pool_list, entry) {
+		if (!pool->name) continue;
+
+		spin_lock(&pool->lock);
+
+		total = 0;
+		available = 0;
+
+		if (pool->startip && pool->endip) {
+			total = pool->endip - pool->startip + 1;
+		}
+
+		list_for_each_entry(it, &pool->items, entry) {
+			available++;
+		}
+
+		used = total - available;
+		spin_unlock(&pool->lock);
+
+		if (total > 0) {
+			if (used * 1000 / total % 10 > 5)
+				cli_sendv(client, "%s\r\n    total: %u\r\n    used: %u\r\n    available: %u\r\n    usage: %u.%u%%\r\n",
+					pool->name, total, used, available,
+					total ? (used * 100 / total) : 0,
+					total ? (used * 1000 / total % 10) : 0);
+			else
+				cli_sendv(client, "%s\r\n    total: %u\r\n    used: %u\r\n    available: %u\r\n    usage: %u%%\r\n",
+					pool->name, total, used, available,
+					total ? (used * 100 / total) : 0);
+		}
+	}
+
+	return CLI_CMD_OK;
+}
+
+static void show_ippool_help(char * const *fields, int fields_cnt, void *client)
+{
+	cli_send(client, "show ippool - shows IP pool statistics\r\n");
+}
+
 static void ippool_init2(void)
 {
 	struct conf_sect_t *s = conf_get_section("ip-pool");
@@ -676,6 +752,8 @@ static void ippool_init2(void)
 	if (triton_module_loaded("radius"))
 		triton_event_register_handler(EV_RADIUS_ACCESS_ACCEPT, (triton_event_func)ev_radius_access_accept);
 #endif
+
+	cli_register_simple_cmd2(show_ippool_exec, show_ippool_help, 2, "show", "ippool");
 }
 
 DEFINE_INIT(51, ippool_init1);
