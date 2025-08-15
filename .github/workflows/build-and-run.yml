@@ -84,7 +84,8 @@ jobs:
           [
             "debian:11",
             "debian:12",
-            "debian:trixie",
+            "debian:13",
+            "debian:forky",
             "ubuntu:22.04",
             "ubuntu:24.04",
             "ubuntu:devel"
@@ -98,7 +99,8 @@ jobs:
           HEADERS_SUFFIX=`uname -m | sed s/aarch64/arm64/ | sed s/x86_64/amd64/`;
           DISTRO=`echo ${{ matrix.distro }} |  sed 's/://'`;
           case "${{ matrix.distro }}" in
-          debian:trixie) DISTRO=debian13; CPACK_TYPE=Debian13 ;;
+          debian:forky) DISTRO=debian13; CPACK_TYPE=Debian13 ;;
+          debian:13) DISTRO=debian13; CPACK_TYPE=Debian13 ;;
           debian:12) DISTRO=debian12; CPACK_TYPE=Debian12 ;;
           debian:11) CPACK_TYPE=Debian11 ;;
           ubuntu:devel) CPACK_TYPE=Ubuntu24 ; HEADERS_SUFFIX=generic ;;
