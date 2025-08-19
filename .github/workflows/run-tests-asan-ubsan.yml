@@ -1,0 +1,75 @@
+name: Run tests with ASAN and UBSAN
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  Test-in-GH-ASAN-UBSAN:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: "ubuntu-latest"
+            sanitizer: "address"
+            env_name: "ASAN_OPTIONS"
+            env_value: "abort_on_error=1:detect_leaks=1:print_stacktrace=1"
+          - distro: "ubuntu-latest"
+            sanitizer: "undefined"
+            env_name: "UBSAN_OPTIONS"
+            env_value: "print_stacktrace=1"
+
+    runs-on: ${{ matrix.distro }}
+    steps:
+      - name: Install build tools (using apt)
+        run: >
+          sudo apt update && 
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
+          git build-essential cmake gcc linux-headers-`uname -r`
+          libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
+          iproute2 ppp pppoe isc-dhcp-client
+
+      - name: Install testing tools (using pip)
+        run: >
+          sudo apt -y install python3-pytest python3-pytest-dependency python3-pytest-order || 
+          sudo pip3 install pytest pytest-dependency pytest-order || 
+          sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order
+
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: mkdir build
+        run: mkdir build
+
+      - name: cmake (with ${{ matrix.sanitizer }})
+        working-directory: ./build
+        run: >
+          CFLAGS="-fsanitize=${{ matrix.sanitizer }} -fno-sanitize-recover=all -fno-omit-frame-pointer -O2 -g"
+          LDFLAGS="-fsanitize=${{ matrix.sanitizer }}"
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          -DKDIR=/usr/src/linux-headers-`uname -r` 
+          -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE ..
+
+      - name: make && make install
+        working-directory: ./build
+        run: make && sudo make install
+
+      - name: Insert and check kernel modules (ipoe and vlan-mon)
+        # if: ${{ false }}
+        run: |
+          sudo insmod build/drivers/vlan_mon/driver/vlan_mon.ko
+          sudo insmod build/drivers/ipoe/driver/ipoe.ko
+          lsmod | grep ipoe
+          lsmod | grep vlan_mon
+
+      - name: Run tests
+        timeout-minutes: 5
+        working-directory: ./tests
+        env:
+          ${{ matrix.env_name }}: ${{ matrix.env_value }}
+        run: sudo -E python3 -m pytest -Wall --order-dependencies -v 

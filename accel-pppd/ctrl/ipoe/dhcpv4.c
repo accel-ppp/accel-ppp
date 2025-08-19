@@ -356,9 +356,9 @@ static int dhcpv4_parse_packet(struct dhcpv4_packet *pack, int len)
 		else if (opt->type == 62)
 			pack->client_id = opt;
 		else if (opt->type == 50)
-			pack->request_ip = *(uint32_t *)opt->data;
+			memcpy(&pack->request_ip, opt->data, 4);
 		else if (opt->type == 54)
-			pack->server_id = *(uint32_t *)opt->data;
+			memcpy(&pack->server_id, opt->data, 4);
 	}
 
 	if (pack->msg_type == 0 || pack->msg_type > 8)
