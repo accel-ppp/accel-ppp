@@ -38,6 +38,8 @@ static struct {
 int conf_verbose;
 static int conf_pref_lifetime = 604800;
 static int conf_valid_lifetime = 2592000;
+static int conf_AdvManagedFlag;
+static int conf_AdvOtherConfigFlag;
 static struct dhcpv6_opt_serverid *conf_serverid = &serverid.hdr;
 static int conf_route_via_gw = 1;
 
@@ -223,7 +225,7 @@ static void insert_oro(struct dhcpv6_packet *reply, struct dhcpv6_option *opt)
 
 	for (i = ntohs(opt->hdr->len) / 2, ptr = (uint16_t *)opt->hdr->data; i; i--, ptr++) {
 		if (ntohs(*ptr) == D6_OPTION_DNS_SERVERS) {
-			if (conf_dns_count) {
+			if (conf_AdvOtherConfigFlag && conf_dns_count) {
 				opt1 = dhcpv6_option_alloc(reply, D6_OPTION_DNS_SERVERS, conf_dns_count * sizeof(addr));
 				for (j = 0, addr_ptr = (struct in6_addr *)opt1->hdr->data; j < conf_dns_count; j++, addr_ptr++)
 					memcpy(addr_ptr, conf_dns + j, sizeof(addr));
@@ -269,7 +271,7 @@ static void dhcpv6_send_reply(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, i
 
 			if (req->hdr->type == D6_RENEW && pd->addr_iaid != ia_na->iaid) {
 				insert_status(reply, opt1, D6_STATUS_NoBinding);
-			} else if (list_empty(&ses->ipv6->addr_list) || f) {
+			} else if ( !conf_AdvManagedFlag || list_empty(&ses->ipv6->addr_list) || f) {
 				insert_status(reply, opt1, D6_STATUS_NoAddrsAvail);
 			} else {
 
@@ -357,10 +359,12 @@ static void dhcpv6_send_reply(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, i
 				ses->ipv6_dp = ipdb_get_ipv6_prefix(ses);
 				if (ses->ipv6_dp)
 					triton_event_fire(EV_FORCE_INTERIM_UPDATE, ses);
+/**
 				else {
 					dhcpv6_packet_free(reply);
 					return;
 				}
+**/
 			}
 
 			if ((req->hdr->type == D6_RENEW) && pd->dp_iaid != ia_na->iaid) {
@@ -964,6 +968,14 @@ static void load_config(void)
 		id = parse_serverid(opt);
 	else
 		id = htobe64(1);
+
+	opt = conf_get_opt("ipv6-nd", "AdvManagedFlag");
+	if (opt)
+		conf_AdvManagedFlag = atoi(opt);
+
+	opt = conf_get_opt("ipv6-nd", "AdvOtherConfigFlag");
+	if (opt)
+		conf_AdvOtherConfigFlag = atoi(opt);
 
 	conf_serverid->hdr.code = htons(D6_OPTION_SERVERID);
 	conf_serverid->hdr.len = htons(12);
