@@ -3483,7 +3483,7 @@ static void load_gw_addr(struct conf_sect_t *sect)
 			continue;
 		}
 
-		a->mask1 = ((1 << a->mask) - 1) << (32 - a->mask);
+		a->mask1 = (int)(((1u << a->mask) - 1u) << (32 - a->mask));
 		list_add_tail(&a->entry, &conf_gw_addr);
 	}
 }

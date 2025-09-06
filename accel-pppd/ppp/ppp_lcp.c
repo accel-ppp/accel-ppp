@@ -614,7 +614,8 @@ static void send_echo_reply(struct ppp_lcp_t *lcp)
 	lcp->last_echo_ts = _time();
 
 	hdr->code = ECHOREP;
-	*(uint32_t *)(hdr + 1) = htonl(lcp->magic);
+	uint32_t magic = htonl(lcp->magic);
+	memcpy((char *)hdr + sizeof(struct lcp_hdr_t), &magic, sizeof(magic));
 
 	if (conf_ppp_verbose)
 		log_ppp_debug("send [LCP EchoRep id=%x <magic %08x>]\n", hdr->id, lcp->magic);

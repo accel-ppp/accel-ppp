@@ -113,18 +113,28 @@ void dhcpv4_print_options(struct dhcpv4_packet *pack, void (*print)(const char *
 
 static void print_int(const struct dhcpv4_option *opt, int elem_size, void (*print)(const char *fmt, ...))
 {
-	if (opt->len == 2)
-		print("%i", ntohs(*(int16_t *)(opt->data)));
-	else
-		print("%i", ntohl(*(int32_t *)(opt->data)));
+	if (opt->len == 2) {
+		int16_t val;
+		memcpy(&val, opt->data, sizeof(val));
+		print("%i", ntohs(val));
+	} else {
+		int32_t val;
+		memcpy(&val, opt->data, sizeof(val));
+		print("%i", ntohl(val));
+	}
 }
 
 static void print_uint(const struct dhcpv4_option *opt, int elem_size, void (*print)(const char *fmt, ...))
 {
-	if (opt->len == 2)
-		print("%u", ntohs(*(uint16_t *)(opt->data)));
-	else
-		print("%u", ntohl(*(uint32_t *)(opt->data)));
+	if (opt->len == 2) {
+		uint16_t val;
+		memcpy(&val, opt->data, sizeof(val));
+		print("%u", ntohs(val));
+	} else {
+		uint32_t val;
+		memcpy(&val, opt->data, sizeof(val));
+		print("%u", ntohl(val));
+	}
 }
 
 static void print_ip(const struct dhcpv4_option *opt, int elem_size, void (*print)(const char *fmt, ...))
@@ -133,7 +143,8 @@ static void print_ip(const struct dhcpv4_option *opt, int elem_size, void (*prin
 	uint32_t ip;
 
 	for (i = 0; i < n; i++) {
-		ip = ntohl(*(uint32_t *)(opt->data + i*elem_size));
+		memcpy(&ip, opt->data + i*elem_size, sizeof(ip));
+		ip = ntohl(ip);
 
 		if (i)
 			print(",");
@@ -170,8 +181,10 @@ static void print_route(const struct dhcpv4_option *opt, int elem_size, void (*p
 	uint32_t ip, gw;
 
 	for (i = 0; i < n; i++) {
-		ip = ntohl(*(uint32_t *)(opt->data + i*8));
-		gw = ntohl(*(uint32_t *)(opt->data + i*8 + 4));
+		memcpy(&ip, opt->data + i*8, sizeof(ip));
+		memcpy(&gw, opt->data + i*8 + 4, sizeof(gw));
+		ip = ntohl(ip);
+		gw = ntohl(gw);
 
 		if (i)
 			print(",");
