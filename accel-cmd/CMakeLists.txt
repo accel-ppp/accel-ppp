@@ -6,9 +6,7 @@ ADD_EXECUTABLE(accel-cmd
 	accel_cmd.c
 )
 
-INSTALL(TARGETS accel-cmd
-	RUNTIME DESTINATION bin
-)
+INSTALL(TARGETS accel-cmd)
 INSTALL(FILES accel-cmd.1
-	DESTINATION share/man/man1
+	DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
 )

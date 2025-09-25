@@ -1,24 +1,23 @@
-cmake_minimum_required(VERSION 2.6)
+cmake_minimum_required(VERSION 2.6...4.0)
 
-if (CMAKE_BINARY_DIR STREQUAL CMAKE_HOME_DIRECTORY)
+if (CMAKE_CURRENT_BINARY_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     message(FATAL_ERROR "Building in source directory is forbidden. Please make separated build directory.")
 endif ()
 
 project(accel-ppp C)
 
-SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fno-strict-aliasing -D_GNU_SOURCE -fPIC -rdynamic -Wno-unused-result")
+include(GNUInstallDirs)
 
-IF (NOT DEFINED LIB_SUFFIX)
-	EXECUTE_PROCESS(
-		COMMAND uname -m
-		COMMAND tr -d '\n'
-		OUTPUT_VARIABLE ARCH
-	)
-	message(STATUS "'"  ${ARCH}  "'")
-	IF (ARCH STREQUAL x86_64)
-		SET(LIB_SUFFIX 64)
-	ENDIF (ARCH STREQUAL x86_64)
-ENDIF (NOT DEFINED LIB_SUFFIX)
+SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fno-strict-aliasing -D_GNU_SOURCE -fPIC -rdynamic -Wno-unused-result")
+set(ACCELPPP_INSTALL_LIBDIR "${CMAKE_INSTALL_LIBDIR}/accel-ppp" CACHE PATH
+	"accel-ppp: Library install path"
+)
+set(ACCELPPP_INSTALL_DATADIR "${CMAKE_INSTALL_DATADIR}/accel-ppp" CACHE PATH
+	"accel-ppp: Architecture-independent data install path"
+)
+set(ACCELPPP_INSTALL_LOGDIR "${CMAKE_INSTALL_LOCALSTATEDIR}/log/accel-ppp" CACHE PATH
+	"accel-ppp: Log install path"
+)
 
 # Set flag if we are building with MUSL
 IF (CMAKE_SYSTEM_NAME STREQUAL Linux AND CMAKE_C_COMPILER_ID STREQUAL GNU)
@@ -49,16 +48,16 @@ IF(NOT PCRE2_LIBRARY)
 ENDIF(NOT PCRE2_LIBRARY)
 
 
-IF (EXISTS ${CMAKE_HOME_DIRECTORY}/.git AND NOT IGNORE_GIT)
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/.git AND NOT IGNORE_GIT)
 	EXECUTE_PROCESS(
 		COMMAND git describe --tags --always
-		WORKING_DIRECTORY ${CMAKE_HOME_DIRECTORY}
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 		OUTPUT_VARIABLE ACCEL_PPP_VERSION
 	)
 	STRING(STRIP ${ACCEL_PPP_VERSION} ACCEL_PPP_VERSION)
-ELSE (EXISTS ${CMAKE_HOME_DIRECTORY}/.git AND NOT IGNORE_GIT)
+else()
 	SET (ACCEL_PPP_VERSION 1.13.0)
-ENDIF (EXISTS ${CMAKE_HOME_DIRECTORY}/.git AND NOT IGNORE_GIT)
+endif()
 
 # we must include cpack.cmake after generating the ACCEL_PPP_VERSION variable
 include(cmake/cpack.cmake)
@@ -101,7 +100,7 @@ if (NOT BUILD_DRIVER_ONLY)
 	add_subdirectory(crypto)
 	add_subdirectory(accel-cmd)
 
-	install(DIRECTORY DESTINATION /var/log/accel-ppp)
+	install(DIRECTORY DESTINATION ${ACCELPPP_INSTALL_LOGDIR})
 endif (NOT BUILD_DRIVER_ONLY)
 
 if (BUILD_PPTP_DRIVER)
