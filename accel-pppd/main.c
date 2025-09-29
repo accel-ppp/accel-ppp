@@ -16,9 +16,7 @@
 #include <sys/wait.h>
 #include <sys/resource.h>
 
-#ifdef CRYPTO_OPENSSL
 #include <openssl/ssl.h>
-#endif
 
 #include "triton/triton.h"
 
@@ -43,7 +41,6 @@ static int term;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 
-#ifdef CRYPTO_OPENSSL
 #if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
 static pthread_mutex_t *ssl_lock_cs;
 
@@ -85,7 +82,6 @@ static void openssl_init(void)
 	ssl_lock_init();
 #endif
 }
-#endif
 
 static void change_limits(void)
 {
@@ -393,9 +389,7 @@ int main(int _argc, char **_argv)
 
 	change_limits();
 
-#ifdef CRYPTO_OPENSSL
 	openssl_init();
-#endif
 
 	triton_register_init(0, log_version);
 

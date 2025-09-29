@@ -107,9 +107,7 @@ struct buffer_t {
 struct sstp_stream_t {
 	union {
 		int fd;
-#ifdef CRYPTO_OPENSSL
 		SSL *ssl;
-#endif
 	};
 	ssize_t (*read)(struct sstp_stream_t *stream, void *buf, size_t count);
 	ssize_t (*recv)(struct sstp_stream_t *stream, void *buf, size_t count, int flags);
@@ -158,9 +156,7 @@ static struct sstp_serv_t {
 
 	struct sockaddr_t addr;
 
-#ifdef CRYPTO_OPENSSL
 	SSL_CTX *ssl_ctx;
-#endif
 } serv;
 
 static int conf_timeout = SSTP_NEGOTIOATION_TIMEOUT;
@@ -501,7 +497,6 @@ static struct sstp_stream_t *stream_init(int fd)
 
 /* ssl stream */
 
-#ifdef CRYPTO_OPENSSL
 static ssize_t ssl_stream_read(struct sstp_stream_t *stream, void *buf, size_t count)
 {
 	int ret, err;
@@ -597,7 +592,6 @@ error:
 	ssl_stream_free(stream);
 	return NULL;
 }
-#endif
 
 /* proxy */
 
@@ -1543,12 +1537,10 @@ static int sstp_recv_msg_call_connected(struct sstp_conn_t *conn, struct sstp_ct
 	uint8_t hash;
 	unsigned int len;
 	struct npioctl np;
-#ifdef CRYPTO_OPENSSL
 	typeof(*msg) buf;
 	uint8_t md[EVP_MAX_MD_SIZE], *ptr;
 	const EVP_MD *evp;
 	unsigned int mdlen;
-#endif
 
 	if (conf_verbose)
 		log_ppp_info2("recv [SSTP SSTP_MSG_CALL_CONNECTED]\n");
@@ -1586,9 +1578,7 @@ static int sstp_recv_msg_call_connected(struct sstp_conn_t *conn, struct sstp_ct
 			log_ppp_error("sstp: invalid SHA256 Cert Hash\n");
 			return sstp_abort(conn, 0);
 		}
-#ifdef CRYPTO_OPENSSL
 		evp = EVP_sha256();
-#endif
 	} else if (hash & CERT_HASH_PROTOCOL_SHA1) {
 		len = SHA_DIGEST_LENGTH;
 		if (conf_hash_sha1.len == len &&
@@ -1596,9 +1586,7 @@ static int sstp_recv_msg_call_connected(struct sstp_conn_t *conn, struct sstp_ct
 			log_ppp_error("sstp: invalid SHA1 Cert Hash\n");
 			return sstp_abort(conn, 0);
 		}
-#ifdef CRYPTO_OPENSSL
 		evp = EVP_sha1();
-#endif
 	} else {
 		log_ppp_error("sstp: invalid Hash Protocol 0x%02x\n",
 				msg->attr.hash_protocol_bitmask);
@@ -1623,7 +1611,6 @@ static int sstp_recv_msg_call_connected(struct sstp_conn_t *conn, struct sstp_ct
 			return 0;
 		}
 
-#ifdef CRYPTO_OPENSSL
 		ptr = mempcpy(md, SSTP_CMK_SEED, SSTP_CMK_SEED_SIZE);
 		*ptr++ = len;
 		*ptr++ = 0;
@@ -1639,7 +1626,6 @@ static int sstp_recv_msg_call_connected(struct sstp_conn_t *conn, struct sstp_ct
 			log_ppp_error("sstp: invalid Compound MAC\n");
 			return sstp_abort(conn, 0);
 		}
-#endif
 	}
 
 	if (conn->timeout_timer.tpd)
@@ -2271,11 +2257,9 @@ static void sstp_start(struct sstp_conn_t *conn)
 {
 	log_debug("sstp: starting\n");
 
-#ifdef CRYPTO_OPENSSL
 	if (serv.ssl_ctx)
 		conn->stream = ssl_stream_init(conn->hnd.fd, serv.ssl_ctx);
 	else
-#endif
 		conn->stream = stream_init(conn->hnd.fd);
 	if (!conn->stream) {
 		log_error("sstp: stream open error: %s\n", strerror(errno));
@@ -2455,17 +2439,14 @@ static void sstp_serv_close(struct triton_context_t *ctx)
 	triton_md_unregister_handler(&serv->hnd, 1);
 	triton_context_unregister(ctx);
 
-#ifdef CRYPTO_OPENSSL
 	if (serv->ssl_ctx)
 		SSL_CTX_free(serv->ssl_ctx);
 	serv->ssl_ctx = NULL;
-#endif
 
 	if (serv->addr.u.sa.sa_family == AF_UNIX && serv->addr.u.sun.sun_path[0])
 		unlink(serv->addr.u.sun.sun_path);
 }
 
-#ifdef CRYPTO_OPENSSL
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
 static int ssl_servername(SSL *ssl, int *al, void *arg)
 {
@@ -2754,7 +2735,6 @@ error:
 	if (in && !BIO_free(in))
 		abort();
 }
-#endif
 
 static void ev_mppe_keys(struct ev_mppe_keys_t *ev)
 {
@@ -2839,12 +2819,9 @@ static void load_config(void)
 	opt = conf_get_opt("sstp", "accept");
 	conf_proxyproto = opt && strhas(opt, "proxy", ',');
 
-#ifdef CRYPTO_OPENSSL
 	ssl_load_config(&serv, conf_hostname);
 	opt = serv.ssl_ctx ? "enabled" : "disabled";
-#else
-	opt = "not available";
-#endif
+
 	if (conf_verbose) {
 		log_info2("sstp: SSL/TLS support %s, PROXY support %s\n",
 				opt, conf_proxyproto ? "enabled" : "disabled");

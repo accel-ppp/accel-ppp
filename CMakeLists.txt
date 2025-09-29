@@ -79,7 +79,6 @@ if (NOT BUILD_DRIVER_ONLY)
 	IF(NOT CRYPTO_LIBRARY)
 		message(FATAL_ERROR "${Esc}[31mRequired libcrypto-0.9.8 or probably later (openssl-0.9.8)  not found.\n Install libssl-dev and run cmake again${Esc}[m")
 	ENDIF(NOT CRYPTO_LIBRARY)
-	add_definitions(-DCRYPTO_OPENSSL)
 	set(crypto_lib crypto ssl)
 
 	add_subdirectory(accel-pppd)
