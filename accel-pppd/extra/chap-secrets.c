@@ -7,7 +7,10 @@
 #include <arpa/inet.h>
 
 #ifdef CRYPTO_OPENSSL
-#include "crypto.h"
+#include <openssl/md4.h>
+#include <openssl/sha.h>
+#include <openssl/des.h>
+#include <openssl/evp.h>
 #endif
 
 #include "pwdb.h"

@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <arpa/inet.h>
 
-#include "crypto.h"
+#include <openssl/md5.h>
 
 #include "log.h"
 #include "events.h"

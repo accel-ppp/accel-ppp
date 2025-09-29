@@ -1,7 +1,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "crypto.h"
+#include <openssl/md5.h>
+#include <openssl/sha.h>
 
 #include "triton.h"
 #include "mempool.h"
