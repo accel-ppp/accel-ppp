@@ -1194,6 +1194,7 @@ static void pppoe_recv_PADR(struct pppoe_serv_t *serv, uint8_t *pack, int size)
 				if (vendor_id == VENDOR_ADSL_FORUM)
 					if (conf_tr101)
 						tr101_tag = tag;
+				break;
 			case TAG_PPP_MAX_PAYLOAD:
 				if (ntohs(tag->tag_len) == 2)
 					ppp_max_payload = ntohs(*(uint16_t *)tag->tag_data);
