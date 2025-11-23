@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <malloc.h>
 #include <arpa/inet.h>
+#include <inttypes.h>
 
 #include "triton.h"
 #include "events.h"
@@ -57,8 +58,8 @@ static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt,
 	cli_sendv(client, "mem(rss/virt): %lu/%lu kB\r\n", vmrss * page_size_kb, vmsize * page_size_kb);
 #endif
 	cli_send(client, "core:\r\n");
-	cli_sendv(client, "  mempool_allocated: %u\r\n", triton_stat.mempool_allocated);
-	cli_sendv(client, "  mempool_available: %u\r\n", triton_stat.mempool_available);
+	cli_sendv(client, "  mempool_allocated: %" PRIu64 "\r\n", triton_stat.mempool_allocated);
+	cli_sendv(client, "  mempool_available: %" PRIu64 "\r\n", triton_stat.mempool_available);
 	cli_sendv(client, "  thread_count: %u\r\n", triton_stat.thread_count);
 	cli_sendv(client, "  thread_active: %u\r\n", triton_stat.thread_active);
 	cli_sendv(client, "  context_count: %u\r\n", triton_stat.context_count);

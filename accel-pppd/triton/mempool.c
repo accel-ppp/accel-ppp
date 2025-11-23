@@ -95,7 +95,7 @@ void __export *mempool_alloc(mempool_t *pool)
 {
 	struct _mempool_t *p = (struct _mempool_t *)pool;
 	struct _item_t *it;
-	uint32_t size = sizeof(*it) + p->size + 8;
+	size_t size = sizeof(*it) + p->size + 8;
 
 	spin_lock(&p->lock);
 	if (!list_empty(&p->items)) {
@@ -140,7 +140,7 @@ void __export mempool_free(void *ptr)
 {
 	struct _item_t *it = container_of(ptr, typeof(*it), ptr);
 	struct _mempool_t *p = it->owner;
-	uint32_t size = sizeof(*it) + it->owner->size + 8;
+	size_t size = sizeof(*it) + it->owner->size + 8;
 	int need_free = 0;
 
 #ifdef MEMDEBUG
@@ -220,7 +220,7 @@ static void mempool_clean(void)
 {
 	struct _mempool_t *p;
 	struct _item_t *it;
-	uint32_t size;
+	size_t size;
 
 	triton_log_error("mempool: clean");
 
@@ -257,7 +257,7 @@ static void sigclean(int num)
 
 static int mmap_grow(void)
 {
-	int size = sysconf(_SC_PAGESIZE) * (1 << PAGE_ORDER);
+	size_t size = sysconf(_SC_PAGESIZE) * (1 << PAGE_ORDER);
 	uint8_t *ptr;
 
 	if (mmap_endptr) {
@@ -301,4 +301,3 @@ static void __init init(void)
 
 	mmap_grow();
 }
-

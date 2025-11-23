@@ -55,8 +55,8 @@ struct conf_sect_t
 
 struct triton_stat_t
 {
-	unsigned int mempool_allocated;
-	unsigned int mempool_available;
+	uint64_t mempool_allocated;
+	uint64_t mempool_available;
 	unsigned int thread_count;
 	unsigned int thread_active;
 	unsigned int context_count;
