@@ -26,6 +26,9 @@
 #include <net/ip.h>
 #include <net/icmp.h>
 #include <net/flow.h>
+#ifdef flowi4_dscp
+#include <net/inet_dscp.h>
+#endif
 #include <net/xfrm.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
@@ -57,6 +60,15 @@
 #ifndef RHEL_MAJOR
 #define RHEL_MAJOR 0
 #endif
+
+static inline void ipoe_flowi4_set_tos(struct flowi4 *fl4, __u8 dsfield)
+{
+#ifdef flowi4_dscp
+	fl4->flowi4_dscp = inet_dsfield_to_dscp(dsfield);
+#else
+	fl4->flowi4_tos = dsfield;
+#endif
+}
 
 struct ipoe_stats {
 	struct u64_stats_sync sync;
@@ -263,7 +275,7 @@ static int check_nat_required(struct sk_buff *skb, struct net_device *link)
 
 	memset(&fl4, 0, sizeof(fl4));
 	fl4.daddr = iph->daddr;
-	fl4.flowi4_tos = RT_TOS(0);
+	ipoe_flowi4_set_tos(&fl4, RT_TOS(0));
 	fl4.flowi4_scope = RT_SCOPE_UNIVERSE;
 	rt = ip_route_output_key(net, &fl4);
 	if (IS_ERR(rt))
@@ -771,7 +783,7 @@ static struct ipoe_session *ipoe_lookup_rt4(struct sk_buff *skb, __be32 addr, st
 
 	memset(&fl4, 0, sizeof(fl4));
 	fl4.daddr = addr;
-	fl4.flowi4_tos = RT_TOS(0);
+	ipoe_flowi4_set_tos(&fl4, RT_TOS(0));
 	fl4.flowi4_scope = RT_SCOPE_UNIVERSE;
 	rt = ip_route_output_key(net, &fl4);
 	if (IS_ERR(rt))
