@@ -135,6 +135,7 @@ Specifies maximum concurrent session attempts which server may processed (defaul
 .TP
 .BI "check-ip=" 0|1
 Specifies whether accel-ppp should check if IP already assigned to other client interface (default 0).
+Check is global (not VRF-aware); with check-ip=1 the same IPv4/IPv6 address will be rejected even if sessions are in different VRFs/netns. With check-ip=0 overlapping addresses can be assigned (useful for isolated VRFs, but take care with overlapping pools).
 .TP
 .BI "nl-snd-buffer=" n
 Specifies netlink maximum send buffer size (SO_SNDBUF option) (default 32768).
@@ -1155,12 +1156,18 @@ Specifies range of remote address of ppp interfaces if form:
 .TP
 .BI "x.x.x.x/mask[,name=pool_name][,next=next_pool_name] or x.x.x.x-y[,name=pool_name][,next=next_pool_name]"
 Also specifies range of remote address of ppp interfaces.
+.br
+You may also omit the "name=" key and use a shorthand pool name after the comma, e.g.
+.br
+.B 10.0.0.0/24,pool1
 .TP
 .BI "attr=" attribute
 Specifies which Radius attribute contains pool name.
 .TP
 .BI "vendor=" vendor
 If attribute is vendor-specific then specify vendor name in this option.
+.PP
+Note: overlapping ranges in different pools are not de-duplicated. If two pools cover the same address, that IP can be allocated from each pool independently. Use non-overlapping ranges (or a single pool with next= chaining) to avoid duplicate assignments.
 .SH [ipv6-dhcp]
 .TP
 .BI "aftr-gw=" name
