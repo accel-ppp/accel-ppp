@@ -852,7 +852,7 @@ int rad_packet_send(struct rad_packet_t *pack, int fd, struct sockaddr_in *addr)
 		uint8_t hmac[HMAC_MD5_LEN];
 		uint8_t *ptr = pack->buf;
 		uint8_t *hmac_ptr = ptr + PACKET_SIGNED_OFFSET;
-		if (hmac_md5((const uint8_t *)pack->secret, strlen(pack->secret), pack->buf, pack->len, hmac) < 0) {
+		if (hmac_md5((const uint8_t *)pack->secret, strlen((const char *)pack->secret), pack->buf, pack->len, hmac) < 0) {
 			log_emerg("radius:packet: failed to calculate HMAC\n");
 			return -1;
 		}
