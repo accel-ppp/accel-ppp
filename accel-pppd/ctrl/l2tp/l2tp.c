@@ -3335,8 +3335,8 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 	uint16_t sid = 0;
 	uint16_t res = 0;
 	uint16_t err = 0;
-	uint8_t	*calling[254] = {0};
-	uint8_t	*called[254] = {0};
+	uint8_t	calling[L2TP_AVP_LEN_MASK] = {0};
+	uint8_t	called[L2TP_AVP_LEN_MASK] = {0};
 	int n = 0;
 	int m = 0;
 
@@ -3426,7 +3426,7 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 	sid = sess->sid;
 
 	/* Allocate memory for Calling-Number if exists, and put it to l2tp_sess_t structure */
-	if (calling != NULL && n > 0) {
+	if (n > 0) {
 		sess->calling_num = _malloc(n+1);
 		if (sess->calling_num == NULL) {
 			log_tunnel(log_warn, conn, "can't allocate memory for Calling Number attribute. Will use LAC IP instead\n");
@@ -3438,7 +3438,7 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 	}
 
 	/* Allocate memory for Called-Number if exists, and put it to l2tp_sess_t structure */
-	if (called != NULL && m > 1) {
+	if (m > 1) {
 		sess->called_num = _malloc(m+1);
 		if (sess->called_num == NULL) {
 			log_tunnel(log_warn, conn, "can't allocate memory for Called Number attribute. Will use my IP instead\n");
