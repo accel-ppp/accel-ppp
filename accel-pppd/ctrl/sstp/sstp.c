@@ -20,8 +20,13 @@
 #include "linux_ppp.h"
 
 #ifdef CRYPTO_OPENSSL
+/*
+ * Suppress OpenSSL 3.0 deprecation warnings for DH API.
+ * See crypto.h for detailed explanation.
+ */
+#define OPENSSL_API_COMPAT 0x10100000L
 #include <openssl/ssl.h>
-#include <openssl/err.h> 
+#include <openssl/err.h>
 #endif
 
 #include "triton.h"
