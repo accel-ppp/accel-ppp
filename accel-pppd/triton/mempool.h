@@ -3,16 +3,10 @@
 
 #include <stdint.h>
 
-struct mempool_stat_t
-{
-	uint32_t allocated;
-	uint32_t available;
-};
 
 typedef void * mempool_t;
 mempool_t *mempool_create(int size);
 mempool_t *mempool_create2(int size);
-struct mempool_stat_t mempool_get_stat(void);
 
 #ifdef MEMDEBUG
 #include "memdebug.h"
