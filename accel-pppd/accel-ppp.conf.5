@@ -842,11 +842,12 @@ is greater of zero then server ciphers should be preferred over client ciphers.
 Default is 0.
 .TP
 .BI "ssl-pemfile=" pemfile
-Specifies a file with the chain of certificates in the PEM format for sstp server.
-The certificates must be in PEM format and must be sorted starting with the
-subject's certificate (actual server certificate), followed by intermediate CA
-certificates if applicable, and ending at the highest level (root) CA.
-Leaf (the first) certificate is also used to compute initial SHA1 and SHA256
+Specifies a PEM file with the server certificate. Files that contain only the
+leaf certificate are still supported for backward compatibility. When the file
+includes the full chain, certificates must be sorted starting with the subject's
+certificate (actual server certificate), followed by intermediate CA
+certificates if applicable, and ending at the highest level (root) CA. The leaf
+certificate (first in the file) is used to compute the initial SHA1 and SHA256
 certificate hash.
 .TP
 .BI "ssl-keyfile=" keyfile
