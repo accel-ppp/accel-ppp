@@ -3,11 +3,35 @@ if (NOT DEFINED KDIR)
 	set(KDIR "/usr/src/linux")
 endif (NOT DEFINED KDIR)
 
+# Try to figure out the kernel release once so we can show it before building.
+execute_process(
+	COMMAND make -s -C ${KDIR} kernelrelease
+	RESULT_VARIABLE IPOE_KERNEL_RELEASE_RESULT
+	OUTPUT_VARIABLE IPOE_KERNEL_RELEASE
+	OUTPUT_STRIP_TRAILING_WHITESPACE
+	ERROR_QUIET
+)
+
+if (NOT IPOE_KERNEL_RELEASE_RESULT STREQUAL "0" OR IPOE_KERNEL_RELEASE STREQUAL "")
+	find_program(UNAME_EXECUTABLE uname)
+
+	if (UNAME_EXECUTABLE)
+		execute_process(
+			COMMAND ${UNAME_EXECUTABLE} -r
+			OUTPUT_VARIABLE IPOE_KERNEL_RELEASE
+			OUTPUT_STRIP_TRAILING_WHITESPACE
+		)
+	else()
+		set(IPOE_KERNEL_RELEASE "unknown")
+	endif()
+endif()
+
 ADD_CUSTOM_COMMAND(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/driver/ipoe.ko
 	COMMAND rm -rf ${CMAKE_CURRENT_BINARY_DIR}/driver
 	COMMAND mkdir ${CMAKE_CURRENT_BINARY_DIR}/driver
 	COMMAND ln -sf ${CMAKE_CURRENT_SOURCE_DIR}/* ${CMAKE_CURRENT_BINARY_DIR}/driver
 	COMMAND ln -sf ${CMAKE_BINARY_DIR}/version.h ${CMAKE_CURRENT_BINARY_DIR}/driver
+	COMMAND ${CMAKE_COMMAND} -E echo "[ 99%] Generating driver/ipoe.ko for kernel ${IPOE_KERNEL_RELEASE}"
 	COMMAND make -C ${KDIR} M=${CMAKE_CURRENT_BINARY_DIR}/driver modules
 	DEPENDS ipoe.c ipoe.h
 )
