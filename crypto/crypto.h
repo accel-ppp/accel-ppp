@@ -3,6 +3,20 @@
 
 #ifdef CRYPTO_OPENSSL
 
+/*
+ * Suppress OpenSSL 3.0 deprecation warnings for legacy crypto APIs.
+ * These low-level APIs (MD5, SHA1, DES, etc.) are deprecated in OpenSSL 3.0
+ * but still functional and required for protocol compatibility.
+ *
+ * This approach is consistent with other major projects:
+ * - FreeRADIUS: Uses OPENSSL_API_COMPAT for the same reason
+ * - OpenVPN: Uses OPENSSL_API_COMPAT to maintain legacy protocol support
+ *
+ * The deprecated functions will remain available in OpenSSL 3.x series.
+ * Migration to EVP API may be considered for future major versions.
+ */
+#define OPENSSL_API_COMPAT 0x10100000L
+
 #include <openssl/md4.h>
 #include <openssl/md5.h>
 #include <openssl/sha.h>
