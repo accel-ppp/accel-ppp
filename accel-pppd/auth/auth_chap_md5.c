@@ -73,7 +73,6 @@ struct chap_auth_data {
 	struct triton_timer_t interval;
 	int failure;
 	char *name;
-	char *mschap_error;
 	unsigned int started:1;
 };
 
