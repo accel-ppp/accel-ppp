@@ -1,6 +1,6 @@
 INCLUDE(InstallRequiredSystemLibraries)
 
-string(REPLACE "." ";" VERSION_LIST ${ACCEL_PPP_VERSION})
+string(REPLACE "." ";" VERSION_LIST "${ACCEL_PPP_VERSION}")
 
 # Verify if VERSION_LIST has 3 elements
 # If not assign dummy variables
