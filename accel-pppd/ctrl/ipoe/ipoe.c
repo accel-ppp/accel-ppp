@@ -3138,6 +3138,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 			serv->dhcpv4 = dhcpv4_create(&serv->ctx, serv->ifname, opt);
 			if (serv->dhcpv4)
 				serv->dhcpv4->recv = ipoe_recv_dhcpv4;
+			opt_up = 0; /* start=up and start=dhcpv4 should be exclusive. */
 		} else if (!opt_dhcpv4 && serv->dhcpv4) {
 			dhcpv4_free(serv->dhcpv4);
 			serv->dhcpv4 = NULL;
