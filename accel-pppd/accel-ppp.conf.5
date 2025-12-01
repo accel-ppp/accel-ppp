@@ -135,7 +135,7 @@ Specifies maximum concurrent session attempts which server may processed (defaul
 .TP
 .BI "check-ip=" 0|1
 Specifies whether accel-ppp should check if IP already assigned to other client interface (default 0).
-Check is global (not VRF-aware); with check-ip=1 the same IPv4/IPv6 address will be rejected even if sessions are in different VRFs/netns. With check-ip=0 overlapping addresses can be assigned (useful for isolated VRFs, but take care with overlapping pools).
+Check is global (not VRF-aware); with check-ip=1 the same IPv4/IPv6 address will be rejected even if sessions are in different VRFs/netns. With check-ip=0 overlapping addresses can be assigned (useful for isolated VRFs, but take care with overlapping pools). This setting can be overridden by module-specific 'check-ip' options (e.g., in the [ppp] section).
 .TP
 .BI "nl-snd-buffer=" n
 Specifies netlink maximum send buffer size (SO_SNDBUF option) (default 32768).
@@ -1061,14 +1061,20 @@ Specifies should accel-ppp generate and send Acct-Session-Id on Access-Request p
 .TP
 .BI "nas-port-id-in-req=" 0|1
 Specifies should accel-ppp send NAS-Port-Id on Access-Request and Accounting-Request packets (default 1).
-.SH [log]
-.br
-Configuration of log and log_file modules.
+.TP
+.BI "bind=" x.x.x.x
+Specifies the source IP address for outgoing RADIUS packets.
+.TP
+.BI "require-nas-identification=" 0|1
+If enabled, checks that the NAS-Identifier or NAS-IP-Address in DM/CoA requests matches the server's configuration.
 .TP
 .BI "blast-protection=" 0|1
 If this option is given and
 .B 1
 is specified then radius module will include Message-Authenticator attribute in Access-Request packets.
+.SH [log]
+.br
+Configuration of log and log_file modules.
 .TP
 .BI "log-file=" file
 Path to file to write general log.
