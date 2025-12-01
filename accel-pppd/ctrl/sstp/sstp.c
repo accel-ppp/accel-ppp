@@ -181,7 +181,13 @@ static struct hash_t conf_hash_sha1 = { .len = 0 };
 static struct hash_t conf_hash_sha256 = { .len = 0 };
 //static int conf_bypass_auth = 0;
 static const char *conf_hostname = NULL;
-static int conf_http_mode = -1;
+enum {
+	HTTP_ERR_ALLOW = -1,
+	HTTP_ERR_DENY = 0,
+	HTTP_ERR_REDIRECT = 1,
+	HTTP_ERR_REDIRECT_APPEND = 2,
+};
+static int conf_http_mode = HTTP_ERR_ALLOW;
 static const char *conf_http_url = NULL;
 
 static mempool_t conn_pool;
@@ -885,17 +891,17 @@ static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
 		log_ppp_info2("recv [HTTP <%s>]\n", line);
 
 	if (vstrsep(line, " ", &method, &request, &proto) < 3) {
-		if (conf_http_mode)
+		if (conf_http_mode != HTTP_ERR_DENY)
 			http_send_response(conn, "HTTP/1.1", "400 Bad Request", NULL);
 		return -1;
 	}
 	if (strncasecmp(proto, "HTTP/1", sizeof("HTTP/1") - 1) != 0) {
-		if (conf_http_mode)
+		if (conf_http_mode != HTTP_ERR_DENY)
 			http_send_response(conn, "HTTP/1.1", "400 Bad Request", NULL);
 		return -1;
 	}
 	if (strcasecmp(method, SSTP_HTTP_METHOD) != 0 && strcasecmp(method, "GET") != 0) {
-		if (conf_http_mode)
+		if (conf_http_mode != HTTP_ERR_DENY)
 			http_send_response(conn, proto, "501 Not Implemented", NULL);
 		return -1;
 	}
@@ -917,7 +923,7 @@ static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
 	}
 
 	if (host_error) {
-		if (conf_http_mode)
+		if (conf_http_mode != HTTP_ERR_DENY)
 			http_send_response(conn, proto, "404 Not Found", NULL);
 		return -1;
 	}
@@ -925,11 +931,11 @@ static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
 	if (strcasecmp(method, SSTP_HTTP_METHOD) != 0 || strcasecmp(request, SSTP_HTTP_URI) != 0) {
 		if (conf_http_mode > 0) {
 			if (_asprintf(&line, "Location: %s%s\r\n",
-			    conf_http_url, (conf_http_mode == 2) ? request : "") < 0)
+			    conf_http_url, (conf_http_mode == HTTP_ERR_REDIRECT_APPEND) ? request : "") < 0)
 				return -1;
 			http_send_response(conn, proto, "301 Moved Permanently", line);
 			_free(line);
-		} else if (conf_http_mode < 0)
+		} else if (conf_http_mode == HTTP_ERR_ALLOW)
 			http_send_response(conn, proto, "404 Not Found", NULL);
 		return -1;
 	}
@@ -2809,15 +2815,15 @@ static void load_config(void)
 	opt = conf_get_opt("sstp", "http-error");
 	if (opt) {
 		if (strcmp(opt, "deny") == 0)
-			conf_http_mode = 0;
+			conf_http_mode = HTTP_ERR_DENY;
 		else if (strcmp(opt, "allow") == 0)
-			conf_http_mode = -1;
+			conf_http_mode = HTTP_ERR_ALLOW;
 		else if (strstr(opt, "://") != NULL) {
 			conf_http_url = opt;
 			opt = strstr(opt, "://") + 3;
 			while (*opt == '/')
 				opt++;
-			conf_http_mode = strchr(opt, '/') ? 1 : 2;
+			conf_http_mode = strchr(opt, '/') ? HTTP_ERR_REDIRECT : HTTP_ERR_REDIRECT_APPEND;
 		}
 	}
 
