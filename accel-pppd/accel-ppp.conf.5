@@ -788,6 +788,21 @@ as a template, i.e l2tp%d => l2tp0.
 Specifies max sessions time in seconds, after this time session will be terminated.
 .br
 This timeout can be redefined with radius attribute Session-Timeout. 0 value means infinite timeout.
+.TP
+.BI "avp_permissive=" 0|1
+If set to 1, ignore the Mandatory (M) bit in unknown Attribute-Value Pairs (AVPs) instead of terminating the connection.
+.TP
+.BI "dir300_quirk=" 0|1
+If set to 1, enables a workaround for D-Link DIR-300 routers that send packets with Tunnel ID 0.
+.TP
+.BI "ip-pool=" pool_name
+Specifies the name of the IPv4 pool to use for allocating client addresses.
+.TP
+.BI "ipv6-pool=" pool_name
+Specifies the name of the IPv6 pool to use for allocating client addresses.
+.TP
+.BI "ipv6-pool-delegate=" pool_name
+Specifies the name of the IPv6 prefix delegation pool to use.
 .SH [sstp]
 .br
 Configuration of SSTP module.
