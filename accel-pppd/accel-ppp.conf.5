@@ -184,6 +184,9 @@ Protocol field compression negotiation.
 .BI "ccp=" n
 Disable CCP negotiation if this parameter is zero.
 .TP
+.BI "ccp-max-configure=" n
+Specifies the maximum number of CCP Configure-Request packets sent without receiving a valid Configure-Ack, Configure-Nak or Configure-Reject before assuming the peer is unable to respond (default 10).
+.TP
 .BI "mppe=" require|prefer|deny
 Specifies mppe negotiation preference.
 .br
@@ -198,6 +201,21 @@ Specifies mppe negotiation preference.
 .br
 Default behavior - don't ask client for mppe, but allow it if client wants.
 Please note that RADIUS may override this option by MS-MPPE-Encryption-Policy attribute.
+.TP
+.BI "max-configure=" n
+Specifies the maximum number of LCP/IPCP Configure-Request packets sent without receiving a valid Configure-Ack, Configure-Nak or Configure-Reject before assuming the peer is unable to respond (default 10).
+.TP
+.BI "max-failure=" n
+Specifies the maximum number of LCP/IPCP Configure-Nak returned before starting to send Configure-Reject (default 10).
+.TP
+.BI "max-terminate=" n
+Specifies the maximum number of Terminate-Request packets sent without receiving a Terminate-Ack before assuming the peer has disconnected (default 2).
+.TP
+.BI "max-mtu=" n
+Specifies the absolute maximum MTU value that can be negotiated.
+.TP
+.BI "check-ip=" 0|1
+Specifies whether to check if the assigned IP address is already in use by another session (overrides [common] check-ip for PPP sessions).
 .TP
 .BI "ipv4=" deny|allow|prefer|require
 Specify IPv4 (IPCP) negotiation algorithm:
