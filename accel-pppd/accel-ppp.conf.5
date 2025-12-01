@@ -692,6 +692,24 @@ as a template, i.e pppoe%d => pppoe0.
 Specifies max sessions time in seconds, after this time session will be terminated.
 .br
 This timeout can be redefined with radius attribute Session-Timeout. 0 value means infinite timeout.
+.TP
+.BI "ip-pool=" pool_name
+Specifies the name of the IPv4 pool to use for allocating client addresses.
+.TP
+.BI "ipv6-pool=" pool_name
+Specifies the name of the IPv6 pool to use for allocating client addresses.
+.TP
+.BI "ipv6-pool-delegate=" pool_name
+Specifies the name of the IPv6 prefix delegation pool to use.
+.TP
+.BI "ifname-in-sid=" 0|1
+If set to 1, the interface name is included in the Session ID.
+.TP
+.BI "sid-uppercase=" 0|1
+If set to 1, the Session ID is generated in uppercase.
+.TP
+.BI "cookie-timeout=" n
+Specifies the timeout in seconds for the PPPoE cookie (PADO/PADR stage).
 .SH [l2tp]
 .br
 Configuration of L2TP module.
