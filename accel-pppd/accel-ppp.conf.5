@@ -874,6 +874,13 @@ Specifies incoming connection acceptance mode.
 .br
 .B proxy
 - enable PROXY protocol 1 & 2 support.
+.br
+This is useful when accel-ppp is running behind a load balancer (like HAProxy or Nginx) or a reverse proxy. It allows accel-ppp to receive the original client IP address and port instead of the proxy's IP. The extracted real client IP is then used for:
+.br
+- \fBconnlimit\fR module checks (limiting connections per source IP).
+- \fBclient-ip-range\fR verification.
+- \fBCalling-Station-Id\fR attribute in RADIUS and logs.
+.br
 .TP
 .BI "ssl-protocol=" ssl2|ssl3|tls1|tls1.1|tls1.2|tls1.3
 Specifies the enabled SSL/TLS protocols supported by OpenSSL library.
@@ -950,6 +957,21 @@ as a template, i.e sstp%d => sstp0.
 .BI "ppp-max-mtu=" n
 Set the maximum MTU value that can be negotiated for PPP over SSTP sessions.
 Default value is 1452, maximum is 4087.
+.TP
+.BI "ip-pool=" pool_name
+Specifies the name of the IPv4 pool to use for allocating client addresses.
+.TP
+.BI "ipv6-pool=" pool_name
+Specifies the name of the IPv6 pool to use for allocating client addresses.
+.TP
+.BI "ipv6-pool-delegate=" pool_name
+Specifies the name of the IPv6 prefix delegation pool to use.
+.TP
+.BI "sndbuf=" n
+Specifies the TCP send buffer size (SO_SNDBUF) for the SSTP socket.
+.TP
+.BI "rcvbuf=" n
+Specifies the TCP receive buffer size (SO_RCVBUF) for the SSTP socket.
 .TP
 .BI "session-timeout=" n
 Specifies max sessions time in seconds, after this time session will be terminated.
