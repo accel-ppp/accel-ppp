@@ -234,7 +234,7 @@ void __export ap_session_ifdown(struct ap_session *ses)
 			if (!a->installed)
 				continue;
 			if (a->prefix_len > 64)
-				ip6route_del(ses->ifindex, &a->addr, a->prefix_len, NULL, 0, 0);
+				ip6route_del(ses->ifindex, &a->addr, a->prefix_len, NULL, 0, 0, ses->vrf_name);
 			else {
 				struct in6_addr addr;
 				memcpy(addr.s6_addr, &a->addr, 8);
