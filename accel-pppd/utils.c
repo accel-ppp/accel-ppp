@@ -11,6 +11,8 @@
 #include "triton.h"
 #include "utils.h"
 
+#include "log.h"
+
 #include "memdebug.h"
 
 extern int urandom_fd;
@@ -360,4 +362,53 @@ int __export u_match_regex(const pcre2_code *re, const char *str)
 	pcre2_match_data_free(match_data);
 
 	return rc >= 0;
+}
+
+pcre2_code *__export u_compile_interface_regex(const char *opt_str, const char *prefix, const char **endptr_out)
+{
+    const char *ptr;
+    char *pattern_str;
+    pcre2_code *re = NULL;
+    int pcre_err;
+    PCRE2_SIZE pcre_offset;
+    size_t prefix_len = strlen(prefix);
+
+    if (strncmp(opt_str, prefix, prefix_len) != 0) {
+        log_error("utils: regex pattern '%s' must start with '%s'\n", opt_str, prefix);
+        if (endptr_out)
+            *endptr_out = opt_str; // Indicate no parsing happened
+        return NULL;
+    }
+
+    opt_str += prefix_len; // Skip prefix
+
+    // Find end of pattern part (first comma or end of string)
+    for (ptr = opt_str; *ptr && *ptr != ','; ptr++);
+
+    // Extract pattern string
+    size_t pattern_len = ptr - opt_str;
+    pattern_str = _malloc(pattern_len + 1);
+    if (!pattern_str) {
+        log_error("utils: out of memory for regex pattern\n");
+        if (endptr_out)
+            *endptr_out = opt_str;
+        return NULL;
+    }
+    memcpy(pattern_str, opt_str, pattern_len);
+    pattern_str[pattern_len] = 0;
+
+    // Compile regex
+    re = pcre2_compile((PCRE2_SPTR)pattern_str, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &pcre_offset, NULL);
+    if (!re) {
+        PCRE2_UCHAR err_msg[256];
+        pcre2_get_error_message(pcre_err, err_msg, sizeof(err_msg));
+        log_error("utils: regex compilation failed for '%s': %s at offset %i\n", pattern_str, err_msg, (int)pcre_offset);
+    }
+
+    _free(pattern_str); // Free temporary pattern string
+
+    if (endptr_out)
+        *endptr_out = ptr; // Point to char after regex pattern
+
+    return re;
 }
