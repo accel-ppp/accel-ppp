@@ -364,7 +364,7 @@ int __export u_match_regex(const pcre2_code *re, const char *str)
 	return rc >= 0;
 }
 
-pcre2_code *__export u_compile_interface_regex(const char *opt_str, const char *prefix, const char **endptr_out)
+pcre2_code __export *u_compile_interface_regex(const char *opt_str, const char *prefix, const char **endptr_out)
 {
     const char *ptr;
     char *pattern_str;
