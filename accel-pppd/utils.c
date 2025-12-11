@@ -347,3 +347,17 @@ int __export u_randbuf(void *buf, size_t buf_len, int *err)
 
 	return 0;
 }
+
+int __export u_match_regex(const pcre2_code *re, const char *str)
+{
+	pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
+	int rc;
+
+	if (!match_data)
+		return 0;
+
+	rc = pcre2_match(re, (PCRE2_SPTR)str, strlen(str), 0, 0, match_data, NULL);
+	pcre2_match_data_free(match_data);
+
+	return rc >= 0;
+}

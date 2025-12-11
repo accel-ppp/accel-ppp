@@ -2911,13 +2911,11 @@ void ipoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 			if (!re)
 				continue;
 
-			pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
-			r = pcre2_match(re, (PCRE2_SPTR)ifname, len, 0, 0, match_data, NULL);
-			pcre2_match_data_free(match_data);
-			pcre2_code_free(re);
-
-			if (r < 0)
+			if (!u_match_regex(re, ifname)) {
+				pcre2_code_free(re);
 				continue;
+			}
+			pcre2_code_free(re);
 
 			add_interface(ifname, ifr.ifr_ifindex, opt->val, ifindex, vid, 1);
 			return;
@@ -3359,12 +3357,8 @@ static void load_interface(const char *opt)
 
 static int __load_interface_re(int index, int flags, const char *name, int iflink, int vid, struct iplink_arg *arg)
 {
-	pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
-	if (pcre2_match(arg->re, (PCRE2_SPTR)name, strlen(name), 0, 0, match_data, NULL) < 0) {
-		pcre2_match_data_free(match_data);
+	if (!u_match_regex(arg->re, name))
 		return 0;
-	}
-	pcre2_match_data_free(match_data);
 
 	add_interface(name, index, arg->opt, iflink, vid, 0);
 
@@ -3405,10 +3399,8 @@ static void load_interface_re(const char *opt)
 		if (serv->active)
 			continue;
 
-		pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
-		if (pcre2_match(re, (PCRE2_SPTR)serv->ifname, strlen(serv->ifname), 0, 0, match_data, NULL) >= 0)
+		if (u_match_regex(re, serv->ifname))
 			add_interface(serv->ifname, serv->ifindex, opt, 0, 0, 0);
-		pcre2_match_data_free(match_data);
 	}
 
 	pcre2_code_free(re);
@@ -3679,15 +3671,10 @@ static int __load_vlan_mon_re(int index, int flags, const char *name, int iflink
 	long mask1[4096/8/sizeof(long)];
 	struct ipoe_serv *serv;
 
-	pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
-	if (pcre2_match(arg->re, (PCRE2_SPTR)name, strlen(name), 0, 0, match_data, NULL) < 0) {
-		pcre2_match_data_free(match_data);
+	if (!u_match_regex(arg->re, name))
 		return 0;
-	}
-	pcre2_match_data_free(match_data);
 
-	if (!(flags & IFF_UP)) {
-		memset(&ifr, 0, sizeof(ifr));
+	memset(&ifr, 0, sizeof(ifr));
 		strcpy(ifr.ifr_name, name);
 		ifr.ifr_flags = flags | IFF_UP;
 

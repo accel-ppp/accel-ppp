@@ -1,6 +1,9 @@
 #ifndef __UTILS_H
 #define __UTILS_H
 
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
+
 #include <netinet/in.h>
 #include <stdint.h>
 
@@ -25,5 +28,7 @@ size_t u_parse_ip4cidr(const char *str, struct in_addr *netp, uint8_t *plen);
 size_t u_parse_ip4range(const char *str, struct in_addr *base_ip, uint8_t *max);
 
 int u_randbuf(void *buf, size_t buf_len, int *err);
+
+int u_match_regex(const pcre2_code *re, const char *str);
 
 #endif
