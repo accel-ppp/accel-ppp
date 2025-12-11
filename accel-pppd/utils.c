@@ -364,7 +364,7 @@ int __export u_match_regex(const pcre2_code *re, const char *str)
 	return rc >= 0;
 }
 
-pcre2_code __export *u_compile_interface_regex(const char *opt_str, const char *prefix, const char **endptr_out)
+pcre2_code __export *u_compile_interface_regex(const char *opt_str, const char *prefix, const char **endptr_out, char *err_buf, size_t err_buf_len)
 {
     const char *ptr;
     char *pattern_str;
@@ -374,7 +374,11 @@ pcre2_code __export *u_compile_interface_regex(const char *opt_str, const char *
     size_t prefix_len = strlen(prefix);
 
     if (strncmp(opt_str, prefix, prefix_len) != 0) {
-        log_error("utils: regex pattern '%s' must start with '%s'\n", opt_str, prefix);
+        if (err_buf && err_buf_len > 0)
+            snprintf(err_buf, err_buf_len, "regex pattern '%s' must start with '%s'", opt_str, prefix);
+        else
+            log_error("utils: regex pattern '%s' must start with '%s'\n", opt_str, prefix);
+
         if (endptr_out)
             *endptr_out = opt_str; // Indicate no parsing happened
         return NULL;
@@ -402,7 +406,11 @@ pcre2_code __export *u_compile_interface_regex(const char *opt_str, const char *
     if (!re) {
         PCRE2_UCHAR err_msg[256];
         pcre2_get_error_message(pcre_err, err_msg, sizeof(err_msg));
-        log_error("utils: regex compilation failed for '%s': %s at offset %i\n", pattern_str, err_msg, (int)pcre_offset);
+        
+        if (err_buf && err_buf_len > 0)
+             snprintf(err_buf, err_buf_len, "%s at %i", err_msg, (int)pcre_offset);
+        else
+             log_error("utils: regex compilation failed for '%s': %s at offset %i\n", pattern_str, err_msg, (int)pcre_offset);
     }
 
     _free(pattern_str); // Free temporary pattern string

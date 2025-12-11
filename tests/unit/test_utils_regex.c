@@ -33,25 +33,25 @@ void test_compile_interface_regex() {
     const char *endptr;
 
     // Test valid compilation
-    re = u_compile_interface_regex("re:eth.*,other_opt", "re:", &endptr);
+    re = u_compile_interface_regex("re:eth.*,other_opt", "re:", &endptr, NULL, 0);
     assert(re != NULL);
     assert(u_match_regex(re, "eth0") == 1);
     assert(strcmp(endptr, ",other_opt") == 0);
     pcre2_code_free(re);
 
     // Test without additional options
-    re = u_compile_interface_regex("re:lo.*", "re:", &endptr);
+    re = u_compile_interface_regex("re:lo.*", "re:", &endptr, NULL, 0);
     assert(re != NULL);
     assert(u_match_regex(re, "lo") == 1);
     assert(strcmp(endptr, "") == 0);
     pcre2_code_free(re);
 
     // Test invalid prefix (should return NULL and log error)
-    re = u_compile_interface_regex("fo:eth.*", "re:", &endptr);
+    re = u_compile_interface_regex("fo:eth.*", "re:", &endptr, NULL, 0);
     assert(re == NULL);
 
     // Test invalid regex pattern (should return NULL and log error)
-    re = u_compile_interface_regex("re:et(h.*", "re:", &endptr);
+    re = u_compile_interface_regex("re:et(h.*", "re:", &endptr, NULL, 0);
     assert(re == NULL);
 
     printf("test_compile_interface_regex passed\n");
@@ -69,7 +69,7 @@ void test_real_world_examples() {
     // 1. Match any VLAN on eth0: eth0.N
     // Regex: ^eth0\.[0-9]+$
     // Note: In C strings backslash is escaped, so \\.
-    re = u_compile_interface_regex("re:^eth0\\.[0-9]+$", "re:", NULL);
+    re = u_compile_interface_regex("re:^eth0\\.[0-9]+$", "re:", NULL, NULL, 0);
     assert(re != NULL);
     assert(u_match_regex(re, "eth0.10") == 1);
     assert(u_match_regex(re, "eth0.100") == 1);
@@ -81,7 +81,7 @@ void test_real_world_examples() {
 
     // 2. Match QinQ (Double VLAN) on eth0: eth0.N.M
     // Regex: ^eth0\.[0-9]+\.[0-9]+$
-    re = u_compile_interface_regex("re:^eth0\\.[0-9]+\\.[0-9]+$", "re:", NULL);
+    re = u_compile_interface_regex("re:^eth0\\.[0-9]+\\.[0-9]+$", "re:", NULL, NULL, 0);
     assert(re != NULL);
     assert(u_match_regex(re, "eth0.10.20") == 1);
     assert(u_match_regex(re, "eth0.100.200") == 1);
@@ -90,7 +90,7 @@ void test_real_world_examples() {
 
     // 3. Match specific VLAN range (100-199) on eth0
     // Regex: ^eth0\.1[0-9][0-9]$
-    re = u_compile_interface_regex("re:^eth0\\.1[0-9][0-9]$", "re:", NULL);
+    re = u_compile_interface_regex("re:^eth0\\.1[0-9][0-9]$", "re:", NULL, NULL, 0);
     assert(re != NULL);
     assert(u_match_regex(re, "eth0.100") == 1);
     assert(u_match_regex(re, "eth0.150") == 1);
@@ -101,7 +101,7 @@ void test_real_world_examples() {
 
     // 4. Match specific set of VLANs (10, 20, 30)
     // Regex: ^eth0\.(10|20|30)$
-    re = u_compile_interface_regex("re:^eth0\\.(10|20|30)$", "re:", NULL);
+    re = u_compile_interface_regex("re:^eth0\\.(10|20|30)$", "re:", NULL, NULL, 0);
     assert(re != NULL);
     assert(u_match_regex(re, "eth0.10") == 1);
     assert(u_match_regex(re, "eth0.20") == 1);
@@ -112,7 +112,7 @@ void test_real_world_examples() {
 
     // 5. QinQ: Match any inner VLAN on specific outer VLAN (100)
     // Regex: ^eth0\.100\.[0-9]+$
-    re = u_compile_interface_regex("re:^eth0\\.100\\.[0-9]+$", "re:", NULL);
+    re = u_compile_interface_regex("re:^eth0\\.100\\.[0-9]+$", "re:", NULL, NULL, 0);
     assert(re != NULL);
     assert(u_match_regex(re, "eth0.100.1") == 1);
     assert(u_match_regex(re, "eth0.100.200") == 1);

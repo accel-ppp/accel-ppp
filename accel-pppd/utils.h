@@ -29,7 +29,7 @@ size_t u_parse_ip4range(const char *str, struct in_addr *base_ip, uint8_t *max);
 
 int u_randbuf(void *buf, size_t buf_len, int *err);
 
-pcre2_code *u_compile_interface_regex(const char *opt_str, const char *prefix, const char **endptr_out);
+pcre2_code *u_compile_interface_regex(const char *opt_str, const char *prefix, const char **endptr_out, char *err_buf, size_t err_buf_len);
 int u_match_regex(const pcre2_code *re, const char *str);
 
 #endif

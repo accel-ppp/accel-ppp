@@ -2897,7 +2897,7 @@ void ipoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 			ptr = strchr(opt->val, 0);
 
 		if (ptr - opt->val > 3 && memcmp(opt->val, "re:", 3) == 0) {
-			re = u_compile_interface_regex(opt->val, "re:", NULL);
+			re = u_compile_interface_regex(opt->val, "re:", NULL, NULL, 0);
 
 			if (!re)
 				continue;
@@ -3363,7 +3363,7 @@ static void load_interface_re(const char *opt)
 	struct iplink_arg arg;
 	struct ipoe_serv *serv;
 
-	re = u_compile_interface_regex(opt, "re:", &ptr);
+	re = u_compile_interface_regex(opt, "re:", &ptr, NULL, 0);
 
 	if (!re) {
 		return;
@@ -3683,7 +3683,7 @@ static void load_vlan_mon_re(const char *opt, long *mask, int len)
 	const char *ptr;
 	struct iplink_arg arg;
 
-	re = u_compile_interface_regex(opt, "re:", &ptr);
+	re = u_compile_interface_regex(opt, "re:", &ptr, NULL, 0);
 
 	if (!re) {
 		return;

@@ -1383,12 +1383,20 @@ static void pppoe_add_interface_re(const char *opt, void *cli)
 	pcre2_code *re = NULL;
 	const char *ptr;
 	struct iplink_arg arg;
+	char err_msg[256] = {0};
 
-	re = u_compile_interface_regex(opt, "re:", &ptr);
+	re = u_compile_interface_regex(opt, "re:", &ptr, err_msg, sizeof(err_msg));
 
 	if (!re) {
-		if (cli)
-			cli_sendv(cli, "pppoe: failed to compile regex from '%s'\r\n", opt);
+		if (cli) {
+			if (err_msg[0])
+				cli_sendv(cli, "pppoe: %s\r\n", err_msg);
+			else
+				cli_sendv(cli, "pppoe: failed to compile regex from '%s'\r\n", opt);
+		} else {
+			if (err_msg[0])
+				log_error("pppoe: %s\r\n", err_msg);
+		}
 		return;
 	}
 
@@ -1763,7 +1771,7 @@ void pppoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 			ptr = strchr(opt->val, 0);
 
 		if (ptr - opt->val > 3 && memcmp(opt->val, "re:", 3) == 0) {
-			re = u_compile_interface_regex(opt->val, "re:", NULL);
+			re = u_compile_interface_regex(opt->val, "re:", NULL, NULL, 0);
 
 			if (!re)
 				continue;
@@ -1888,7 +1896,7 @@ static void load_vlan_mon_re(const char *opt, long *mask, int len)
 
 
 
-	re = u_compile_interface_regex(opt, "re:", &ptr);
+	re = u_compile_interface_regex(opt, "re:", &ptr, NULL, 0);
 
 
 
