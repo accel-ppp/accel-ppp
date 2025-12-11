@@ -1670,9 +1670,6 @@ void pppoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 	char *ptr;
 	int len, r, svid;
 	pcre2_code *re = NULL;
-	int pcre_err;
-	char *pattern;
-	PCRE2_SIZE pcre_offset;
 	char ifname[IFNAMSIZ];
 
 	if (!sect)

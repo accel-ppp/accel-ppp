@@ -2804,9 +2804,6 @@ void ipoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 	char *ptr;
 	int len, r, svid;
 	pcre2_code *re = NULL;
-	int pcre_err;
-	char *pattern;
-	PCRE2_SIZE pcre_offset;
 	char ifname[IFNAMSIZ];
 
 	if (!sect)
@@ -3656,11 +3653,11 @@ static int __load_vlan_mon_re(int index, int flags, const char *name, int iflink
 		return 0;
 
 	memset(&ifr, 0, sizeof(ifr));
-		strcpy(ifr.ifr_name, name);
-		ifr.ifr_flags = flags | IFF_UP;
+	strcpy(ifr.ifr_name, name);
+	ifr.ifr_flags = flags | IFF_UP;
 
-		ioctl(sock_fd, SIOCSIFFLAGS, &ifr);
-	}
+	ioctl(sock_fd, SIOCSIFFLAGS, &ifr);
+
 
 	memcpy(mask1, arg->arg1, sizeof(mask1));
 	list_for_each_entry(serv, &serv_list, entry) {
