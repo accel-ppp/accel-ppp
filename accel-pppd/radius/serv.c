@@ -11,13 +11,13 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include <openssl/md5.h>
+
 #include "log.h"
 #include "triton.h"
 #include "events.h"
 #include "cli.h"
 #include "utils.h"
-
-#include "crypto.h"
 
 #include "radius_p.h"
 

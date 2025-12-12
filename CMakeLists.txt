@@ -72,33 +72,16 @@ if (NOT BUILD_DRIVER_ONLY)
 		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector -fstack-protector-all")
 	endif (MEMDEBUG)
 
-	if (NOT DEFINED CRYPTO)
-		set(CRYPTO OPENSSL)
-	endif (NOT DEFINED CRYPTO)
-
-	if (CRYPTO STREQUAL OPENSSL)
-		find_library(CRYPTO_LIBRARY ssl
-			HINTS ${CMAKE_SOURCE_DIR}/lib/linux/gcc/${BIT}/lib
-			PATHS ${CMAKE_SOURCE_DIR}/lib/linux/gcc/${BIT}/lib
-		)
-		IF(NOT CRYPTO_LIBRARY)
-			message(FATAL_ERROR "${Esc}[31mRequired libcrypto-0.9.8 or probably later (openssl-0.9.8)  not found.\n Install libssl-dev and run cmake again${Esc}[m")
-		ENDIF(NOT CRYPTO_LIBRARY)
-		add_definitions(-DCRYPTO_OPENSSL)
-		set(crypto_lib crypto ssl)
-	elseif (CRYPTO STREQUAL TOMCRYPT)
-		add_definitions(-DCRYPTO_TOMCRYPT)
-		INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR}/crypto)
-		set(crypto_lib tomcrypt internal-crypto)
-	elseif (CRYPTO STREQUAL INTERNAL)
-		INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR}/crypto)
-		set(crypto_lib internal-crypto)
-	else (CRYPTO STREQUAL OPENSSL)
-		message(FATAL_ERROR "unknown CRYPTO type")
-	endif (CRYPTO STREQUAL OPENSSL)
+	find_library(CRYPTO_LIBRARY ssl
+		HINTS ${CMAKE_SOURCE_DIR}/lib/linux/gcc/${BIT}/lib
+		PATHS ${CMAKE_SOURCE_DIR}/lib/linux/gcc/${BIT}/lib
+	)
+	IF(NOT CRYPTO_LIBRARY)
+		message(FATAL_ERROR "${Esc}[31mRequired libcrypto-0.9.8 or probably later (openssl-0.9.8)  not found.\n Install libssl-dev and run cmake again${Esc}[m")
+	ENDIF(NOT CRYPTO_LIBRARY)
+	set(crypto_lib crypto ssl)
 
 	add_subdirectory(accel-pppd)
-	add_subdirectory(crypto)
 	add_subdirectory(accel-cmd)
 
 	install(DIRECTORY DESTINATION /var/log/accel-ppp)

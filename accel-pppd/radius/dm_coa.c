@@ -10,7 +10,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
-#include "crypto.h"
+#include <openssl/md5.h>
 
 #include "triton.h"
 #include "events.h"

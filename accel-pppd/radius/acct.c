@@ -5,9 +5,10 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <netinet/in.h>
-#include "linux_ppp.h"
 
-#include "crypto.h"
+#include <openssl/md5.h>
+
+#include "linux_ppp.h"
 
 #include "log.h"
 #include "backup.h"

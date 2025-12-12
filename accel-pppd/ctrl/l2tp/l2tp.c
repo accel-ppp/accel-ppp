@@ -16,6 +16,8 @@
 #include <linux/if_ether.h>
 #include <linux/if_pppox.h>
 
+#include <openssl/md5.h>
+
 #include "triton.h"
 #include "mempool.h"
 #include "log.h"
@@ -24,7 +26,6 @@
 #include "utils.h"
 #include "iprange.h"
 #include "cli.h"
-#include "crypto.h"
 
 #include "connlimit.h"
 

@@ -8,7 +8,8 @@
 #include <fcntl.h>
 #include <arpa/inet.h>
 
-#include "crypto.h"
+#include <openssl/md5.h>
+
 #include "triton.h"
 #include "log.h"
 #include "mempool.h"

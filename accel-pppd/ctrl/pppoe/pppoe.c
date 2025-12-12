@@ -15,8 +15,6 @@
 #include <printf.h>
 #endif
 
-#include "crypto.h"
-
 #include "events.h"
 #include "triton.h"
 #include "log.h"

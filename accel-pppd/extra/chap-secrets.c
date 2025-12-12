@@ -6,9 +6,10 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#ifdef CRYPTO_OPENSSL
-#include "crypto.h"
-#endif
+#include <openssl/md4.h>
+#include <openssl/sha.h>
+#include <openssl/des.h>
+#include <openssl/evp.h>
 
 #include "pwdb.h"
 #include "ipdb.h"
@@ -29,13 +30,11 @@ static int conf_netmask = 0;
 static void *pd_key;
 static struct ipdb_t ipdb;
 
-#ifdef CRYPTO_OPENSSL
 struct hash_chain
 {
 	struct list_head entry;
 	const EVP_MD *md;
 };
-#endif
 
 struct cs_pd_t
 {
@@ -46,9 +45,7 @@ struct cs_pd_t
 	char *pool;
 };
 
-#ifdef CRYPTO_OPENSSL
 static LIST_HEAD(hash_chain);
-#endif
 
 static char *skip_word(char *ptr)
 {
@@ -126,19 +123,16 @@ static struct cs_pd_t *create_pd(struct ap_session *ses, const char *username)
 	int n;
 	struct cs_pd_t *pd;
 	struct in_addr in;
-#ifdef CRYPTO_OPENSSL
 	char username_hash[EVP_MAX_MD_SIZE * 2 + 1];
 	uint8_t hash[EVP_MAX_MD_SIZE];
 	struct hash_chain *hc;
 	EVP_MD_CTX *md_ctx = NULL;
 	char c;
 	int i;
-#endif
 
 	if (!conf_chap_secrets)
 		return NULL;
 
-#ifdef CRYPTO_OPENSSL
 	if (conf_encrypted && !list_empty(&hash_chain)) {
 		unsigned int size = 0;
 		list_for_each_entry(hc, &hash_chain, entry) {
@@ -156,7 +150,6 @@ static struct cs_pd_t *create_pd(struct ap_session *ses, const char *username)
 
 		username = username_hash;
 	}
-#endif
 
 	f = fopen(conf_chap_secrets, "r");
 	if (!f) {
@@ -192,10 +185,8 @@ out:
 	return NULL;
 
 found:
-#ifdef CRYPTO_OPENSSL
 	if (conf_encrypted && strlen(ptr[1]) != 32)
 		goto out;
-#endif
 
 	pd = _malloc(sizeof(*pd));
 	if (!pd) {
@@ -205,7 +196,6 @@ found:
 
 	memset(pd, 0, sizeof(*pd));
 	pd->pd.key = &pd_key;
-#ifdef CRYPTO_OPENSSL
 	if (conf_encrypted) {
 		pd->passwd = _malloc(16);
 		if (!pd->passwd) {
@@ -221,7 +211,6 @@ found:
 			ptr[1][i*2 + 2] = c;
 		}
 	} else
-#endif
 	{
 		pd->passwd = _strdup(ptr[1]);
 		if (!pd->passwd) {
@@ -335,10 +324,8 @@ static char* get_passwd(struct pwdb_t *pwdb, struct ap_session *ses, const char 
 {
 	struct cs_pd_t *pd = find_pd(ses);
 
-#ifdef CRYPTO_OPENSSL
 	if (conf_encrypted)
 		return NULL;
-#endif
 
 	if (!pd)
 		pd = create_pd(ses, username);
@@ -349,7 +336,6 @@ static char* get_passwd(struct pwdb_t *pwdb, struct ap_session *ses, const char 
 	return _strdup(pd->passwd);
 }
 
-#ifdef CRYPTO_OPENSSL
 static void des_encrypt(const uint8_t *input, const uint8_t *key, uint8_t *output)
 {
 	int i, j, parity;
@@ -684,7 +670,6 @@ static int check_passwd(struct pwdb_t *pwdb, struct ap_session *ses, pwdb_callba
 
 	return r;
 }
-#endif
 
 static struct ipdb_t ipdb = {
 	.get_ipv4 = get_ip,
@@ -692,12 +677,9 @@ static struct ipdb_t ipdb = {
 
 static struct pwdb_t pwdb = {
 	.get_passwd = get_passwd,
-#ifdef CRYPTO_OPENSSL
 	.check = check_passwd,
-#endif
 };
 
-#ifdef CRYPTO_OPENSSL
 static void clear_hash_chain(void)
 {
 	struct hash_chain *hc;
@@ -731,7 +713,6 @@ static void parse_hash_chain(const char *opt)
 		ptr1 = ptr2 + 1;
 	}
 }
-#endif
 
 static void parse_gw_ip_address(const char *opt)
 {
@@ -792,12 +773,10 @@ static void load_config(void)
 	else
 		conf_encrypted = 0;
 
-#ifdef CRYPTO_OPENSSL
 	clear_hash_chain();
 	opt = conf_get_opt("chap-secrets", "username-hash");
 	if (opt)
 		parse_hash_chain(opt);
-#endif
 }
 
 static void init(void)

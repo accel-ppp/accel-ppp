@@ -6,8 +6,10 @@
 #include <linux/if.h>
 #include <linux/if_pppox.h>
 
+#include <openssl/md5.h>
+#include <openssl/des.h>
+
 #include "rbtree.h"
-#include "crypto.h"
 
 /* PPPoE codes */
 #define CODE_PADI           0x09

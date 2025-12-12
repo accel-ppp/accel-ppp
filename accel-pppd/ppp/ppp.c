@@ -12,8 +12,6 @@
 #include <sys/ioctl.h>
 #include "linux_ppp.h"
 
-#include "crypto.h"
-
 #include "triton.h"
 
 #include "ap_session.h"
