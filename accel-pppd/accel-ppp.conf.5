@@ -1383,6 +1383,9 @@ to \fIaccel-ppp\fR).
 Defines the file used by the Telnet module for loading and storing its
 command history (defaults to \fI/var/lib/accel-ppp/history\fR).
 .TP
+.BI "log-history=" n
+Number of recent log lines to keep in memory for the CLI "log show" / "log follow tail" commands (defaults to 0, set to 0 to disable).
+.TP
 .BI "sessions-columns=" column_list
 Defines the default set of columns to be displayed by the "show sessions"
 command (defaults to
