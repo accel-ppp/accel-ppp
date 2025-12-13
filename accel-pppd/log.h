@@ -58,5 +58,6 @@ void log_ppp_msg(const char *fmt, ...) __attribute__((format(gnu_printf, 1, 2)))
 void log_switch(struct triton_context_t *ctx, void *arg);
 
 void log_register_target(struct log_target_t *t);
+void log_unregister_target(struct log_target_t *t);
 
 #endif

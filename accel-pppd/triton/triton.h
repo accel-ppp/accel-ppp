@@ -98,6 +98,7 @@ void triton_timer_del(struct triton_timer_t *);
 
 typedef void (*triton_event_func)(void *);
 int triton_event_register_handler(int ev_id, triton_event_func func);
+int triton_event_unregister_handler(int ev_id, triton_event_func func);
 void triton_event_fire(int ev_id, void *arg);
 
 struct conf_sect_t *conf_get_section(const char *name);
