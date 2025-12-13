@@ -186,7 +186,6 @@ void __export ap_session_finished(struct ap_session *ses)
 
 	if (!ses->down) {
 		ap_session_ifdown(ses);
-		ap_session_read_stats(ses, NULL);
 
 		triton_event_fire(EV_SES_FINISHING, ses);
 	}
@@ -309,10 +308,10 @@ void __export ap_session_terminate(struct ap_session *ses, int cause, int hard)
 	ses->state = AP_STATE_FINISHING;
 
 	log_ppp_debug("terminate\n");
+	ap_session_read_stats(ses, NULL);
 
 	if (ses->ctrl->terminate(ses, hard)) {
 		ap_session_ifdown(ses);
-		ap_session_read_stats(ses, NULL);
 
 		triton_event_fire(EV_SES_FINISHING, ses);
 
