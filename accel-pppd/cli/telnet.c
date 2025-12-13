@@ -83,6 +83,8 @@ static void disconnect(struct telnet_client_t *cln)
 
 	log_debug("cli: disconnect\n");
 
+	cli_log_stream_on_disconnect(&cln->cli_client);
+
 	triton_stop_collect_cpu_usage();
 
 	list_del(&cln->entry);
@@ -128,6 +130,8 @@ static void cli_client_disconnect(struct cli_client_t *tcln)
 
 static void queue_buffer(struct telnet_client_t *cln, struct buffer_t *b)
 {
+	cln->cli_client.queued_bytes += b->size;
+
 	if (cln->xmit_buf)
 		list_add_tail(&b->entry, &cln->xmit_queue);
 	else
@@ -528,6 +532,7 @@ static int cln_write(struct triton_md_handler_t *h)
 			}
 		}
 
+		cln->cli_client.queued_bytes -= cln->xmit_buf->size;
 		_free(cln->xmit_buf);
 		cln->xmit_pos = 0;
 
@@ -607,6 +612,7 @@ static int serv_read(struct triton_md_handler_t *h)
 		conn->cli_client.send = cli_client_send;
 		conn->cli_client.sendv = cli_client_sendv;
 		conn->cli_client.disconnect = cli_client_disconnect;
+		conn->cli_client.ctx = &serv_ctx;
 
 		triton_md_register_handler(&serv_ctx, &conn->hnd);
 		triton_md_enable_handler(&conn->hnd,MD_MODE_READ);
