@@ -54,6 +54,8 @@ static void disconnect(struct tcp_client_t *cln)
 
 	log_debug("cli: disconnect\n");
 
+	cli_log_stream_on_disconnect(&cln->cli_client);
+
 	list_del(&cln->entry);
 
 	triton_md_unregister_handler(&cln->hnd, 1);
