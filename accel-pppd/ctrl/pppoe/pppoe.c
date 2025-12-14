@@ -20,6 +20,7 @@
 #include "log.h"
 #include "ppp.h"
 #include "mempool.h"
+#include "utils.h"
 #include "cli.h"
 
 #ifdef RADIUS
@@ -1369,12 +1370,8 @@ out_err:
 
 static int __pppoe_add_interface_re(int index, int flags, const char *name, int iflink, int vid, struct iplink_arg *arg)
 {
-	pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
-	if (pcre2_match(arg->re, (PCRE2_SPTR)name, strlen(name), 0, 0, match_data, NULL) < 0) {
-		pcre2_match_data_free(match_data);
+	if (!u_match_regex(arg->re, name))
 		return 0;
-	}
-	pcre2_match_data_free(match_data);
 
 	__pppoe_server_start(name, arg->opt, arg->cli, iflink, vid, 0);
 
@@ -1384,26 +1381,22 @@ static int __pppoe_add_interface_re(int index, int flags, const char *name, int 
 static void pppoe_add_interface_re(const char *opt, void *cli)
 {
 	pcre2_code *re = NULL;
-	int pcre_err;
-	char *pattern;
 	const char *ptr;
-	PCRE2_SIZE pcre_offset;
 	struct iplink_arg arg;
+	char err_msg[256] = {0};
 
-	for (ptr = opt; *ptr && *ptr != ','; ptr++);
-
-	pattern = _malloc(ptr - (opt + 3) + 1);
-	memcpy(pattern, opt + 3, ptr - (opt + 3));
-	pattern[ptr - (opt + 3)] = 0;
-
-	re = pcre2_compile((PCRE2_SPTR)pattern, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &pcre_offset, NULL);
+	re = u_compile_interface_regex(opt, "re:", &ptr, err_msg, sizeof(err_msg));
 
 	if (!re) {
-		PCRE2_UCHAR err_msg[64];
-		pcre2_get_error_message(pcre_err, err_msg, sizeof(err_msg));
-		if (cli)
-			cli_sendv(cli, "pppoe: %s at %i\r\n", err_msg, (int)pcre_offset);
-		log_error("pppoe: %s at %i\r\n", err_msg, (int)pcre_offset);
+		if (cli) {
+			if (err_msg[0])
+				cli_sendv(cli, "pppoe: %s\r\n", err_msg);
+			else
+				cli_sendv(cli, "pppoe: failed to compile regex from '%s'\r\n", opt);
+		} else {
+			if (err_msg[0])
+				log_error("pppoe: %s\r\n", err_msg);
+		}
 		return;
 	}
 
@@ -1414,7 +1407,6 @@ static void pppoe_add_interface_re(const char *opt, void *cli)
 	iplink_list((iplink_list_func)__pppoe_add_interface_re, &arg);
 
 	pcre2_code_free(re);
-	_free(pattern);
 }
 
 void pppoe_server_start(const char *opt, void *cli)
@@ -1686,9 +1678,6 @@ void pppoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 	char *ptr;
 	int len, r, svid;
 	pcre2_code *re = NULL;
-	int pcre_err;
-	char *pattern;
-	PCRE2_SIZE pcre_offset;
 	char ifname[IFNAMSIZ];
 
 	if (!sect)
@@ -1782,24 +1771,16 @@ void pppoe_vlan_mon_notify(int ifindex, int vid, int vlan_ifindex)
 			ptr = strchr(opt->val, 0);
 
 		if (ptr - opt->val > 3 && memcmp(opt->val, "re:", 3) == 0) {
-			pattern = _malloc(ptr - (opt->val + 3) + 1);
-			memcpy(pattern, opt->val + 3, ptr - (opt->val + 3));
-			pattern[ptr - (opt->val + 3)] = 0;
-
-			re = pcre2_compile((PCRE2_SPTR)pattern, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &pcre_offset, NULL);
-
-			_free(pattern);
+			re = u_compile_interface_regex(opt->val, "re:", NULL, NULL, 0);
 
 			if (!re)
 				continue;
 
-			pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
-			r = pcre2_match(re, (PCRE2_SPTR)ifr.ifr_name, len, 0, 0, match_data, NULL);
-			pcre2_match_data_free(match_data);
-			pcre2_code_free(re);
-
-			if (r < 0)
+			if (!u_match_regex(re, ifr.ifr_name)) {
+				pcre2_code_free(re);
 				continue;
+			}
+			pcre2_code_free(re);
 
 			__pppoe_server_start(ifr.ifr_name, opt->val, NULL, ifindex, vid, 1);
 			return;
@@ -1871,12 +1852,8 @@ static int __load_vlan_mon_re(int index, int flags, const char *name, int iflink
 	long mask1[4096/8/sizeof(long)];
 	struct pppoe_serv_t *serv;
 
-	pcre2_match_data *match_data = pcre2_match_data_create(0, NULL);
-	if (pcre2_match(arg->re, (PCRE2_SPTR)name, strlen(name), 0, 0, match_data, NULL) < 0) {
-		pcre2_match_data_free(match_data);
+	if (!u_match_regex(arg->re, name))
 		return 0;
-	}
-	pcre2_match_data_free(match_data);
 
 	memset(&ifr, 0, sizeof(ifr));
 	strcpy(ifr.ifr_name, name);
@@ -1908,37 +1885,42 @@ static int __load_vlan_mon_re(int index, int flags, const char *name, int iflink
 }
 
 static void load_vlan_mon_re(const char *opt, long *mask, int len)
+
 {
+
 	pcre2_code *re = NULL;
-	int pcre_err;
-	char *pattern;
+
 	const char *ptr;
-	PCRE2_SIZE pcre_offset;
+
 	struct iplink_arg arg;
 
-	for (ptr = opt; *ptr && *ptr != ','; ptr++);
 
-	pattern = _malloc(ptr - (opt + 3) + 1);
-	memcpy(pattern, opt + 3, ptr - (opt + 3));
-	pattern[ptr - (opt + 3)] = 0;
 
-	re = pcre2_compile((PCRE2_SPTR)pattern, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &pcre_offset, NULL);
+	re = u_compile_interface_regex(opt, "re:", &ptr, NULL, 0);
+
+
 
 	if (!re) {
-		PCRE2_UCHAR err_msg[64];
-		pcre2_get_error_message(pcre_err, err_msg, sizeof(err_msg));
-		log_error("pppoe: '%s': %s at %i\r\n", pattern, err_msg, (int)pcre_offset);
+
 		return;
+
 	}
 
+
+
 	arg.re = re;
-	arg.opt = opt;
+
+	arg.opt = ptr; // Should be ptr here, consistent with pppoe_add_interface_re
+
 	arg.arg1 = mask;
+
+
 
 	iplink_list((iplink_list_func)__load_vlan_mon_re, &arg);
 
+
+
 	pcre2_code_free(re);
-	_free(pattern);
 
 }
 
