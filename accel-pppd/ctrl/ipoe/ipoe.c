@@ -34,6 +34,7 @@
 
 #include "iputils.h"
 #include "ipset.h"
+#include "nftables_set.h"
 
 #include "connlimit.h"
 #include "vlan_mon.h"
@@ -107,7 +108,7 @@ struct local_net {
 	in_addr_t addr;
 	int mask;
 	int active;
-};
+}; 
 
 enum {SID_MAC, SID_IP};
 
@@ -143,13 +144,16 @@ static int conf_attr_dhcp_rebind_time;
 static int conf_attr_l4_redirect;
 static int conf_attr_l4_redirect_table;
 static int conf_attr_l4_redirect_ipset;
+static int conf_attr_l4_redirect_nftables;
 static const char *conf_attr_dhcp_opt82;
 static const char *conf_attr_dhcp_opt82_remote_id;
 static const char *conf_attr_dhcp_opt82_circuit_id;
 #endif
 static int conf_l4_redirect_table;
 static int conf_l4_redirect_on_reject;
-static const char *conf_l4_redirect_ipset;
+static const char *conf_l4_redirect_ipset;  
+static struct nftables_set_key conf_l4_redirect_nftables;
+static int conf_l4_redirect_nftables_valid = 0;
 static int conf_vlan_timeout = 60;
 static int conf_max_request = 3;
 static int conf_session_timeout;
@@ -490,6 +494,9 @@ static void l4_redirect_list_add(in_addr_t addr)
 	if (conf_l4_redirect_ipset)
 		ipset_add(conf_l4_redirect_ipset, addr);
 
+	if (conf_l4_redirect_nftables_valid)
+		nftables_set_add(&conf_l4_redirect_nftables, addr);
+
 	pthread_rwlock_wrlock(&l4_list_lock);
 
 	list_add_tail(&n->entry, &l4_redirect_list);
@@ -535,6 +542,9 @@ static void l4_redirect_list_timer(struct triton_timer_t *t)
 			if (conf_l4_redirect_ipset)
 				ipset_del(conf_l4_redirect_ipset, n->addr);
 
+			if (conf_l4_redirect_nftables_valid)
+				nftables_set_del(&conf_l4_redirect_nftables, n->addr);
+
 			ipoe_nl_del_exclude(n->addr);
 
 			_free(n);
@@ -575,6 +585,28 @@ static void ipoe_change_l4_redirect(struct ipoe_session *ses, int del)
 		} else {
 			ipset_add(ses->l4_redirect_ipset ?: conf_l4_redirect_ipset, addr);
 			ses->l4_redirect_set = 1;
+		}
+	}
+ 
+	if (conf_l4_redirect_nftables_valid || ses->l4_redirect_nftables) {
+		struct nftables_set_key tmp;
+		struct nftables_set_key *key = NULL;
+
+		if (ses->l4_redirect_nftables &&
+			parse_nftables_set_key_conf(ses->l4_redirect_nftables, &tmp)) {
+			key = &tmp;
+		} else if (conf_l4_redirect_nftables_valid) {
+			key = &conf_l4_redirect_nftables;
+		}
+
+		if (key) {
+			if (del) {
+				nftables_set_del(key, addr);
+				ses->l4_redirect_set = 0;
+			} else {
+				nftables_set_add(key, addr);
+				ses->l4_redirect_set = 1;
+			}
 		}
 	}
 
@@ -1213,6 +1245,9 @@ static void ipoe_session_free(struct ipoe_session *ses)
 
 	if (ses->l4_redirect_ipset)
 		_free(ses->l4_redirect_ipset);
+
+	if (ses->l4_redirect_nftables)
+		_free(ses->l4_redirect_nftables);
 
 	triton_context_unregister(&ses->ctx);
 
@@ -2428,11 +2463,14 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
 		} else if (attr->attr->id == conf_attr_dhcp_rebind_time) {
 			ses->rebind_time = attr->val.integer;
 			rebind_time_set = 1;
-		} else if (attr->attr->id == conf_attr_l4_redirect_table)
+		} else if (attr->attr->id == conf_attr_l4_redirect_table) {
 			ses->l4_redirect_table = attr->val.integer;
-		else if (attr->attr->id == conf_attr_l4_redirect_ipset) {
+		} else if (attr->attr->id == conf_attr_l4_redirect_ipset) {
 			if (attr->attr->type == ATTR_TYPE_STRING)
 				ses->l4_redirect_ipset = _strdup(attr->val.string);
+		} else if (attr->attr->id == conf_attr_l4_redirect_nftables) {
+			if (attr->attr->type == ATTR_TYPE_STRING)
+				ses->l4_redirect_nftables = _strdup(attr->val.string);
 		}
 	}
 
@@ -2470,6 +2508,7 @@ static void ev_radius_coa(struct ev_radius_t *ev)
 	int l4_redirect = -1;
 	int lease_time_set = 0, renew_time_set = 0, rebind_time_set = 0;
 	char *ipset = NULL;
+	char *nftables = NULL;
 
 	if (ev->ses->ctrl->type != CTRL_TYPE_IPOE)
 		return;
@@ -2499,12 +2538,17 @@ static void ev_radius_coa(struct ev_radius_t *ev)
 		} else if (attr->attr->id == conf_attr_dhcp_rebind_time) {
 			ses->rebind_time = attr->val.integer;
 			rebind_time_set = 1;
-		} else if (attr->attr->id == conf_attr_l4_redirect_table)
+		} else if (attr->attr->id == conf_attr_l4_redirect_table) {
 			ses->l4_redirect_table = attr->val.integer;
-		else if (attr->attr->id == conf_attr_l4_redirect_ipset) {
+		} else if (attr->attr->id == conf_attr_l4_redirect_ipset) {
 			if (attr->attr->type == ATTR_TYPE_STRING) {
 				if (!ses->l4_redirect_ipset || strcmp(ses->l4_redirect_ipset, attr->val.string))
 					ipset = attr->val.string;
+			}
+		} else if (attr->attr->id == conf_attr_l4_redirect_nftables) {
+			if (attr->attr->type == ATTR_TYPE_STRING) {
+				if (!ses->l4_redirect_nftables || strcmp(ses->l4_redirect_nftables, attr->val.string))
+					nftables = attr->val.string;
 			}
 		}
 	}
@@ -2535,10 +2579,21 @@ static void ev_radius_coa(struct ev_radius_t *ev)
 			ses->l4_redirect = 0;
 		}
 
+		if (ses->l4_redirect && l4_redirect && nftables) {
+			ipoe_change_l4_redirect(ses, 1);
+			ses->l4_redirect = 0;
+		}
+
 		if (ipset) {
 			if (ses->l4_redirect_ipset)
 				_free(ses->l4_redirect_ipset);
 			ses->l4_redirect_ipset = _strdup(ipset);
+		}
+
+		if (nftables) { 
+			if (ses->l4_redirect_nftables)
+				_free(ses->l4_redirect_nftables);
+			ses->l4_redirect_nftables = _strdup(nftables);
 		}
 
 		if (l4_redirect != ses->l4_redirect ) {
@@ -2691,6 +2746,9 @@ static void l4_redirect_ctx_close(struct triton_context_t *ctx)
 
 		if (conf_l4_redirect_ipset)
 			ipset_del(conf_l4_redirect_ipset, n->addr);
+
+		if (conf_l4_redirect_nftables_valid)
+			nftables_set_del(&conf_l4_redirect_nftables, n->addr);
 
 		ipoe_nl_del_exclude(n->addr);
 
@@ -3541,6 +3599,7 @@ static void load_radius_attrs(void)
 	parse_conf_rad_attr("attr-l4-redirect", &conf_attr_l4_redirect);
 	parse_conf_rad_attr("attr-l4-redirect-table", &conf_attr_l4_redirect_table);
 	parse_conf_rad_attr("attr-l4-redirect-ipset", &conf_attr_l4_redirect_ipset);
+	parse_conf_rad_attr("attr-l4-redirect-nftables", &conf_attr_l4_redirect_nftables);
 	conf_attr_dhcp_opt82 = conf_get_opt("ipoe", "attr-dhcp-opt82");
 	conf_attr_dhcp_opt82_remote_id = conf_get_opt("ipoe", "attr-dhcp-opt82-remote-id");
 	conf_attr_dhcp_opt82_circuit_id = conf_get_opt("ipoe", "attr-dhcp-opt82-circuit-id");
@@ -3949,6 +4008,11 @@ static void load_config(void)
 
 	conf_l4_redirect_ipset = conf_get_opt("ipoe", "l4-redirect-ipset");
 
+	conf_l4_redirect_nftables_valid = \
+		parse_nftables_set_key_conf(
+			conf_get_opt("ipoe", "l4-redirect-nftables"),
+			&conf_l4_redirect_nftables);
+
 	opt = conf_get_opt("ipoe", "l4-redirect-on-reject");
 	if (opt) {
 		conf_l4_redirect_on_reject = atoi(opt);
@@ -4180,6 +4244,9 @@ static void ipoe_init(void)
 
 	if (conf_l4_redirect_ipset)
 		ipset_flush(conf_l4_redirect_ipset);
+
+	if (conf_l4_redirect_nftables_valid) 
+		nftables_set_flush(&conf_l4_redirect_nftables);
 
 	cli_register_simple_cmd2(show_stat_exec, NULL, 2, "show", "stat");
 	cli_show_ses_register("ipoe-type", "IPoE session type", print_session_type);

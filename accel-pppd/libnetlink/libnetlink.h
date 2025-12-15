@@ -2,7 +2,7 @@
 #define __LIBNETLINK_H__ 1
 
 #include <asm/types.h>
-#include <linux/netlink.h>
+#include <linux/netlink.h> 
 #include <linux/rtnetlink.h>
 #include <linux/if_link.h>
 #include <linux/if_addr.h>
@@ -67,6 +67,10 @@ extern int rta_addattr_l(struct rtattr *rta, int maxlen, int type, const void *d
 extern int parse_rtattr(struct rtattr *tb[], int max, struct rtattr *rta, int len);
 extern int parse_rtattr_byindex(struct rtattr *tb[], int max, struct rtattr *rta, int len);
 extern int __parse_rtattr_nested_compat(struct rtattr *tb[], int max, struct rtattr *rta, int len);
+
+extern void nlattr_put(struct nlmsghdr *nlh, unsigned short type, size_t len, const void *data);
+extern struct nlattr *nlattr_nest_start(struct nlmsghdr *nlh, unsigned short type); 
+extern void nlattr_nest_end(struct nlmsghdr *nlh, struct nlattr *start);
 
 #define parse_rtattr_nested(tb, max, rta) \
 	(parse_rtattr((tb), (max), RTA_DATA(rta), RTA_PAYLOAD(rta)))
