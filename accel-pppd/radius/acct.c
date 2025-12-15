@@ -50,6 +50,9 @@ static int req_set_stat(struct rad_req_t *req, struct ap_session *ses)
 	else
 		clock_gettime(CLOCK_MONOTONIC, &ts);
 
+	if (!ses->terminating)
+		ret = ap_session_read_stats(ses, NULL);
+
 	rad_packet_change_int(req->pack, NULL, "Acct-Input-Octets", (int) (ses->acct_rx_bytes & UINT32_MAX));
 	rad_packet_change_int(req->pack, NULL, "Acct-Output-Octets", (int) (ses->acct_tx_bytes & UINT32_MAX));
 	rad_packet_change_int(req->pack, NULL, "Acct-Input-Packets", (int) (ses->acct_rx_packets & UINT32_MAX));
@@ -541,4 +544,3 @@ int rad_acct_stop(struct radius_pd_t *rpd)
 
 	return 0;
 }
-
