@@ -150,6 +150,7 @@ ADD_EXECUTABLE(accel-pppd
 
 	cli/std_cmd.c
 	cli/show_sessions.c
+	cli/log_stream.c
 	cli/telnet.c
 	cli/tcp.c
 	cli/cli.c
@@ -199,4 +200,3 @@ IF (NOT DEFINED CPACK_TYPE)
 	INSTALL(DIRECTORY DESTINATION "${CMAKE_INSTALL_LOCALSTATEDIR}/log/accel-ppp")
 	INSTALL(DIRECTORY DESTINATION "${CMAKE_INSTALL_LOCALSTATEDIR}/lib/accel-ppp")
 ENDIF (NOT DEFINED CPACK_TYPE)
-
