@@ -14,11 +14,9 @@
 #include <netinet/ip.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
-#include <linux/if.h>
-#ifdef HAVE_GOOD_IFARP
-#include <linux/if_arp.h>
-#endif
-#include <linux/route.h>
+#include <net/if.h>
+#include <net/if_arp.h>
+#include <net/route.h>
 
 #include "events.h"
 #include "list.h"

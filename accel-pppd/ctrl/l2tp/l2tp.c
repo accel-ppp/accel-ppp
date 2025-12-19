@@ -854,16 +854,17 @@ out_err:
 	return -1;
 }
 
+static void l2tp_session_free_ptr(void *ptr)
+{
+	l2tp_session_free((struct l2tp_sess_t *)ptr);
+}
+
 static void l2tp_tunnel_free_sessions(struct l2tp_conn_t *conn)
 {
 	void *sessions = conn->sessions;
 
 	conn->sessions = NULL;
-#ifdef HAVE_FREE_FN_T
-	tdestroy(sessions, (__free_fn_t)l2tp_session_free);
-#else
-	tdestroy(sessions, (void(*)(void *))l2tp_session_free);
-#endif
+	tdestroy(sessions, l2tp_session_free_ptr);
 	/* Let l2tp_session_free() handle the session counter and
 	 * the reference held by the tunnel.
 	 */
