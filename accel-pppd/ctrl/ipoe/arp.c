@@ -13,10 +13,8 @@
 #include <netinet/ip.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
-#ifdef HAVE_GOOD_IFARP
-#include <linux/if_arp.h>
-#endif
-#include <linux/if_packet.h>
+#include <net/if_arp.h>
+#include <netpacket/packet.h>
 
 #include "list.h"
 #include "triton.h"
