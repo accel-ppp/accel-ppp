@@ -123,7 +123,7 @@ static void req_wakeup(struct rad_req_t *req)
 
 	if (ts.tv_sec < req->serv->fail_time || req->serv->need_free) {
 		req->active = 0;
-		req->serv->req_cnt--;
+		req->serv->req_cnt[req->type]--;
 		log_ppp_debug("radius(%i): server failed\n", req->serv->id);
 		pthread_mutex_unlock(&req->serv->lock);
 
@@ -151,7 +151,7 @@ int rad_server_req_cancel(struct rad_req_t *req, int full)
 	pthread_mutex_lock(&req->serv->lock);
 	if (req->entry.next) {
 		list_del(&req->entry);
-		req->serv->queue_cnt--;
+		req->serv->queue_cnt[req->type]--;
 		r = 1;
 	}
 	pthread_mutex_unlock(&req->serv->lock);
@@ -187,8 +187,21 @@ int rad_server_req_enter(struct rad_req_t *req)
 		return -1;
 
 	if (!req->serv->req_limit) {
-		if (req->send)
-			return req->send(req, 0);
+		__sync_add_and_fetch(&req->serv->req_cnt[req->type], 1);
+		req->active = 1;
+
+		if (req->send) {
+			r = req->send(req, 0);
+			if (r) {
+				if (r == -2) {
+					req->active = 0;
+					__sync_sub_and_fetch(&req->serv->req_cnt[req->type], 1);
+					rad_server_fail(req->serv);
+				} else
+					rad_server_req_exit(req);
+			}
+			return r;
+		}
 		return 0;
 	}
 
@@ -204,10 +217,10 @@ int rad_server_req_enter(struct rad_req_t *req)
 		return -1;
 	}
 
-	if (req->serv->req_cnt >= req->serv->req_limit) {
+	if (req->serv->req_cnt[req->type] >= req->serv->req_limit) {
 		if (req->send) {
-			list_add_tail(&req->entry, &req->serv->req_queue[req->prio]);
-			req->serv->queue_cnt++;
+			list_add_tail(&req->entry, &req->serv->req_queue[req->type]);
+			req->serv->queue_cnt[req->type]++;
 			log_ppp_debug("radius(%i): queue %p\n", req->serv->id, req);
 			pthread_mutex_unlock(&req->serv->lock);
 
@@ -221,8 +234,8 @@ int rad_server_req_enter(struct rad_req_t *req)
 		return 1;
 	}
 
-	req->serv->req_cnt++;
-	log_ppp_debug("radius(%i): req_enter %i\n", req->serv->id, req->serv->req_cnt);
+	req->serv->req_cnt[req->type]++;
+	log_ppp_debug("radius(%i): req_enter %i\n", req->serv->id, req->serv->req_cnt[req->type]);
 	pthread_mutex_unlock(&req->serv->lock);
 
 	req->active = 1;
@@ -233,7 +246,7 @@ int rad_server_req_enter(struct rad_req_t *req)
 			if (r == -2) {
 				req->active = 0;
 				pthread_mutex_lock(&req->serv->lock);
-				req->serv->req_cnt--;
+				req->serv->req_cnt[req->type]--;
 				pthread_mutex_unlock(&req->serv->lock);
 
 				rad_server_fail(req->serv);
@@ -249,30 +262,33 @@ void rad_server_req_exit(struct rad_req_t *req)
 {
 	struct rad_server_t *serv = req->serv;
 
-	if (!req->serv->req_limit)
+	if (!req->serv->req_limit) {
+		if (req->active) {
+			req->active = 0;
+			__sync_sub_and_fetch(&serv->req_cnt[req->type], 1);
+		}
 		return;
+	}
 
 	assert(req->active);
 
 	req->active = 0;
 
 	pthread_mutex_lock(&serv->lock);
-	serv->req_cnt--;
-	log_ppp_debug("radius(%i): req_exit %i\n", serv->id, serv->req_cnt);
-	assert(serv->req_cnt >= 0);
-	if (serv->req_cnt < serv->req_limit) {
+	serv->req_cnt[req->type]--;
+	log_ppp_debug("radius(%i): req_exit %i\n", serv->id, serv->req_cnt[req->type]);
+	assert(serv->req_cnt[req->type] >= 0);
+	if (serv->req_cnt[req->type] < serv->req_limit) {
 		struct list_head *list = NULL;
-		if (!list_empty(&serv->req_queue[0]))
-			list = &serv->req_queue[0];
-		else if (!list_empty(&serv->req_queue[1]))
-			list = &serv->req_queue[1];
+		if (!list_empty(&serv->req_queue[req->type]))
+			list = &serv->req_queue[req->type];
 
 		if (list) {
 			struct rad_req_t *r = list_entry(list->next, typeof(*r), entry);
 			log_ppp_debug("radius(%i): wakeup %p\n", serv->id, r);
 			list_del(&r->entry);
-			serv->queue_cnt--;
-			serv->req_cnt++;
+			serv->queue_cnt[req->type]--;
+			serv->req_cnt[req->type]++;
 			r->active = 1;
 			triton_context_call(r->rpd ? r->rpd->ses->ctrl->ctx : NULL, (triton_event_func)req_wakeup, r);
 		}
@@ -337,7 +353,8 @@ void rad_server_fail(struct rad_server_t *s)
 		triton_context_call(r->rpd ? r->rpd->ses->ctrl->ctx : NULL, (triton_event_func)req_wakeup_failed, r);
 	}
 
-	s->queue_cnt = 0;
+	s->queue_cnt[0] = 0;
+	s->queue_cnt[1] = 0;
 	s->stat_fail_cnt++;
 
 	pthread_mutex_unlock(&s->lock);
@@ -505,8 +522,8 @@ static void show_stat(struct rad_server_t *s, void *client)
 
 	cli_sendv(client, "  fail count: %lu\r\n", s->stat_fail_cnt);
 
-	cli_sendv(client, "  request count: %i\r\n", s->req_cnt);
-	cli_sendv(client, "  queue length: %i\r\n", s->queue_cnt);
+	cli_sendv(client, "  request count (auth/acct): %i/%i\r\n", s->req_cnt[0], s->req_cnt[1]);
+	cli_sendv(client, "  queue length (auth/acct): %i/%i\r\n", s->queue_cnt[0], s->queue_cnt[1]);
 
 	if (s->auth_port) {
 		cli_sendv(client, "  auth sent: %lu\r\n", s->stat_auth_sent);
