@@ -64,6 +64,7 @@ or specify other location via KDIR.
 Configuration
 -------------
 read man accel-ppp.conf
+For DM/CoA deployments, use the `dae-allowed` option to restrict source IPs.
 
 
 Built-in shaper

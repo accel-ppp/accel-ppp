@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -63,6 +64,15 @@ int conf_blast_protection;
 static LIST_HEAD(sessions);
 static pthread_rwlock_t sessions_lock = PTHREAD_RWLOCK_INITIALIZER;
 
+struct dae_allow_range {
+	struct list_head entry;
+	uint32_t begin;
+	uint32_t end;
+};
+
+static struct list_head *dae_allow_ranges;
+static pthread_rwlock_t dae_allow_lock = PTHREAD_RWLOCK_INITIALIZER;
+
 static void *pd_key;
 static struct ipdb_t ipdb;
 
@@ -111,7 +121,7 @@ static void parse_framed_route(struct radius_pd_t *rpd, const char *attr)
 				if (a == INADDR_NONE)
 					goto out_err;
 				mask = 33 - htonl(inet_addr(str));
-				if (~((1<<(32 - mask)) - 1) != a)
+				if ((uint32_t)(~(((uint64_t)1 << (32 - mask)) - 1)) != a)
 					goto out_err;
 			} else if (*ptr2 == ' ' || *ptr2 == 0) {
 				char *ptr3;
@@ -155,6 +165,155 @@ static void parse_framed_route(struct radius_pd_t *rpd, const char *attr)
 
 out_err:
 	log_ppp_warn("radius: failed to parse Framed-Route=%s\n", attr);
+}
+
+static char *trim_spaces(char *str)
+{
+	char *end;
+
+	while (isspace((unsigned char)*str))
+		++str;
+
+	if (*str == '\0')
+		return str;
+
+	end = str + strlen(str) - 1;
+	while (end > str && isspace((unsigned char)*end)) {
+		*end = '\0';
+		--end;
+	}
+
+	return str;
+}
+
+static void dae_allow_clear(void)
+{
+	struct dae_allow_range *range;
+
+	if (!dae_allow_ranges)
+		return;
+
+	while (!list_empty(dae_allow_ranges)) {
+		range = list_first_entry(dae_allow_ranges, typeof(*range), entry);
+		list_del(&range->entry);
+		_free(range);
+	}
+
+	_free(dae_allow_ranges);
+	dae_allow_ranges = NULL;
+}
+
+static int dae_allow_add(uint32_t begin, uint32_t end)
+{
+	struct dae_allow_range *range;
+
+	if (!dae_allow_ranges)
+		return -1;
+
+	range = _malloc(sizeof(*range));
+	if (!range)
+		return -1;
+
+	range->begin = begin;
+	range->end = end;
+	list_add_tail(&range->entry, dae_allow_ranges);
+
+	return 0;
+}
+
+static int dae_allow_parse_token(const char *token, uint32_t *begin, uint32_t *end)
+{
+	struct in_addr base_addr;
+	uint8_t suffix;
+	size_t len;
+
+	len = u_parse_ip4cidr(token, &base_addr, &suffix);
+	if (len && token[len] == '\0') {
+		uint32_t addr_hbo = ntohl(base_addr.s_addr);
+		uint32_t mask = (uint64_t)0xffffffff << (32 - suffix);
+		uint32_t ip_min = addr_hbo & mask;
+
+		*begin = ip_min;
+		*end = addr_hbo | ~mask;
+		if (ip_min != addr_hbo) {
+			struct in_addr min_addr = { .s_addr = htonl(ip_min) };
+			char ipbuf[INET_ADDRSTRLEN];
+
+			log_warn("radius: dae-allowed network %s is equivalent to %s/%hhu\n",
+				 token, u_ip4str(&min_addr, ipbuf), suffix);
+		}
+		return 0;
+	}
+
+	if (!inet_aton(token, &base_addr))
+		return -1;
+
+	*begin = ntohl(base_addr.s_addr);
+	*end = *begin;
+	return 0;
+}
+
+static int dae_allow_parse(const char *opt, int *entries)
+{
+	char *dup;
+	char *token;
+	char *saveptr;
+	int count = 0;
+
+	dup = _strdup(opt);
+	if (!dup)
+		return -1;
+
+	for (token = strtok_r(dup, ",", &saveptr); token;
+	     token = strtok_r(NULL, ",", &saveptr)) {
+		char *trimmed = trim_spaces(token);
+		uint32_t begin;
+		uint32_t end;
+
+		if (*trimmed == '\0')
+			continue;
+
+		if (dae_allow_parse_token(trimmed, &begin, &end)) {
+			log_warn("radius: dae-allowed invalid entry \"%s\"\n", trimmed);
+			continue;
+		}
+
+		if (dae_allow_add(begin, end)) {
+			_free(dup);
+			return -1;
+		}
+
+		++count;
+	}
+
+	_free(dup);
+	*entries = count;
+	return 0;
+}
+
+static int dae_allow_check(in_addr_t ipaddr)
+{
+	struct dae_allow_range *range;
+	uint32_t addr = ntohl(ipaddr);
+
+	list_for_each_entry(range, dae_allow_ranges, entry) {
+		if (addr >= range->begin && addr <= range->end)
+			return 0;
+	}
+
+	return -1;
+}
+
+int rad_dae_src_check(in_addr_t ipaddr)
+{
+	int res = 0;
+
+	pthread_rwlock_rdlock(&dae_allow_lock);
+	if (dae_allow_ranges)
+		res = dae_allow_check(ipaddr);
+	pthread_rwlock_unlock(&dae_allow_lock);
+
+	return res;
 }
 
 /* Parse a RADIUS Framed-IPv6-Route string.
@@ -1045,6 +1204,48 @@ static int load_config(void)
 	if (opt && parse_server(opt, &conf_dm_coa_server, &conf_dm_coa_port, &conf_dm_coa_secret, conf_dm_coa_bind_device, &conf_dm_coa_bind_default)) {
 		log_emerg("radius: failed to parse dae-server\n");
 		return -1;
+	}
+
+	{
+		int entries = 0;
+		int dae_allowed_present = 0;
+		int parse_rc = 0;
+
+		pthread_rwlock_wrlock(&dae_allow_lock);
+		dae_allow_clear();
+		opt = conf_get_opt("radius", "dae-allowed");
+		if (opt) {
+			dae_allowed_present = 1;
+			dae_allow_ranges = _malloc(sizeof(*dae_allow_ranges));
+			if (!dae_allow_ranges) {
+				log_emerg("radius: failed to allocate dae-allowed list\n");
+				parse_rc = -1;
+				goto dae_allow_unlock;
+			}
+			INIT_LIST_HEAD(dae_allow_ranges);
+			if (dae_allow_parse(opt, &entries)) {
+				log_emerg("radius: failed to parse dae-allowed\n");
+				dae_allow_clear();
+				parse_rc = -1;
+				goto dae_allow_unlock;
+			}
+		}
+
+		if (dae_allowed_present && entries == 0) {
+			log_warn("radius: dae-allowed has no valid entries, DAE source restrictions are disabled\n");
+			dae_allow_clear();
+		}
+
+		if (conf_dm_coa_secret && !dae_allow_ranges) {
+			if (dae_allowed_present)
+				log_warn("radius: dae-server configured without a valid dae-allowed list; this will become mandatory\n");
+			else
+				log_warn("radius: dae-server configured without dae-allowed; this will become mandatory\n");
+		}
+dae_allow_unlock:
+		pthread_rwlock_unlock(&dae_allow_lock);
+		if (parse_rc)
+			return -1;
 	}
 
 	opt = conf_get_opt("radius", "sid-in-auth");
