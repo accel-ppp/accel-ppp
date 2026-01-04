@@ -240,6 +240,7 @@ void rad_packet_print(struct rad_packet_t *pack, struct rad_server_t *s, void (*
 int rad_packet_send(struct rad_packet_t *pck, int fd, struct sockaddr_in *addr);
 
 void dm_coa_cancel(struct radius_pd_t *pd);
+int rad_dae_src_check(in_addr_t ipaddr);
 
 struct rad_server_t *rad_server_get(int);
 struct rad_server_t *rad_server_get2(int, in_addr_t, int);
@@ -267,4 +268,3 @@ unsigned long stat_accm_get_cnt(struct stat_accm_t *);
 unsigned long stat_accm_get_avg(struct stat_accm_t *);
 
 #endif
-

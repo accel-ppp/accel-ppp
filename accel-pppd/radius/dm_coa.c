@@ -267,6 +267,15 @@ static int dm_coa_read(struct triton_md_handler_t *h)
 			rad_packet_print(pack, NULL, log_debug);
 		}
 
+		if (rad_dae_src_check(addr.sin_addr.s_addr)) {
+			char ipbuf[INET_ADDRSTRLEN];
+			const char *ipstr;
+
+			ipstr = inet_ntop(AF_INET, &addr.sin_addr, ipbuf, sizeof(ipbuf));
+			log_warn("radius:dm_coa: source %s not allowed\n", ipstr ? ipstr : "unknown");
+			goto out_err_no_reply;
+		}
+
 		if (dm_coa_check_RA(pack, conf_dm_coa_secret)) {
 			log_warn("radius:dm_coa: RA validation failed\n");
 			goto out_err_no_reply;

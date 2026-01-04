@@ -1029,6 +1029,10 @@ Specifies IP address, port to bind and secret for Dynamic Authorization Extensio
 - device name or VRF to bind the connection. By default, the device name is undefined.
 .br
 .TP
+.BI "dae-allowed=" ip[,ip/cidr][,ip[/cidr]...]
+Specifies allowed source IPv4 addresses or CIDR ranges for DM/CoA requests.
+.br
+.TP
 .BI "dm_coa_secret=" secret (deprecated, use dae-server instead)
 Specifies secret to use in DM/CoA communication.
 .TP
