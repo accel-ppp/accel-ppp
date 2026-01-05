@@ -44,34 +44,6 @@ IF (RADIUS)
 	ADD_SUBDIRECTORY(radius)
 ENDIF (RADIUS)
 
-# define __free_fn_t in musl
-INCLUDE (CheckCSourceCompiles)
-CHECK_C_SOURCE_COMPILES("
-#include <stdlib.h>
-#include <search.h>
-int main(void)
-{
-	__free_fn_t *f;
-	return 0;
-}" HAVE_FREE_FN_T)
-IF (HAVE_FREE_FN_T)
-	ADD_DEFINITIONS(-DHAVE_FREE_FN_T)
-ENDIF (HAVE_FREE_FN_T)
-
-INCLUDE (CheckCSourceCompiles)
-CHECK_C_SOURCE_COMPILES("
-#include <sys/socket.h>
-#include <linux/if_arp.h>
-#include <net/ethernet.h>
-int main(void)
-{
-	return 0;
-}" HAVE_GOOD_IFARP)
-
-IF (HAVE_GOOD_IFARP)
-	ADD_DEFINITIONS(-DHAVE_GOOD_IFARP)
-ENDIF (HAVE_GOOD_IFARP)
-
 INCLUDE (CheckCSourceCompiles)
 CHECK_C_SOURCE_COMPILES("
 #include <utmp.h>
@@ -104,12 +76,6 @@ ENDIF (SHAPER)
 
 INCLUDE(CheckIncludeFile)
 CHECK_INCLUDE_FILE("linux/netfilter/ipset/ip_set.h" HAVE_IPSET)
-# MUSL does not have printf.h
-CHECK_INCLUDE_FILE("printf.h" HAVE_PRINTF_H)
-IF (HAVE_PRINTF_H)
-	ADD_DEFINITIONS(-DHAVE_PRINTF_H)
-ENDIF (HAVE_PRINTF_H)
-
 
 INCLUDE(CheckFunctionExists)
 CHECK_FUNCTION_EXISTS(setns HAVE_SETNS)
@@ -199,4 +165,3 @@ IF (NOT DEFINED CPACK_TYPE)
 	INSTALL(DIRECTORY DESTINATION "${CMAKE_INSTALL_LOCALSTATEDIR}/log/accel-ppp")
 	INSTALL(DIRECTORY DESTINATION "${CMAKE_INSTALL_LOCALSTATEDIR}/lib/accel-ppp")
 ENDIF (NOT DEFINED CPACK_TYPE)
-
