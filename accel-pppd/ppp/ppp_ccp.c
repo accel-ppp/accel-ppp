@@ -139,7 +139,10 @@ int ccp_layer_start(struct ppp_layer_data_t *ld)
 
 	log_ppp_debug("ccp_layer_start\n");
 
-	ccp_set_flags(ccp->ppp->unit_fd, 0, 0);
+#ifdef HAVE_SESSION_HOOKS
+	if (!(ccp->ppp->ses.hooks && ccp->ppp->ses.hooks->is_non_dev_ppp))
+#endif /* HAVE_SESSION_HOOKS */
+		ccp_set_flags(ccp->ppp->unit_fd, 0, 0);
 
 	if (list_empty(&ccp->options) || !conf_ccp) {
 		ccp->started = 1;
@@ -155,7 +158,11 @@ int ccp_layer_start(struct ppp_layer_data_t *ld)
 			return -1;
 	}
 
-	if (ccp_set_flags(ccp->ppp->unit_fd, 1, 0)) {
+	if (
+#ifdef HAVE_SESSION_HOOKS
+		!(ccp->ppp->ses.hooks && ccp->ppp->ses.hooks->is_non_dev_ppp) &&
+#endif /* HAVE_SESSION_HOOKS */
+		 ccp_set_flags(ccp->ppp->unit_fd, 1, 0)) {
 		ppp_fsm_close(&ccp->fsm);
 		return -1;
 	}
@@ -169,7 +176,10 @@ void ccp_layer_finish(struct ppp_layer_data_t *ld)
 
 	log_ppp_debug("ccp_layer_finish\n");
 
-	ccp_set_flags(ccp->ppp->unit_fd, 0, 0);
+#ifdef HAVE_SESSION_HOOKS
+	if (!(ccp->ppp->ses.hooks && ccp->ppp->ses.hooks->is_non_dev_ppp))
+#endif /* HAVE_SESSION_HOOKS */
+		ccp_set_flags(ccp->ppp->unit_fd, 0, 0);
 
 	ccp->fsm.fsm_state = FSM_Closed;
 
@@ -197,7 +207,11 @@ static void ccp_layer_up(struct ppp_fsm_t *fsm)
 	if (!ccp->started) {
 		log_ppp_debug("ccp_layer_started\n");
 		ccp->started = 1;
-		if (ccp_set_flags(ccp->ppp->unit_fd, 1, 1)) {
+		if (
+#ifdef HAVE_SESSION_HOOKS
+			!(ccp->ppp->ses.hooks && ccp->ppp->ses.hooks->is_non_dev_ppp) &&
+#endif /* HAVE_SESSION_HOOKS */
+			 ccp_set_flags(ccp->ppp->unit_fd, 1, 1)) {
 			ap_session_terminate(&ccp->ppp->ses, TERM_NAS_ERROR, 0);
 			return;
 		}
