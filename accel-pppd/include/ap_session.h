@@ -120,6 +120,9 @@ struct ap_session
 	uint64_t acct_rx_bytes_i;
 	uint64_t acct_tx_bytes_i;
 	int acct_start;
+#ifdef HAVE_SESSION_HOOKS
+	struct ap_session_hooks_t *hooks;
+#endif /* HAVE_SESSION_HOOKS */
 };
 
 struct ap_session_stat

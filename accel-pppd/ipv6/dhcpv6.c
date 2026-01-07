@@ -26,6 +26,7 @@
 #include "dhcpv6.h"
 
 #include "memdebug.h"
+#include "accel_iputils.h"
 
 #define BUF_SIZE 65536
 #define MAX_DNS_COUNT 3
@@ -162,7 +163,7 @@ static void ev_ses_finished(struct ap_session *ses)
 		if (pd->dp_active) {
 			struct ipv6db_addr_t *p;
 			list_for_each_entry(p, &ses->ipv6_dp->prefix_list, entry)
-				ip6route_del(0, &p->addr, p->prefix_len, NULL, 0, 0, NULL);
+				accel_ip6route_del(ses, 0, &p->addr, p->prefix_len, NULL, 0, 0, ses->vrf_name);
 		}
 
 		ipdb_put_ipv6_prefix(ses, ses->ipv6_dp);
@@ -184,7 +185,7 @@ static void insert_dp_routes(struct ap_session *ses, struct dhcpv6_pd *pd, struc
 		addr = NULL;
 
 	list_for_each_entry(p, &ses->ipv6_dp->prefix_list, entry) {
-		if (ip6route_add(ses->ifindex, &p->addr, p->prefix_len, addr, 0, 0, NULL)) {
+		if (accel_ip6route_add(ses, ses->ifindex, &p->addr, p->prefix_len, addr, 0, 0, ses->vrf_name)) {
 			err = errno;
 			inet_ntop(AF_INET6, &p->addr, str1, sizeof(str1));
 			if (addr)
@@ -303,12 +304,12 @@ static void dhcpv6_send_reply(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, i
 							memcpy(addr.s6_addr + 8, &ses->ipv6->intf_id, 8);
 							memcpy(peer_addr.s6_addr, &a->addr, 8);
 							memcpy(peer_addr.s6_addr + 8, &ses->ipv6->peer_intf_id, 8);
-							ip6addr_add_peer(ses->ifindex, &addr, &peer_addr);
+							accel_ip6addr_add_peer(ses, ses->ifindex, &addr, &peer_addr);
 						} else {
 							build_ip6_addr(a, ses->ipv6->intf_id, &addr);
 							if (memcmp(&addr, &ia_addr->addr, sizeof(addr)) == 0)
 								build_ip6_addr(a, ~ses->ipv6->intf_id, &addr);
-							ip6addr_add(ses->ifindex, &addr, a->prefix_len);
+							accel_ip6addr_add(ses, ses->ifindex, &addr, a->prefix_len);
 						}
 						a->installed = 1;
 					}
