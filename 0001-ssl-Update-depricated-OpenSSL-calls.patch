@@ -1,0 +1,1773 @@
+From a2dd2a52897d57eed782d964e14fd343757f8e11 Mon Sep 17 00:00:00 2001
+From: Andrii Melnychenko <a.melnychenko@vyos.io>
+Date: Wed, 7 Jan 2026 13:09:14 +0100
+Subject: [PATCH] ssl: Update depricated OpenSSL calls
+
+Updated MD4, MD5, SHA1, and DEC API usage.
+Updated auth, l2tp, pppoe, sstp plugins.
+Updated chap-secrets and radius routines.
+
+Signed-off-by: Andrii Melnychenko <a.melnychenko@vyos.io>
+---
+ accel-pppd/auth/auth_chap_md5.c  |  30 +++--
+ accel-pppd/auth/auth_mschap_v1.c |  71 ++++++++----
+ accel-pppd/auth/auth_mschap_v2.c | 177 ++++++++++++++++++-----------
+ accel-pppd/ctrl/l2tp/l2tp.c      |  36 +++---
+ accel-pppd/ctrl/l2tp/packet.c    | 126 ++++++++++++---------
+ accel-pppd/ctrl/pppoe/pppoe.c    | 159 +++++++++++++++++---------
+ accel-pppd/ctrl/pppoe/pppoe.h    |   7 +-
+ accel-pppd/ctrl/sstp/sstp.c      |  11 +-
+ accel-pppd/extra/chap-secrets.c  | 189 +++++++++++++++++++------------
+ accel-pppd/radius/acct.c         |  17 ++-
+ accel-pppd/radius/auth.c         |  89 +++++++++------
+ accel-pppd/radius/dm_coa.c       |  50 +++++---
+ accel-pppd/radius/serv.c         |  21 ++--
+ 13 files changed, 615 insertions(+), 368 deletions(-)
+
+diff --git a/accel-pppd/auth/auth_chap_md5.c b/accel-pppd/auth/auth_chap_md5.c
+index 9cfecb7f..37a7c168 100644
+--- a/accel-pppd/auth/auth_chap_md5.c
++++ b/accel-pppd/auth/auth_chap_md5.c
+@@ -7,7 +7,7 @@
+ #include <stdio.h>
+ #include <arpa/inet.h>
+ 
+-#include <openssl/md5.h>
++#include <openssl/evp.h>
+ 
+ #include "log.h"
+ #include "events.h"
+@@ -289,8 +289,8 @@ static void auth_result(struct chap_auth_data *ad, int res)
+ 
+ static void chap_recv_response(struct chap_auth_data *ad, struct chap_hdr *hdr)
+ {
+-	MD5_CTX md5_ctx;
+-	uint8_t md5[MD5_DIGEST_LENGTH];
++	EVP_MD_CTX *evp_ctx = NULL;
++	uint8_t md5[EVP_MAX_MD_SIZE];
+ 	char *passwd;
+ 	char *name;
+ 	int r;
+@@ -363,13 +363,23 @@ static void chap_recv_response(struct chap_auth_data *ad, struct chap_hdr *hdr)
+ 			return;
+ 		}
+ 
+-		MD5_Init(&md5_ctx);
+-		MD5_Update(&md5_ctx,&msg->hdr.id,1);
+-		MD5_Update(&md5_ctx,passwd,strlen(passwd));
+-		MD5_Update(&md5_ctx,ad->val,VALUE_SIZE);
+-		MD5_Final(md5,&md5_ctx);
+-
+-		if (memcmp(md5,msg->val,sizeof(md5)))
++		evp_ctx = EVP_MD_CTX_new();
++		if (evp_ctx == NULL) {
++			_free(name);
++			_free(passwd);
++			if (conf_ppp_verbose)
++				log_ppp_error("chap-md5: can't create EVP context\n");
++			chap_send_failure(ad);
++			return;
++		}
++		EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++		EVP_DigestUpdate(evp_ctx, &msg->hdr.id, 1);
++		EVP_DigestUpdate(evp_ctx, passwd, strlen(passwd));
++		EVP_DigestUpdate(evp_ctx, ad->val, VALUE_SIZE);
++		EVP_DigestFinal_ex(evp_ctx, md5, NULL);
++		EVP_MD_CTX_free(evp_ctx);
++
++		if (memcmp(md5,msg->val, EVP_MD_get_size(EVP_md5())))
+ 		{
+ 			if (conf_ppp_verbose)
+ 				log_ppp_warn("chap-md5: challenge response mismatch\n");
+diff --git a/accel-pppd/auth/auth_mschap_v1.c b/accel-pppd/auth/auth_mschap_v1.c
+index 909bcc5c..3aade1bb 100644
+--- a/accel-pppd/auth/auth_mschap_v1.c
++++ b/accel-pppd/auth/auth_mschap_v1.c
+@@ -8,9 +8,8 @@
+ #include <byteswap.h>
+ #include <arpa/inet.h>
+ 
+-#include <openssl/md4.h>
+-#include <openssl/sha.h>
+ #include <openssl/des.h>
++#include <openssl/evp.h>
+ 
+ #include "log.h"
+ #include "ppp.h"
+@@ -397,15 +396,20 @@ static void chap_recv_response(struct chap_auth_data *ad, struct chap_hdr *hdr)
+ 
+ static void des_encrypt(const uint8_t *input, const uint8_t *key, uint8_t *output)
+ {
+-	int i, j, parity;
++	int i, j, parity, outl;
+ 	union
+ 	{
+ 		uint64_t u64;
+ 		uint8_t buf[8];
+ 	} p_key;
+-	DES_cblock cb;
+-	DES_cblock res;
+-	DES_key_schedule ks;
++	unsigned char cb[EVP_MAX_KEY_LENGTH];
++	unsigned char padding[EVP_MAX_BLOCK_LENGTH];
++	EVP_CIPHER_CTX *des_ctx = EVP_CIPHER_CTX_new();
++	if (des_ctx == NULL) {
++		if (conf_ppp_verbose)
++			log_ppp_error("mschap-v1: can't create EVP cipher context\n");
++		return;
++	}
+ 
+ 	memcpy(p_key.buf, key, 7);
+ 	p_key.u64 = be64toh(p_key.u64);
+@@ -418,21 +422,29 @@ static void des_encrypt(const uint8_t *input, const uint8_t *key, uint8_t *outpu
+ 		cb[i] |= (~parity) & 1;
+ 	}
+ 
+-	DES_set_key_checked(&cb, &ks);
+-	memcpy(cb, input, 8);
+-	DES_ecb_encrypt(&cb, &res, &ks, DES_ENCRYPT);
+-	memcpy(output, res, 8);
++	EVP_EncryptInit_ex(des_ctx, EVP_des_ecb(), NULL, cb, NULL);
++	EVP_CIPHER_CTX_set_padding(des_ctx, 0);
++	EVP_EncryptUpdate(des_ctx, output, &outl, input, EVP_CIPHER_block_size(EVP_des_ecb()));
++	EVP_EncryptFinal_ex(des_ctx, padding, &outl);
++
++	EVP_CIPHER_CTX_free(des_ctx);
+ }
+ 
+ static int chap_check_response(struct chap_auth_data *ad, struct chap_response *msg, const char *name)
+ {
+-	MD4_CTX md4_ctx;
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
+ 	uint8_t z_hash[21];
+ 	uint8_t nt_hash[24];
+ 	char *passwd;
+ 	char *u_passwd;
+ 	int i;
+ 
++	if (evp_ctx == NULL) {
++		if (conf_ppp_verbose)
++			log_ppp_error("mschap-v1: can't create EVP md context\n");
++		return PWDB_DENIED;
++	}
++
+ 	passwd = pwdb_get_passwd(&ad->ppp->ses, name);
+ 	if (!passwd) {
+ 		if (conf_ppp_verbose)
+@@ -447,9 +459,11 @@ static int chap_check_response(struct chap_auth_data *ad, struct chap_response *
+ 	}
+ 
+ 	memset(z_hash, 0, sizeof(z_hash));
+-	MD4_Init(&md4_ctx);
+-	MD4_Update(&md4_ctx, u_passwd, strlen(passwd) * 2);
+-	MD4_Final(z_hash, &md4_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_md4(), NULL);
++	EVP_DigestUpdate(evp_ctx, u_passwd, strlen(passwd) * 2);
++	EVP_DigestFinal_ex(evp_ctx, z_hash, NULL);
++
++	EVP_MD_CTX_free(evp_ctx);
+ 
+ 	des_encrypt(ad->val, z_hash, nt_hash);
+ 	des_encrypt(ad->val, z_hash + 7, nt_hash + 8);
+@@ -470,8 +484,7 @@ static int chap_check(uint8_t *ptr)
+ 
+ static void set_mppe_keys(struct chap_auth_data *ad, uint8_t *z_hash)
+ {
+-	MD4_CTX md4_ctx;
+-	SHA_CTX sha_ctx;
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
+ 	uint8_t digest[20];
+ 
+ 	struct ev_mppe_keys_t ev_mppe = {
+@@ -481,17 +494,27 @@ static void set_mppe_keys(struct chap_auth_data *ad, uint8_t *z_hash)
+ 		.send_key = digest,
+ 	};
+ 
++	if (evp_ctx == NULL) {
++		if (conf_ppp_verbose)
++			log_ppp_error("mschap-v1: can't create EVP md context\n");
++		return;
++	}
++
+ 	//NtPasswordHashHash
+-	MD4_Init(&md4_ctx);
+-	MD4_Update(&md4_ctx, z_hash, 16);
+-	MD4_Final(digest, &md4_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_md4(), NULL);
++	EVP_DigestUpdate(evp_ctx, z_hash, 16);
++	EVP_DigestFinal_ex(evp_ctx, digest, NULL);
++
++	EVP_MD_CTX_reset(evp_ctx);
+ 
+ 	//Get_Start_Key
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx, digest, 16);
+-	SHA1_Update(&sha_ctx, digest, 16);
+-	SHA1_Update(&sha_ctx, ad->val, VALUE_SIZE);
+-	SHA1_Final(digest, &sha_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, digest, 16);
++	EVP_DigestUpdate(evp_ctx, digest, 16);
++	EVP_DigestUpdate(evp_ctx, ad->val, VALUE_SIZE);
++	EVP_DigestFinal_ex(evp_ctx, digest, NULL);
++
++	EVP_MD_CTX_free(evp_ctx);
+ 
+ 	triton_event_fire(EV_MPPE_KEYS, &ev_mppe);
+ }
+diff --git a/accel-pppd/auth/auth_mschap_v2.c b/accel-pppd/auth/auth_mschap_v2.c
+index 440a0995..a2c4d55c 100644
+--- a/accel-pppd/auth/auth_mschap_v2.c
++++ b/accel-pppd/auth/auth_mschap_v2.c
+@@ -8,9 +8,8 @@
+ #include <byteswap.h>
+ #include <arpa/inet.h>
+ 
+-#include <openssl/md4.h>
+-#include <openssl/sha.h>
+ #include <openssl/des.h>
++#include <openssl/evp.h>
+ 
+ #include "log.h"
+ #include "ppp.h"
+@@ -228,13 +227,12 @@ static void chap_send_success(struct chap_auth_data *ad, int id, const char *aut
+ 
+ static int generate_response(struct chap_auth_data *ad, struct chap_response *msg, const char *name, char *authenticator)
+ {
+-	MD4_CTX md4_ctx;
+-	SHA_CTX sha_ctx;
++	EVP_MD_CTX *evp_ctx = NULL;
+ 	char *passwd;
+ 	char *u_passwd;
+-	uint8_t pw_hash[MD4_DIGEST_LENGTH];
+-	uint8_t c_hash[SHA_DIGEST_LENGTH];
+-	uint8_t response[SHA_DIGEST_LENGTH];
++	uint8_t pw_hash[EVP_MAX_MD_SIZE];
++	uint8_t c_hash[EVP_MAX_MD_SIZE];
++	uint8_t response[EVP_MAX_MD_SIZE];
+ 	int i;
+ 
+ 	uint8_t magic1[39] =
+@@ -261,31 +259,44 @@ static int generate_response(struct chap_auth_data *ad, struct chap_response *ms
+ 		u_passwd[i*2+1]=0;
+ 	}
+ 
+-	MD4_Init(&md4_ctx);
+-	MD4_Update(&md4_ctx,u_passwd,strlen(passwd)*2);
+-	MD4_Final(pw_hash,&md4_ctx);
++	evp_ctx = EVP_MD_CTX_new();
++	if (evp_ctx == NULL) {
++		_free(u_passwd);
++		_free(passwd);
++		if (conf_ppp_verbose)
++			log_ppp_error("mschap-v2: can't create EVP context\n");
++		return -1;
++	}
++
++	EVP_DigestInit_ex(evp_ctx, EVP_md4(), NULL);
++	EVP_DigestUpdate(evp_ctx, u_passwd, strlen(passwd)*2);
++	EVP_DigestFinal_ex(evp_ctx, pw_hash, NULL);
++
++	EVP_DigestInit_ex(evp_ctx, EVP_md4(), NULL);
++	EVP_DigestUpdate(evp_ctx, pw_hash, 16);
++	EVP_DigestFinal_ex(evp_ctx, pw_hash, NULL);
++
++	EVP_MD_CTX_reset(evp_ctx);
+ 
+-	MD4_Init(&md4_ctx);
+-	MD4_Update(&md4_ctx,pw_hash,16);
+-	MD4_Final(pw_hash,&md4_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, pw_hash, 16);
++	EVP_DigestUpdate(evp_ctx, msg->nt_hash, 24);
++	EVP_DigestUpdate(evp_ctx, magic1, 39);
++	EVP_DigestFinal_ex(evp_ctx, response, NULL);
+ 
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx,pw_hash,16);
+-	SHA1_Update(&sha_ctx,msg->nt_hash,24);
+-	SHA1_Update(&sha_ctx,magic1,39);
+-	SHA1_Final(response,&sha_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, msg->peer_challenge, 16);
++	EVP_DigestUpdate(evp_ctx, ad->val, 16);
++	EVP_DigestUpdate(evp_ctx, name, strlen(name));
++	EVP_DigestFinal_ex(evp_ctx, c_hash, NULL);
+ 
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx,msg->peer_challenge,16);
+-	SHA1_Update(&sha_ctx,ad->val,16);
+-	SHA1_Update(&sha_ctx,name,strlen(name));
+-	SHA1_Final(c_hash,&sha_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, response, 20);
++	EVP_DigestUpdate(evp_ctx, c_hash, 8);
++	EVP_DigestUpdate(evp_ctx, magic2, 41);
++	EVP_DigestFinal_ex(evp_ctx, response, NULL);
+ 
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx,response,20);
+-	SHA1_Update(&sha_ctx,c_hash,8);
+-	SHA1_Update(&sha_ctx,magic2,41);
+-	SHA1_Final(response,&sha_ctx);
++	EVP_MD_CTX_free(evp_ctx);
+ 
+ 	for(i=0; i<20; i++)
+ 		sprintf(authenticator+i*2,"%02X",response[i]);
+@@ -479,15 +490,20 @@ static void chap_recv_response(struct chap_auth_data *ad, struct chap_hdr *hdr)
+ 
+ static void des_encrypt(const uint8_t *input, const uint8_t *key, uint8_t *output)
+ {
+-	int i,j,parity;
++	int i,j,parity,outl;
+ 	union
+ 	{
+ 		uint64_t u64;
+ 		uint8_t buf[8];
+ 	} p_key;
+-	DES_cblock cb;
+-	DES_cblock res;
+-	DES_key_schedule ks;
++	unsigned char cb[EVP_MAX_KEY_LENGTH];
++	unsigned char padding[EVP_MAX_BLOCK_LENGTH];
++	EVP_CIPHER_CTX *des_ctx = EVP_CIPHER_CTX_new();
++	if (des_ctx == NULL) {
++		if (conf_ppp_verbose)
++			log_ppp_error("mschap-v2: can't create EVP cipher context\n");
++		return;
++	}
+ 
+ 	memcpy(p_key.buf,key,7);
+ 	p_key.u64 = be64toh(p_key.u64);
+@@ -500,18 +516,19 @@ static void des_encrypt(const uint8_t *input, const uint8_t *key, uint8_t *outpu
+ 		cb[i]|=(~parity)&1;
+ 	}
+ 
+-	DES_set_key_checked(&cb, &ks);
+-	memcpy(cb,input,8);
+-	DES_ecb_encrypt(&cb,&res,&ks,DES_ENCRYPT);
+-	memcpy(output,res,8);
++	EVP_EncryptInit_ex(des_ctx, EVP_des_ecb(), NULL, cb, NULL);
++	EVP_CIPHER_CTX_set_padding(des_ctx, 0);
++	EVP_EncryptUpdate(des_ctx, output, &outl, input, EVP_CIPHER_block_size(EVP_des_ecb()));
++	EVP_EncryptFinal_ex(des_ctx, padding, &outl);
++
++	EVP_CIPHER_CTX_free(des_ctx);
+ }
+ 
+ static int chap_check_response(struct chap_auth_data *ad, struct chap_response *msg, const char *name)
+ {
+-	MD4_CTX md4_ctx;
+-	SHA_CTX sha_ctx;
++	EVP_MD_CTX *evp_ctx = NULL;
+ 	uint8_t z_hash[21];
+-	uint8_t c_hash[SHA_DIGEST_LENGTH];
++	uint8_t c_hash[EVP_MAX_MD_SIZE];
+ 	uint8_t nt_hash[24];
+ 	char *passwd;
+ 	char *u_passwd;
+@@ -530,16 +547,29 @@ static int chap_check_response(struct chap_auth_data *ad, struct chap_response *
+ 		u_passwd[i*2+1]=0;
+ 	}
+ 
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx, msg->peer_challenge, 16);
+-	SHA1_Update(&sha_ctx, ad->val, 16);
+-	SHA1_Update(&sha_ctx, name, strlen(name));
+-	SHA1_Final(c_hash, &sha_ctx);
++	evp_ctx = EVP_MD_CTX_new();
++	if (evp_ctx == NULL) {
++		_free(u_passwd);
++		_free(passwd);
++		if (conf_ppp_verbose)
++			log_ppp_error("mschap-v2: can't create EVP context\n");
++		return -1;
++	}
++
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, msg->peer_challenge, 16);
++	EVP_DigestUpdate(evp_ctx, ad->val, 16);
++	EVP_DigestUpdate(evp_ctx, name, strlen(name));
++	EVP_DigestFinal_ex(evp_ctx, c_hash, NULL);
++
++	EVP_MD_CTX_reset(evp_ctx);
+ 
+ 	memset(z_hash, 0, sizeof(z_hash));
+-	MD4_Init(&md4_ctx);
+-	MD4_Update(&md4_ctx, u_passwd, strlen(passwd) * 2);
+-	MD4_Final(z_hash, &md4_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_md4(), NULL);
++	EVP_DigestUpdate(evp_ctx, u_passwd, strlen(passwd) * 2);
++	EVP_DigestFinal_ex(evp_ctx, z_hash, NULL);
++
++	EVP_MD_CTX_free(evp_ctx);
+ 
+ 	des_encrypt(c_hash, z_hash, nt_hash);
+ 	des_encrypt(c_hash, z_hash + 7, nt_hash + 8);
+@@ -555,8 +585,7 @@ static int chap_check_response(struct chap_auth_data *ad, struct chap_response *
+ 
+ static void set_mppe_keys(struct chap_auth_data *ad, uint8_t *z_hash, uint8_t *nt_hash)
+ {
+-	MD4_CTX md4_ctx;
+-	SHA_CTX sha_ctx;
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
+ 	uint8_t digest[20];
+ 	uint8_t send_key[20];
+ 	uint8_t recv_key[20];
+@@ -607,33 +636,43 @@ static void set_mppe_keys(struct chap_auth_data *ad, uint8_t *z_hash, uint8_t *n
+ 		.send_key = send_key,
+ 	};
+ 
++	if (evp_ctx == NULL) {
++		if (conf_ppp_verbose)
++			log_ppp_error("mschap-v2: can't create EVP context\n");
++		return;
++	}
++
+ 	//NtPasswordHashHash
+-	MD4_Init(&md4_ctx);
+-	MD4_Update(&md4_ctx, z_hash, 16);
+-	MD4_Final(digest, &md4_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_md4(), NULL);
++	EVP_DigestUpdate(evp_ctx, z_hash, 16);
++	EVP_DigestFinal_ex(evp_ctx, digest, NULL);
++
++	EVP_MD_CTX_reset(evp_ctx);
+ 
+ 	//GetMasterKey
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx, digest, 16);
+-	SHA1_Update(&sha_ctx, nt_hash, 24);
+-	SHA1_Update(&sha_ctx, magic1, sizeof(magic1));
+-	SHA1_Final(digest, &sha_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, digest, 16);
++	EVP_DigestUpdate(evp_ctx, nt_hash, 24);
++	EVP_DigestUpdate(evp_ctx, magic1, sizeof(magic1));
++	EVP_DigestFinal_ex(evp_ctx, digest, NULL);
+ 
+ 	//send key
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx, digest, 16);
+-	SHA1_Update(&sha_ctx, pad1, sizeof(pad1));
+-	SHA1_Update(&sha_ctx, magic3, sizeof(magic2));
+-	SHA1_Update(&sha_ctx, pad2, sizeof(pad2));
+-	SHA1_Final(send_key, &sha_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, digest, 16);
++	EVP_DigestUpdate(evp_ctx, pad1, sizeof(pad1));
++	EVP_DigestUpdate(evp_ctx, magic3, sizeof(magic3));
++	EVP_DigestUpdate(evp_ctx, pad2, sizeof(pad2));
++	EVP_DigestFinal_ex(evp_ctx, send_key, NULL);
+ 
+ 	//recv key
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx, digest, 16);
+-	SHA1_Update(&sha_ctx, pad1, sizeof(pad1));
+-	SHA1_Update(&sha_ctx, magic2, sizeof(magic3));
+-	SHA1_Update(&sha_ctx, pad2, sizeof(pad2));
+-	SHA1_Final(recv_key, &sha_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, digest, 16);
++	EVP_DigestUpdate(evp_ctx, pad1, sizeof(pad1));
++	EVP_DigestUpdate(evp_ctx, magic2, sizeof(magic2));
++	EVP_DigestUpdate(evp_ctx, pad2, sizeof(pad2));
++	EVP_DigestFinal_ex(evp_ctx, recv_key, NULL);
++
++	EVP_MD_CTX_free(evp_ctx);
+ 
+ 	triton_event_fire(EV_MPPE_KEYS, &ev_mppe);
+ }
+diff --git a/accel-pppd/ctrl/l2tp/l2tp.c b/accel-pppd/ctrl/l2tp/l2tp.c
+index d6807377..ecf50370 100644
+--- a/accel-pppd/ctrl/l2tp/l2tp.c
++++ b/accel-pppd/ctrl/l2tp/l2tp.c
+@@ -16,7 +16,7 @@
+ #include <linux/if_ether.h>
+ #include <linux/if_pppox.h>
+ 
+-#include <openssl/md5.h>
++#include <openssl/evp.h>
+ 
+ #include "triton.h"
+ #include "mempool.h"
+@@ -228,15 +228,20 @@ static inline void comp_chap_md5(uint8_t *md5, uint8_t ident,
+ 				 const void *secret, size_t secret_len,
+ 				 const void *chall, size_t chall_len)
+ {
+-	MD5_CTX md5_ctx;
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
++	if (evp_ctx == NULL) {
++		return;
++	}
++
++	memset(md5, 0, EVP_MD_get_size(EVP_md5()));
+ 
+-	memset(md5, 0, MD5_DIGEST_LENGTH);
++	EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++	EVP_DigestUpdate(evp_ctx, &ident, sizeof(ident));
++	EVP_DigestUpdate(evp_ctx, secret, secret_len);
++	EVP_DigestUpdate(evp_ctx, chall, chall_len);
++	EVP_DigestFinal_ex(evp_ctx, md5, NULL);
+ 
+-	MD5_Init(&md5_ctx);
+-	MD5_Update(&md5_ctx, &ident, sizeof(ident));
+-	MD5_Update(&md5_ctx, secret, secret_len);
+-	MD5_Update(&md5_ctx, chall, chall_len);
+-	MD5_Final(md5, &md5_ctx);
++	EVP_MD_CTX_free(evp_ctx);
+ }
+ 
+ static inline int nsnr_cmp(uint16_t ns, uint16_t nr)
+@@ -410,7 +415,7 @@ static int l2tp_tunnel_genchallresp(uint8_t msgident,
+ 				    const struct l2tp_conn_t *conn,
+ 				    struct l2tp_packet_t *pack)
+ {
+-	uint8_t challresp[MD5_DIGEST_LENGTH];
++	uint8_t challresp[EVP_MAX_MD_SIZE];
+ 
+ 	if (conn->challenge == NULL) {
+ 		if (conn->secret && conn->secret_len > 0) {
+@@ -430,7 +435,7 @@ static int l2tp_tunnel_genchallresp(uint8_t msgident,
+ 	comp_chap_md5(challresp, msgident, conn->secret, conn->secret_len,
+ 		      conn->challenge, conn->challenge_len);
+ 	if (l2tp_packet_add_octets(pack, Challenge_Response, challresp,
+-				   MD5_DIGEST_LENGTH, 1) < 0) {
++				   EVP_MD_get_size(EVP_md5()), 1) < 0) {
+ 		log_tunnel(log_error, conn,
+ 			   "impossible to generate Challenge Response:"
+ 			   " adding data to packet failed\n");
+@@ -444,7 +449,8 @@ static int l2tp_tunnel_checkchallresp(uint8_t msgident,
+ 				      const struct l2tp_conn_t *conn,
+ 				      const struct l2tp_attr_t *challresp)
+ {
+-	uint8_t challref[MD5_DIGEST_LENGTH];
++	uint8_t challref[EVP_MAX_MD_SIZE];
++	size_t md5_digest_length = EVP_MD_get_size(EVP_md5());
+ 
+ 	if (conn->secret == NULL || conn->secret_len == 0) {
+ 		if (challresp) {
+@@ -465,7 +471,7 @@ static int l2tp_tunnel_checkchallresp(uint8_t msgident,
+ 		log_tunnel(log_error, conn, "impossible to authenticate peer:"
+ 			   " no Challenge Response sent by peer\n");
+ 		return -1;
+-	} else if (challresp->length != MD5_DIGEST_LENGTH) {
++	} else if (challresp->length != md5_digest_length) {
+ 		log_tunnel(log_error, conn, "impossible to authenticate peer:"
+ 			   " invalid Challenge Response sent by peer"
+ 			   " (inconsistent length: %i bytes)\n",
+@@ -475,7 +481,7 @@ static int l2tp_tunnel_checkchallresp(uint8_t msgident,
+ 
+ 	comp_chap_md5(challref, msgident, conn->secret, conn->secret_len,
+ 		      conn->challenge, conn->challenge_len);
+-	if (memcmp(challref, challresp->val.octets, MD5_DIGEST_LENGTH) != 0) {
++	if (memcmp(challref, challresp->val.octets, md5_digest_length) != 0) {
+ 		log_tunnel(log_error, conn, "impossible to authenticate peer:"
+ 			   " invalid Challenge Response sent by peer"
+ 			   " (wrong secret)\n");
+@@ -2295,7 +2301,7 @@ static void l2tp_send_SCCRQ(void *peer_addr)
+ 				   " from urandom\n");
+ 		goto pack_err;
+ 	}
+-	chall_len = (chall_len & 0x007F) + MD5_DIGEST_LENGTH;
++	chall_len = (chall_len & 0x007F) + EVP_MD_get_size(EVP_md5());
+ 	if (l2tp_tunnel_genchall(chall_len, conn, pack) < 0) {
+ 		log_tunnel(log_error, conn, "impossible to send SCCRQ:"
+ 			   " Challenge generation failed\n");
+@@ -2390,7 +2396,7 @@ static void l2tp_send_SCCRP(struct l2tp_conn_t *conn)
+ 				   " from urandom\n");
+ 		goto out_err;
+ 	}
+-	chall_len = (chall_len & 0x007F) + MD5_DIGEST_LENGTH;
++	chall_len = (chall_len & 0x007F) + EVP_MD_get_size(EVP_md5());
+ 	if (l2tp_tunnel_genchall(chall_len, conn, pack) < 0) {
+ 		log_tunnel(log_error, conn, "impossible to send SCCRP:"
+ 			   " Challenge generation failed\n");
+diff --git a/accel-pppd/ctrl/l2tp/packet.c b/accel-pppd/ctrl/l2tp/packet.c
+index 1e1488b5..7c28e85e 100644
+--- a/accel-pppd/ctrl/l2tp/packet.c
++++ b/accel-pppd/ctrl/l2tp/packet.c
+@@ -8,7 +8,7 @@
+ #include <fcntl.h>
+ #include <arpa/inet.h>
+ 
+-#include <openssl/md5.h>
++#include <openssl/evp.h>
+ 
+ #include "triton.h"
+ #include "log.h"
+@@ -150,9 +150,9 @@ static void memxor(uint8_t *dst, const uint8_t *src, size_t sz)
+ static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
+ 		      const char *secret, size_t secret_len)
+ {
+-	MD5_CTX md5_ctx;
+-	uint8_t md5[MD5_DIGEST_LENGTH];
+-	uint8_t p1[MD5_DIGEST_LENGTH];
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
++	uint8_t md5[EVP_MAX_MD_SIZE];
++	uint8_t p1[EVP_MAX_MD_SIZE];
+ 	uint8_t *prev_block = NULL;
+ 	uint16_t avp_len;
+ 	uint16_t attr_len;
+@@ -160,6 +160,12 @@ static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
+ 	uint16_t bytes_left;
+ 	uint16_t blocks_left;
+ 	uint16_t last_block_len;
++	size_t md5_digest_length = EVP_MD_get_size(EVP_md5());
++
++	if (evp_ctx == NULL) {
++		log_warn("l2tp: can't create EVP context\n");
++		return -1;
++	}
+ 
+ 	avp_len = avp->flags & L2TP_AVP_LEN_MASK;
+ 	if (avp_len < sizeof(struct l2tp_avp_t) + 2) {
+@@ -168,28 +174,31 @@ static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
+ 		log_warn("l2tp: incorrect hidden avp received (type %hu):"
+ 			 " length too small (%hu bytes)\n",
+ 			 ntohs(avp->type), avp_len);
++		EVP_MD_CTX_free(evp_ctx);
+ 		return -1;
+ 	}
+ 	attr_len = avp_len - sizeof(struct l2tp_avp_t);
+ 
+ 	/* Decode first block */
+-	MD5_Init(&md5_ctx);
+-	MD5_Update(&md5_ctx, &avp->type, sizeof(avp->type));
+-	MD5_Update(&md5_ctx, secret, secret_len);
+-	MD5_Update(&md5_ctx, RV->val.octets, RV->length);
+-	MD5_Final(p1, &md5_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++	EVP_DigestUpdate(evp_ctx, &avp->type, sizeof(avp->type));
++	EVP_DigestUpdate(evp_ctx, secret, secret_len);
++	EVP_DigestUpdate(evp_ctx, RV->val.octets, RV->length);
++	EVP_DigestFinal_ex(evp_ctx, p1, NULL);
+ 
+-	if (attr_len <= MD5_DIGEST_LENGTH) {
++	if (attr_len <= md5_digest_length) {
+ 		memxor(avp->val, p1, attr_len);
++		EVP_MD_CTX_free(evp_ctx);
+ 		return 0;
+ 	}
+ 
+-	memxor(p1, avp->val, MD5_DIGEST_LENGTH);
++	memxor(p1, avp->val, md5_digest_length);
+ 	orig_attr_len = ntohs(*(uint16_t *)p1);
+ 
+-	if (orig_attr_len <= MD5_DIGEST_LENGTH - 2) {
++	if (orig_attr_len <= md5_digest_length - 2) {
+ 		/* Enough bytes decoded already, no need to decode padding */
+-		memcpy(avp->val, p1, MD5_DIGEST_LENGTH);
++		memcpy(avp->val, p1, md5_digest_length);
++		EVP_MD_CTX_free(evp_ctx);
+ 		return 0;
+ 	}
+ 
+@@ -199,35 +208,37 @@ static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
+ 			 " attribute length: %hu bytes, advertised original"
+ 			 " attribute length: %hu bytes)\n",
+ 			 ntohs(avp->type), attr_len, orig_attr_len);
++		EVP_MD_CTX_free(evp_ctx);
+ 		return -1;
+ 	}
+ 
+ 	/* Decode remaining blocks. Start from the last block as
+ 	   preceding blocks must be kept hidden for computing MD5s */
+-	bytes_left = orig_attr_len + 2 - MD5_DIGEST_LENGTH;
+-	last_block_len = bytes_left % MD5_DIGEST_LENGTH;
+-	blocks_left = bytes_left / MD5_DIGEST_LENGTH;
++	bytes_left = orig_attr_len + 2 - md5_digest_length;
++	last_block_len = bytes_left % md5_digest_length;
++	blocks_left = bytes_left / md5_digest_length;
+ 	if (last_block_len) {
+-		prev_block = avp->val + blocks_left * MD5_DIGEST_LENGTH;
+-		MD5_Init(&md5_ctx);
+-		MD5_Update(&md5_ctx, secret, secret_len);
+-		MD5_Update(&md5_ctx, prev_block, MD5_DIGEST_LENGTH);
+-		MD5_Final(md5, &md5_ctx);
+-		memxor(prev_block + MD5_DIGEST_LENGTH, md5, last_block_len);
+-		prev_block -= MD5_DIGEST_LENGTH;
++		prev_block = avp->val + blocks_left * md5_digest_length;
++		EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++		EVP_DigestUpdate(evp_ctx, secret, secret_len);
++		EVP_DigestUpdate(evp_ctx, prev_block, md5_digest_length);
++		EVP_DigestFinal_ex(evp_ctx, md5, NULL);
++		memxor(prev_block + md5_digest_length, md5, last_block_len);
++		prev_block -= md5_digest_length;
+ 	} else
+-		prev_block = avp->val + (blocks_left - 1) * MD5_DIGEST_LENGTH;
++		prev_block = avp->val + (blocks_left - 1) * md5_digest_length;
+ 
+ 	while (prev_block >= avp->val) {
+-		MD5_Init(&md5_ctx);
+-		MD5_Update(&md5_ctx, secret, secret_len);
+-		MD5_Update(&md5_ctx, prev_block, MD5_DIGEST_LENGTH);
+-		MD5_Final(md5, &md5_ctx);
+-		memxor(prev_block + MD5_DIGEST_LENGTH, md5, MD5_DIGEST_LENGTH);
+-		prev_block -= MD5_DIGEST_LENGTH;
++		EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++		EVP_DigestUpdate(evp_ctx, secret, secret_len);
++		EVP_DigestUpdate(evp_ctx, prev_block, md5_digest_length);
++		EVP_DigestFinal_ex(evp_ctx, md5, NULL);
++		memxor(prev_block + md5_digest_length, md5, md5_digest_length);
++		prev_block -= md5_digest_length;
+ 	}
+-	memcpy(avp->val, p1, MD5_DIGEST_LENGTH);
++	memcpy(avp->val, p1, md5_digest_length);
+ 
++	EVP_MD_CTX_free(evp_ctx);
+ 	return 0;
+ }
+ 
+@@ -579,14 +590,20 @@ int encode_attr(const struct l2tp_packet_t *pack, struct l2tp_attr_t *attr,
+ 		const void *val, uint16_t val_len)
+ {
+ 	uint8_t *u8_ptr = NULL;
+-	uint8_t md5[MD5_DIGEST_LENGTH];
+-	MD5_CTX md5_ctx;
++	uint8_t md5[EVP_MAX_MD_SIZE];
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
+ 	uint16_t pad_len;
+ 	uint16_t attr_type;
+ 	uint16_t blocks_left;
+ 	uint16_t last_block_len;
++	size_t md5_digest_length = EVP_MD_get_size(EVP_md5());
+ 	int err;
+ 
++	if (evp_ctx == NULL) {
++		log_error("l2tp: can't create EVP context\n");
++		goto err;
++	}
++
+ 	if (pack->secret == NULL || pack->secret_len == 0) {
+ 		log_error("l2tp: impossible to hide AVP: no secret\n");
+ 		goto err;
+@@ -646,45 +663,48 @@ int encode_attr(const struct l2tp_packet_t *pack, struct l2tp_attr_t *attr,
+ 	 * ciphered[n] = clear[n] xor MD5(secret, ciphered[n-1])
+ 	 */
+ 	attr_type = htons(attr->attr->id);
+-	MD5_Init(&md5_ctx);
+-	MD5_Update(&md5_ctx, &attr_type, sizeof(attr_type));
+-	MD5_Update(&md5_ctx, pack->secret, pack->secret_len);
+-	MD5_Update(&md5_ctx, pack->last_RV->val.octets, pack->last_RV->length);
+-	MD5_Final(md5, &md5_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++	EVP_DigestUpdate(evp_ctx, &attr_type, sizeof(attr_type));
++	EVP_DigestUpdate(evp_ctx, pack->secret, pack->secret_len);
++	EVP_DigestUpdate(evp_ctx, pack->last_RV->val.octets, pack->last_RV->length);
++	EVP_DigestFinal_ex(evp_ctx, md5, NULL);
+ 
+-	if (attr->length <= MD5_DIGEST_LENGTH) {
++	if (attr->length <= md5_digest_length) {
+ 		memxor(attr->val.octets, md5, attr->length);
++		EVP_MD_CTX_free(evp_ctx);
+ 		return 0;
+ 	}
+ 
+-	memxor(attr->val.octets, md5, MD5_DIGEST_LENGTH);
++	memxor(attr->val.octets, md5, md5_digest_length);
+ 
+-	blocks_left = attr->length / MD5_DIGEST_LENGTH - 1;
+-	last_block_len = attr->length % MD5_DIGEST_LENGTH;
++	blocks_left = attr->length / md5_digest_length - 1;
++	last_block_len = attr->length % md5_digest_length;
+ 
+ 	for (u8_ptr = attr->val.octets; blocks_left; --blocks_left) {
+-		MD5_Init(&md5_ctx);
+-		MD5_Update(&md5_ctx, pack->secret, pack->secret_len);
+-		MD5_Update(&md5_ctx, u8_ptr, MD5_DIGEST_LENGTH);
+-		MD5_Final(md5, &md5_ctx);
+-		u8_ptr += MD5_DIGEST_LENGTH;
+-		memxor(u8_ptr, md5, MD5_DIGEST_LENGTH);
++		EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++		EVP_DigestUpdate(evp_ctx, pack->secret, pack->secret_len);
++		EVP_DigestUpdate(evp_ctx, u8_ptr, md5_digest_length);
++		EVP_DigestFinal_ex(evp_ctx, md5, NULL);
++		u8_ptr += md5_digest_length;
++		memxor(u8_ptr, md5, md5_digest_length);
+ 	}
+ 
+ 	if (last_block_len) {
+-		MD5_Init(&md5_ctx);
+-		MD5_Update(&md5_ctx, pack->secret, pack->secret_len);
+-		MD5_Update(&md5_ctx, u8_ptr, MD5_DIGEST_LENGTH);
+-		MD5_Final(md5, &md5_ctx);
+-		memxor(u8_ptr + MD5_DIGEST_LENGTH, md5, last_block_len);
++		EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++		EVP_DigestUpdate(evp_ctx, pack->secret, pack->secret_len);
++		EVP_DigestUpdate(evp_ctx, u8_ptr, md5_digest_length);
++		EVP_DigestFinal_ex(evp_ctx, md5, NULL);
++		memxor(u8_ptr + md5_digest_length, md5, last_block_len);
+ 	}
+ 
++	EVP_MD_CTX_free(evp_ctx);
+ 	return 0;
+ 
+ err_free:
+ 	_free(attr->val.octets);
+ 	attr->val.octets = NULL;
+ err:
++	EVP_MD_CTX_free(evp_ctx);
+ 	return -1;
+ }
+ 
+diff --git a/accel-pppd/ctrl/pppoe/pppoe.c b/accel-pppd/ctrl/pppoe/pppoe.c
+index c481b7ec..2cda28bf 100644
+--- a/accel-pppd/ctrl/pppoe/pppoe.c
++++ b/accel-pppd/ctrl/pppoe/pppoe.c
+@@ -634,94 +634,119 @@ static void print_packet(const char *ifname, const char *op, uint8_t *pack)
+ 	log_info2("]\n");
+ }
+ 
+-static void generate_cookie(struct pppoe_serv_t *serv, const uint8_t *src, uint8_t *cookie, const struct pppoe_tag *host_uniq, const struct pppoe_tag *relay_sid)
++static int generate_cookie(struct pppoe_serv_t *serv, const uint8_t *src, uint8_t *cookie, const struct pppoe_tag *host_uniq, const struct pppoe_tag *relay_sid)
+ {
+-	MD5_CTX ctx;
+-	DES_cblock key;
+-	DES_key_schedule ks;
+-	int i;
+-	union {
+-		DES_cblock b[3];
+-		uint8_t raw[24];
+-	} u1, u2;
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
++	EVP_CIPHER_CTX *des_ctx = EVP_CIPHER_CTX_new();
++	unsigned char key[EVP_MAX_KEY_LENGTH];
++	int i, outl;
++	uint8_t u1[24];
++	uint8_t u2[24];
++	uint8_t padding[EVP_MAX_BLOCK_LENGTH];
+ 	struct timespec ts;
+ 
++	if (evp_ctx == NULL || des_ctx == NULL) {
++		log_error("pppoe: can't create EVP contexts for cookie: hash %p cipher %p\n", evp_ctx, des_ctx);
++		if (des_ctx != NULL)
++			EVP_CIPHER_CTX_free(des_ctx);
++		if (evp_ctx != NULL)
++			EVP_MD_CTX_free(evp_ctx);
++		return -1;
++	}
++
+ 	clock_gettime(CLOCK_MONOTONIC, &ts);
+ 
+ 	memcpy(key, serv->hwaddr, 6);
+ 	key[6] = src[4];
+ 	key[7] = src[5];
+-	DES_set_key(&key, &ks);
++	EVP_EncryptInit_ex(des_ctx, EVP_des_ecb(), NULL, key, NULL);
++	EVP_CIPHER_CTX_set_padding(des_ctx, 0);
+ 
+-	MD5_Init(&ctx);
+-	MD5_Update(&ctx, serv->secret, SECRET_LENGTH);
+-	MD5_Update(&ctx, serv->hwaddr, ETH_ALEN);
+-	MD5_Update(&ctx, src, ETH_ALEN);
++	EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++	EVP_DigestUpdate(evp_ctx, serv->secret, SECRET_LENGTH);
++	EVP_DigestUpdate(evp_ctx, serv->hwaddr, ETH_ALEN);
++	EVP_DigestUpdate(evp_ctx, src, ETH_ALEN);
+ 	if (relay_sid)
+-		MD5_Update(&ctx, relay_sid->tag_data, ntohs(relay_sid->tag_len));
+-	MD5_Final(u1.raw, &ctx);
++		EVP_DigestUpdate(evp_ctx, relay_sid->tag_data, ntohs(relay_sid->tag_len));
++	EVP_DigestFinal_ex(evp_ctx, u1, NULL);
+ 
+ 	if (host_uniq) {
+ 		uint8_t buf[16];
+-		MD5_Init(&ctx);
+-		MD5_Update(&ctx, serv->secret, SECRET_LENGTH);
+-		MD5_Update(&ctx, host_uniq->tag_data, ntohs(host_uniq->tag_len));
+-		MD5_Final(buf, &ctx);
++		EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++		EVP_DigestUpdate(evp_ctx, serv->secret, SECRET_LENGTH);
++		EVP_DigestUpdate(evp_ctx, host_uniq->tag_data, ntohs(host_uniq->tag_len));
++		EVP_DigestFinal_ex(evp_ctx, buf, NULL);
+ 		for (i = 0; i < 4; i++)
+-			u1.raw[16 + i] = buf[i] ^ buf[i + 4] ^ buf[i + 8] ^ buf[i + 12];
++			u1[16 + i] = buf[i] ^ buf[i + 4] ^ buf[i + 8] ^ buf[i + 12];
+ 	} else
+-		memset(u1.raw + 16, 0, 4);
++		memset(u1 + 16, 0, 4);
++
++	*(uint32_t *)(u1 + 20) = ts.tv_sec + conf_cookie_timeout;
++
++	EVP_EncryptUpdate(des_ctx, u2, &outl, u1, 24);
++	EVP_EncryptFinal_ex(des_ctx, padding, &outl);
+ 
+-	*(uint32_t *)(u1.raw + 20) = ts.tv_sec + conf_cookie_timeout;
++	EVP_EncryptUpdate(serv->des_enc_ctx, u1, &outl, u2, 24);
+ 
+-	for (i = 0; i < 3; i++)
+-		DES_ecb_encrypt(&u1.b[i], &u2.b[i], &ks, DES_ENCRYPT);
++	memcpy(cookie, u1, 24);
+ 
+-	for (i = 0; i < 3; i++)
+-		DES_ecb_encrypt(&u2.b[i], &u1.b[i], &serv->des_ks, DES_ENCRYPT);
++	EVP_CIPHER_CTX_free(des_ctx);
++	EVP_MD_CTX_free(evp_ctx);
+ 
+-	memcpy(cookie, u1.raw, 24);
++	return 0;
+ }
+ 
+ static int check_cookie(struct pppoe_serv_t *serv, const uint8_t *src, const uint8_t *cookie, const struct pppoe_tag *relay_sid)
+ {
+-	MD5_CTX ctx;
+-	DES_cblock key;
+-	DES_key_schedule ks;
+-	int i;
+-	union {
+-		DES_cblock b[3];
+-		uint8_t raw[24];
+-	} u1, u2;
++	EVP_MD_CTX *evp_ctx = NULL;
++	EVP_CIPHER_CTX *des_ctx = EVP_CIPHER_CTX_new();
++	unsigned char key[EVP_MAX_KEY_LENGTH];
++	uint8_t u1[24];
++	uint8_t u2[24];
++	uint8_t padding[EVP_MAX_BLOCK_LENGTH];
+ 	struct timespec ts;
++	int outl;
++
++	if (des_ctx == NULL) {
++		log_error("pppoe: can't create EVP cipher context\n");
++		return -1;
++	}
+ 
+ 	clock_gettime(CLOCK_MONOTONIC, &ts);
+ 
+ 	memcpy(key, serv->hwaddr, 6);
+ 	key[6] = src[4];
+ 	key[7] = src[5];
+-	DES_set_key(&key, &ks);
+ 
+-	memcpy(u1.raw, cookie, 24);
++	EVP_DecryptInit_ex(des_ctx, EVP_des_ecb(), NULL, key, NULL);
++	EVP_CIPHER_CTX_set_padding(des_ctx, 0);
++
++	memcpy(u1, cookie, 24);
+ 
+-	for (i = 0; i < 3; i++)
+-		DES_ecb_encrypt(&u1.b[i], &u2.b[i], &serv->des_ks, DES_DECRYPT);
++	EVP_DecryptUpdate(serv->des_dec_ctx, u2, &outl, u1, 24);
++	EVP_DecryptUpdate(des_ctx, u1, &outl, u2, 24);
++	EVP_DecryptFinal_ex(des_ctx, padding, &outl);
+ 
+-	for (i = 0; i < 3; i++)
+-		DES_ecb_encrypt(&u2.b[i], &u1.b[i], &ks, DES_DECRYPT);
++	EVP_CIPHER_CTX_free(des_ctx);
+ 
+-	if (*(uint32_t *)(u1.raw + 20) < ts.tv_sec)
++	if (*(uint32_t *)(u1 + 20) < ts.tv_sec)
+ 		return 1;
+ 
+-	MD5_Init(&ctx);
+-	MD5_Update(&ctx, serv->secret, SECRET_LENGTH);
+-	MD5_Update(&ctx, serv->hwaddr, ETH_ALEN);
+-	MD5_Update(&ctx, src, ETH_ALEN);
++	evp_ctx = EVP_MD_CTX_new();
++	if (evp_ctx == NULL) {
++		log_error("pppoe: can't create EVP md context\n");
++		return -1;
++	}
++	EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++	EVP_DigestUpdate(evp_ctx, serv->secret, SECRET_LENGTH);
++	EVP_DigestUpdate(evp_ctx, serv->hwaddr, ETH_ALEN);
++	EVP_DigestUpdate(evp_ctx, src, ETH_ALEN);
+ 	if (relay_sid)
+-		MD5_Update(&ctx, relay_sid->tag_data, ntohs(relay_sid->tag_len));
+-	MD5_Final(u2.raw, &ctx);
++		EVP_DigestUpdate(evp_ctx, relay_sid->tag_data, ntohs(relay_sid->tag_len));
++	EVP_DigestFinal_ex(evp_ctx, u2, NULL);
+ 
+-	return memcmp(u1.raw, u2.raw, 16);
++	EVP_MD_CTX_free(evp_ctx);
++	return memcmp(u1, u2, 16);
+ }
+ 
+ static void setup_header(uint8_t *pack, const uint8_t *src, const uint8_t *dst, int code, uint16_t sid)
+@@ -802,7 +827,10 @@ static void pppoe_send_PADO(struct pppoe_serv_t *serv, const uint8_t *addr, cons
+ 	if (service_name)
+ 		add_tag2(pack, sizeof(pack), service_name);
+ 
+-	generate_cookie(serv, addr, cookie, host_uniq, relay_sid);
++	if (generate_cookie(serv, addr, cookie, host_uniq, relay_sid)) {
++		log_error("pppoe: can't generate the cookie\n");
++		return;
++	}
+ 
+ 	add_tag(pack, sizeof(pack), TAG_AC_COOKIE, cookie, COOKIE_LENGTH);
+ 
+@@ -1628,6 +1656,12 @@ void pppoe_server_free(struct pppoe_serv_t *serv)
+ 	}
+ 
+ 	triton_context_unregister(&serv->ctx);
++	if (serv->des_enc_ctx)
++		EVP_CIPHER_CTX_free(serv->des_enc_ctx);
++
++	if (serv->des_dec_ctx)
++		EVP_CIPHER_CTX_free(serv->des_dec_ctx);
++
+ 	_free(serv->ifname);
+ 	_free(serv);
+ }
+@@ -1654,16 +1688,31 @@ void __export pppoe_get_stat(unsigned int **starting, unsigned int **active)
+ 
+ static int init_secret(struct pppoe_serv_t *serv)
+ {
+-	DES_cblock key;
++	unsigned char key[EVP_MAX_KEY_LENGTH];
+ 
+ 	if (read(urandom_fd, serv->secret, SECRET_LENGTH) < 0) {
+ 		log_error("pppoe: failed to read /dev/urandom: %s\n", strerror(errno));
+ 		return -1;
+ 	}
+ 
+-	memset(key, 0, sizeof(key));
+-	DES_random_key(&key);
+-	DES_set_key(&key, &serv->des_ks);
++	RAND_bytes(key, sizeof(key));
++
++	serv->des_enc_ctx = EVP_CIPHER_CTX_new();
++	if (serv->des_enc_ctx == NULL) {
++		log_error("pppoe: can't create EVP cipher context for encryption\n");
++		return -1;
++	}
++	serv->des_dec_ctx = EVP_CIPHER_CTX_new();
++	if (serv->des_dec_ctx == NULL) {
++		EVP_CIPHER_CTX_free(serv->des_enc_ctx);
++		log_error("pppoe: can't create EVP cipher context for decryption\n");
++		return -1;
++	}
++
++	EVP_EncryptInit_ex(serv->des_enc_ctx, EVP_des_ecb(), NULL, key, NULL);
++	EVP_CIPHER_CTX_set_padding(serv->des_enc_ctx, 0);
++	EVP_DecryptInit_ex(serv->des_dec_ctx, EVP_des_ecb(), NULL, key, NULL);
++	EVP_CIPHER_CTX_set_padding(serv->des_dec_ctx, 0);
+ 
+ 	return 0;
+ }
+diff --git a/accel-pppd/ctrl/pppoe/pppoe.h b/accel-pppd/ctrl/pppoe/pppoe.h
+index 2510c320..3d89e274 100644
+--- a/accel-pppd/ctrl/pppoe/pppoe.h
++++ b/accel-pppd/ctrl/pppoe/pppoe.h
+@@ -6,8 +6,8 @@
+ #include <linux/if.h>
+ #include <linux/if_pppox.h>
+ 
+-#include <openssl/md5.h>
+-#include <openssl/des.h>
++#include <openssl/evp.h>
++#include <openssl/rand.h>
+ 
+ #include "rbtree.h"
+ 
+@@ -85,7 +85,8 @@ struct pppoe_serv_t
+ 	struct triton_timer_t timer;
+ 
+ 	uint8_t secret[SECRET_LENGTH];
+-	DES_key_schedule des_ks;
++	EVP_CIPHER_CTX *des_enc_ctx;
++	EVP_CIPHER_CTX *des_dec_ctx;
+ 
+ 	pthread_mutex_t lock;
+ 
+diff --git a/accel-pppd/ctrl/sstp/sstp.c b/accel-pppd/ctrl/sstp/sstp.c
+index 4dab0c8e..00162f65 100644
+--- a/accel-pppd/ctrl/sstp/sstp.c
++++ b/accel-pppd/ctrl/sstp/sstp.c
+@@ -2582,7 +2582,7 @@ static void ssl_load_config(struct sstp_serv_t *serv, const char *servername)
+ #ifdef OPENSSL_NO_DH
+ 			log_warn("sstp: %s warning: %s is not suported\n", "ssl-protocol", "DH");
+ #else
+-			DH *dh;
++			EVP_PKEY *dh;
+ 
+ 			in = BIO_new(BIO_s_file());
+ 
+@@ -2591,7 +2591,7 @@ static void ssl_load_config(struct sstp_serv_t *serv, const char *servername)
+ 				goto error;
+ 			}
+ 
+-			dh = PEM_read_bio_DHparams(in, NULL, NULL, NULL);
++			dh = PEM_read_bio_Parameters(in, NULL);
+ 			if (dh == NULL) {
+ 				log_error("sstp: %s error: %s\n", "ssl-dhparam", ERR_error_string(ERR_get_error(), NULL));
+ 				goto error;
+@@ -2601,8 +2601,11 @@ static void ssl_load_config(struct sstp_serv_t *serv, const char *servername)
+ 				abort();
+ 			in = NULL;
+ 
+-			SSL_CTX_set_tmp_dh(ssl_ctx, dh);
+-			DH_free(dh);
++			if (SSL_CTX_set0_tmp_dh_pkey(ssl_ctx, dh) != 1) {
++				log_error("sstp: %s error: %s\n", "ssl-dhparam", ERR_error_string(ERR_get_error(), NULL));
++				EVP_PKEY_free(dh);
++				goto error;
++			}
+ #endif
+ 		}
+ 
+diff --git a/accel-pppd/extra/chap-secrets.c b/accel-pppd/extra/chap-secrets.c
+index 5fd0102c..e6ca80e0 100644
+--- a/accel-pppd/extra/chap-secrets.c
++++ b/accel-pppd/extra/chap-secrets.c
+@@ -6,8 +6,6 @@
+ #include <netinet/in.h>
+ #include <arpa/inet.h>
+ 
+-#include <openssl/md4.h>
+-#include <openssl/sha.h>
+ #include <openssl/des.h>
+ #include <openssl/evp.h>
+ 
+@@ -137,7 +135,10 @@ static struct cs_pd_t *create_pd(struct ap_session *ses, const char *username)
+ 		unsigned int size = 0;
+ 		list_for_each_entry(hc, &hash_chain, entry) {
+ 			md_ctx = EVP_MD_CTX_new();
+-			EVP_MD_CTX_init(md_ctx);
++			if (md_ctx == NULL) {
++				log_error("chap-secrets: can't create EVP cipher context\n");
++				return NULL;
++			}
+ 			EVP_DigestInit_ex(md_ctx, hc->md, NULL);
+ 			EVP_DigestUpdate(md_ctx, size == 0 ? (void *)username : (void *)hash, size == 0 ? strlen(username) : size);
+ 			EVP_DigestFinal_ex(md_ctx, hash, &size);
+@@ -338,15 +339,20 @@ static char* get_passwd(struct pwdb_t *pwdb, struct ap_session *ses, const char
+ 
+ static void des_encrypt(const uint8_t *input, const uint8_t *key, uint8_t *output)
+ {
+-	int i, j, parity;
++	int i, j, parity, outl;
+ 	union
+ 	{
+ 		uint64_t u64;
+ 		uint8_t buf[8];
+ 	} p_key;
+-	DES_cblock cb;
+-	DES_cblock res;
+-	DES_key_schedule ks;
++
++	unsigned char cb[EVP_MAX_KEY_LENGTH];
++	unsigned char padding[EVP_MAX_BLOCK_LENGTH];
++	EVP_CIPHER_CTX *evp_ctx = EVP_CIPHER_CTX_new();
++	if (evp_ctx == NULL) {
++		log_error("chap-secrets: can't create EVP cipher context\n");
++		return;
++	}
+ 
+ 	memcpy(p_key.buf, key, 7);
+ 	p_key.u64 = be64toh(p_key.u64);
+@@ -359,20 +365,26 @@ static void des_encrypt(const uint8_t *input, const uint8_t *key, uint8_t *outpu
+ 		cb[i] |= (~parity) & 1;
+ 	}
+ 
+-	DES_set_key_checked(&cb, &ks);
+-	memcpy(cb, input, 8);
+-	DES_ecb_encrypt(&cb, &res, &ks, DES_ENCRYPT);
+-	memcpy(output, res, 8);
++	EVP_EncryptInit_ex(evp_ctx, EVP_des_ecb(), NULL, cb, NULL);
++	EVP_CIPHER_CTX_set_padding(evp_ctx, 0);
++	EVP_EncryptUpdate(evp_ctx, output, &outl, input, EVP_CIPHER_block_size(EVP_des_ecb()));
++	EVP_EncryptFinal_ex(evp_ctx, padding, &outl);
++	EVP_CIPHER_CTX_free(evp_ctx);
+ }
+ 
+ static int auth_pap(struct cs_pd_t *pd, const char *username, va_list args)
+ {
+ 	const char *passwd = va_arg(args, const char *);
+-	MD4_CTX md4_ctx;
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
+ 	unsigned char z_hash[21];
+ 	char *u_passwd;
+ 	int i, len = strlen(passwd);
+ 
++	if (evp_ctx == NULL) {
++		log_error("chap-secrets: can't create EVP context\n");
++		return PWDB_DENIED;
++	}
++
+ 	u_passwd = _malloc(len * 2);
+ 	for (i = 0; i< len; i++) {
+ 		u_passwd[i * 2] = passwd[i];
+@@ -380,9 +392,12 @@ static int auth_pap(struct cs_pd_t *pd, const char *username, va_list args)
+ 	}
+ 
+ 	memset(z_hash, 0, sizeof(z_hash));
+-	MD4_Init(&md4_ctx);
+-	MD4_Update(&md4_ctx, u_passwd, len * 2);
+-	MD4_Final(z_hash, &md4_ctx);
++
++	EVP_DigestInit_ex(evp_ctx, EVP_md4(), NULL);
++	EVP_DigestUpdate(evp_ctx, u_passwd, len * 2);
++	EVP_DigestFinal_ex(evp_ctx, z_hash, NULL);
++
++	EVP_MD_CTX_free(evp_ctx);
+ 
+ 	_free(u_passwd);
+ 
+@@ -408,8 +423,7 @@ static int auth_chap_md5(struct cs_pd_t *pd, const char *username, va_list args)
+ 
+ static void derive_mppe_keys_mschap_v1(struct ap_session *ses, const uint8_t *z_hash, const uint8_t *challenge, int challenge_len)
+ {
+-	MD4_CTX md4_ctx;
+-	SHA_CTX sha_ctx;
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
+ 	uint8_t digest[20];
+ 	struct ppp_t *ppp = container_of(ses, typeof(*ppp), ses);
+ 
+@@ -420,17 +434,26 @@ static void derive_mppe_keys_mschap_v1(struct ap_session *ses, const uint8_t *z_
+ 		.send_key = digest,
+ 	};
+ 
++	if (evp_ctx == NULL) {
++		log_error("chap-secrets: can't create EVP context\n");
++		return;
++	}
++
+ 	//NtPasswordHashHash
+-	MD4_Init(&md4_ctx);
+-	MD4_Update(&md4_ctx, z_hash, 16);
+-	MD4_Final(digest, &md4_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_md4(), NULL);
++	EVP_DigestUpdate(evp_ctx, z_hash, 16);
++	EVP_DigestFinal_ex(evp_ctx, digest, NULL);
++
++	EVP_MD_CTX_reset(evp_ctx);
+ 
+ 	//Get_Start_Key
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx, digest, 16);
+-	SHA1_Update(&sha_ctx, digest, 16);
+-	SHA1_Update(&sha_ctx, challenge, challenge_len);
+-	SHA1_Final(digest, &sha_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, digest, 16);
++	EVP_DigestUpdate(evp_ctx, digest, 16);
++	EVP_DigestUpdate(evp_ctx, challenge, challenge_len);
++	EVP_DigestFinal_ex(evp_ctx, digest, NULL);
++
++	EVP_MD_CTX_free(evp_ctx);
+ 
+ 	triton_event_fire(EV_MPPE_KEYS, &ev_mppe);
+ }
+@@ -464,10 +487,9 @@ int auth_mschap_v1(struct ap_session *ses, struct cs_pd_t *pd, const char *usern
+ 
+ static void generate_mschap_response(const uint8_t *nt_response, const uint8_t *c_hash, const uint8_t *z_hash, char *authenticator)
+ {
+-	MD4_CTX md4_ctx;
+-	SHA_CTX sha_ctx;
+-	uint8_t pw_hash[MD4_DIGEST_LENGTH];
+-	uint8_t response[SHA_DIGEST_LENGTH];
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
++	uint8_t pw_hash[EVP_MAX_MD_SIZE];
++	uint8_t response[EVP_MAX_MD_SIZE];
+ 	int i;
+ 
+ 	uint8_t magic1[39] =
+@@ -482,22 +504,30 @@ static void generate_mschap_response(const uint8_t *nt_response, const uint8_t *
+           0x65, 0x20, 0x69, 0x74, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6F,
+           0x6E};
+ 
++	if (evp_ctx == NULL) {
++		log_error("chap-secrets: can't create EVP context\n");
++		return;
++	}
++
++	EVP_DigestInit_ex(evp_ctx, EVP_md4(), NULL);
++	EVP_DigestUpdate(evp_ctx, z_hash, 16);
++	EVP_DigestFinal_ex(evp_ctx, pw_hash, NULL);
+ 
+-	MD4_Init(&md4_ctx);
+-	MD4_Update(&md4_ctx, z_hash, 16);
+-	MD4_Final(pw_hash, &md4_ctx);
++	EVP_MD_CTX_reset(evp_ctx);
+ 
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx, pw_hash, 16);
+-	SHA1_Update(&sha_ctx, nt_response, 24);
+-	SHA1_Update(&sha_ctx, magic1, 39);
+-	SHA1_Final(response, &sha_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, pw_hash, 16);
++	EVP_DigestUpdate(evp_ctx, nt_response, 24);
++	EVP_DigestUpdate(evp_ctx, magic1, 39);
++	EVP_DigestFinal_ex(evp_ctx, response, NULL);
+ 
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx, response, 20);
+-	SHA1_Update(&sha_ctx, c_hash, 8);
+-	SHA1_Update(&sha_ctx, magic2, 41);
+-	SHA1_Final(response, &sha_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, response, 20);
++	EVP_DigestUpdate(evp_ctx, c_hash, 8);
++	EVP_DigestUpdate(evp_ctx, magic2, 41);
++	EVP_DigestFinal_ex(evp_ctx, response, NULL);
++
++	EVP_MD_CTX_free(evp_ctx);
+ 
+ 	for (i = 0; i < 20; i++)
+ 		sprintf(authenticator + i*2, "%02X", response[i]);
+@@ -506,8 +536,7 @@ static void generate_mschap_response(const uint8_t *nt_response, const uint8_t *
+ static void derive_mppe_keys_mschap_v2(struct ap_session *ses, const uint8_t *z_hash, const uint8_t *nt_hash)
+ {
+ 	struct ppp_t *ppp = container_of(ses, typeof(*ppp), ses);
+-	MD4_CTX md4_ctx;
+-	SHA_CTX sha_ctx;
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
+ 	uint8_t digest[20];
+ 	uint8_t send_key[20];
+ 	uint8_t recv_key[20];
+@@ -558,33 +587,42 @@ static void derive_mppe_keys_mschap_v2(struct ap_session *ses, const uint8_t *z_
+ 		.send_key = send_key,
+ 	};
+ 
++	if (evp_ctx == NULL) {
++		log_error("chap-secrets: can't create EVP context\n");
++		return;
++	}
++
+ 	//NtPasswordHashHash
+-	MD4_Init(&md4_ctx);
+-	MD4_Update(&md4_ctx, z_hash, 16);
+-	MD4_Final(digest, &md4_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_md4(), NULL);
++	EVP_DigestUpdate(evp_ctx, z_hash, 16);
++	EVP_DigestFinal_ex(evp_ctx, digest, NULL);
++
++	EVP_MD_CTX_reset(evp_ctx);
+ 
+ 	//GetMasterKey
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx, digest, 16);
+-	SHA1_Update(&sha_ctx, nt_hash, 24);
+-	SHA1_Update(&sha_ctx, magic1, sizeof(magic1));
+-	SHA1_Final(digest, &sha_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, digest, 16);
++	EVP_DigestUpdate(evp_ctx, nt_hash, 24);
++	EVP_DigestUpdate(evp_ctx, magic1, sizeof(magic1));
++	EVP_DigestFinal_ex(evp_ctx, digest, NULL);
+ 
+ 	//send key
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx, digest, 16);
+-	SHA1_Update(&sha_ctx, pad1, sizeof(pad1));
+-	SHA1_Update(&sha_ctx, magic3, sizeof(magic2));
+-	SHA1_Update(&sha_ctx, pad2, sizeof(pad2));
+-	SHA1_Final(send_key, &sha_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, digest, 16);
++	EVP_DigestUpdate(evp_ctx, pad1, sizeof(pad1));
++	EVP_DigestUpdate(evp_ctx, magic3, sizeof(magic3));
++	EVP_DigestUpdate(evp_ctx, pad2, sizeof(pad2));
++	EVP_DigestFinal_ex(evp_ctx, send_key, NULL);
+ 
+ 	//recv key
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx, digest, 16);
+-	SHA1_Update(&sha_ctx, pad1, sizeof(pad1));
+-	SHA1_Update(&sha_ctx, magic2, sizeof(magic3));
+-	SHA1_Update(&sha_ctx, pad2, sizeof(pad2));
+-	SHA1_Final(recv_key, &sha_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, digest, 16);
++	EVP_DigestUpdate(evp_ctx, pad1, sizeof(pad1));
++	EVP_DigestUpdate(evp_ctx, magic2, sizeof(magic2));
++	EVP_DigestUpdate(evp_ctx, pad2, sizeof(pad2));
++	EVP_DigestFinal_ex(evp_ctx, recv_key, NULL);
++
++	EVP_MD_CTX_free(evp_ctx);
+ 
+ 	triton_event_fire(EV_MPPE_KEYS, &ev_mppe);
+ }
+@@ -600,14 +638,21 @@ int auth_mschap_v2(struct ap_session *ses, struct cs_pd_t *pd, const char *usern
+ 	char *authenticator = va_arg(args, char *);
+ 	uint8_t z_hash[21];
+ 	uint8_t nt_hash[24];
+-	uint8_t c_hash[SHA_DIGEST_LENGTH];
+-	SHA_CTX sha_ctx;
++	uint8_t c_hash[EVP_MAX_MD_SIZE];
++	EVP_MD_CTX *sha_ctx = EVP_MD_CTX_new();
++
++	if (sha_ctx == NULL) {
++		log_error("chap-secrets: can't create EVP context\n");
++		return -1;
++	}
++
++	EVP_DigestInit_ex(sha_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(sha_ctx, peer_challenge, 16);
++	EVP_DigestUpdate(sha_ctx, challenge, 16);
++	EVP_DigestUpdate(sha_ctx, username, strlen(username));
++	EVP_DigestFinal_ex(sha_ctx, c_hash, NULL);
+ 
+-	SHA1_Init(&sha_ctx);
+-	SHA1_Update(&sha_ctx, peer_challenge, 16);
+-	SHA1_Update(&sha_ctx, challenge, 16);
+-	SHA1_Update(&sha_ctx, username, strlen(username));
+-	SHA1_Final(c_hash, &sha_ctx);
++	EVP_MD_CTX_free(sha_ctx);
+ 
+ 	memcpy(z_hash, pd->passwd, 16);
+ 	memset(z_hash + 16, 0, sizeof(z_hash) - 16);
+@@ -703,7 +748,7 @@ static void parse_hash_chain(const char *opt)
+ 		f = *ptr2 == 0;
+ 		*ptr2 = 0;
+ 		hc = _malloc(sizeof(*hc));
+-		hc->md = EVP_get_digestbyname(ptr1);
++		hc->md = EVP_MD_fetch(NULL, ptr1, NULL);
+ 		if (!hc->md) {
+ 			log_error("chap-secrets: digest '%s' is unavailable\n", ptr1);
+ 			_free(hc);
+diff --git a/accel-pppd/radius/acct.c b/accel-pppd/radius/acct.c
+index 9d375d22..6070ca52 100644
+--- a/accel-pppd/radius/acct.c
++++ b/accel-pppd/radius/acct.c
+@@ -6,7 +6,7 @@
+ #include <sys/ioctl.h>
+ #include <netinet/in.h>
+ 
+-#include <openssl/md5.h>
++#include <openssl/evp.h>
+ 
+ #include "linux_ppp.h"
+ 
+@@ -27,15 +27,20 @@
+ 
+ static int req_set_RA(struct rad_req_t *req, const char *secret)
+ {
+-	MD5_CTX ctx;
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
++
++	if (evp_ctx == NULL)
++		return -1;
+ 
+ 	if (rad_packet_build(req->pack, req->RA))
+ 		return -1;
+ 
+-	MD5_Init(&ctx);
+-	MD5_Update(&ctx, req->pack->buf, req->pack->len);
+-	MD5_Update(&ctx, secret, strlen(secret));
+-	MD5_Final(req->pack->buf + 4, &ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++	EVP_DigestUpdate(evp_ctx, req->pack->buf, req->pack->len);
++	EVP_DigestUpdate(evp_ctx, secret, strlen(secret));
++	EVP_DigestFinal_ex(evp_ctx, req->pack->buf + 4, NULL);
++
++	EVP_MD_CTX_free(evp_ctx);
+ 
+ 	return 0;
+ }
+diff --git a/accel-pppd/radius/auth.c b/accel-pppd/radius/auth.c
+index 69f1b2ef..a69f164c 100644
+--- a/accel-pppd/radius/auth.c
++++ b/accel-pppd/radius/auth.c
+@@ -1,8 +1,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
+-#include <openssl/md5.h>
+-#include <openssl/sha.h>
++#include <openssl/evp.h>
+ 
+ #include "triton.h"
+ #include "mempool.h"
+@@ -17,13 +16,17 @@
+ 
+ static int decrypt_chap_mppe_keys(struct rad_req_t *req, struct rad_attr_t *attr, const uint8_t *challenge, uint8_t *key)
+ {
+-	MD5_CTX md5_ctx;
+-	SHA_CTX sha1_ctx;
+-	uint8_t md5[MD5_DIGEST_LENGTH];
+-	uint8_t sha1[SHA_DIGEST_LENGTH];
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
++	uint8_t md5[EVP_MAX_MD_SIZE];
++	uint8_t sha1[EVP_MAX_MD_SIZE];
+ 	uint8_t plain[32];
+ 	int i;
+ 
++	if (evp_ctx == NULL) {
++		log_ppp_error("radius: can't create EVP context\n");
++		return -1;
++	}
++
+ 	if (attr->len != 32) {
+ 		log_ppp_warn("radius: %s: incorrect attribute length (%i)\n", attr->attr->name, attr->len);
+ 		return -1;
+@@ -31,36 +34,38 @@ static int decrypt_chap_mppe_keys(struct rad_req_t *req, struct rad_attr_t *attr
+ 
+ 	memcpy(plain, attr->val.octets, 32);
+ 
+-	MD5_Init(&md5_ctx);
+-	MD5_Update(&md5_ctx, req->serv->secret, strlen(req->serv->secret));
+-	MD5_Update(&md5_ctx, req->pack->buf + 4, 16);
+-	MD5_Final(md5, &md5_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++	EVP_DigestUpdate(evp_ctx, req->serv->secret, strlen(req->serv->secret));
++	EVP_DigestUpdate(evp_ctx, req->pack->buf + 4, 16);
++	EVP_DigestFinal_ex(evp_ctx, md5, NULL);
+ 
+ 	for (i = 0; i < 16; i++)
+ 		plain[i] ^= md5[i];
+ 
+-	MD5_Init(&md5_ctx);
+-	MD5_Update(&md5_ctx, req->serv->secret, strlen(req->serv->secret));
+-	MD5_Update(&md5_ctx, attr->val.octets, 16);
+-	MD5_Final(md5, &md5_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++	EVP_DigestUpdate(evp_ctx, req->serv->secret, strlen(req->serv->secret));
++	EVP_DigestUpdate(evp_ctx, attr->val.octets, 16);
++	EVP_DigestFinal_ex(evp_ctx, md5, NULL);
+ 
+ 	for (i = 0; i < 16; i++)
+ 		plain[i + 16] ^= md5[i];
+ 
+-	SHA1_Init(&sha1_ctx);
+-	SHA1_Update(&sha1_ctx, plain + 8, 16);
+-	SHA1_Update(&sha1_ctx, plain + 8, 16);
+-	SHA1_Update(&sha1_ctx, challenge, 8);
+-	SHA1_Final(sha1, &sha1_ctx);
++	EVP_MD_CTX_reset(evp_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_sha1(), NULL);
++	EVP_DigestUpdate(evp_ctx, plain + 8, 16);
++	EVP_DigestUpdate(evp_ctx, plain + 8, 16);
++	EVP_DigestUpdate(evp_ctx, challenge, 8);
++	EVP_DigestFinal_ex(evp_ctx, sha1, NULL);
+ 
+ 	memcpy(key, sha1, 16);
+ 
++	EVP_MD_CTX_free(evp_ctx);
+ 	return 0;
+ }
+ 
+ static int decrypt_mppe_key(struct rad_req_t *req, struct rad_attr_t *attr, uint8_t *key)
+ {
+-	MD5_CTX md5_ctx;
++	EVP_MD_CTX *evp_ctx = NULL;
+ 	uint8_t md5[16];
+ 	uint8_t plain[32];
+ 	int i;
+@@ -75,11 +80,17 @@ static int decrypt_mppe_key(struct rad_req_t *req, struct rad_attr_t *attr, uint
+ 		return -1;
+ 	}
+ 
+-	MD5_Init(&md5_ctx);
+-	MD5_Update(&md5_ctx, req->serv->secret, strlen(req->serv->secret));
+-	MD5_Update(&md5_ctx, req->pack->buf + 4, 16);
+-	MD5_Update(&md5_ctx, attr->val.octets, 2);
+-	MD5_Final(md5, &md5_ctx);
++	evp_ctx = EVP_MD_CTX_new();
++	if (evp_ctx == NULL) {
++		log_ppp_error("radius: can't create EVP context\n");
++		return -1;
++	}
++
++	EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++	EVP_DigestUpdate(evp_ctx, req->serv->secret, strlen(req->serv->secret));
++	EVP_DigestUpdate(evp_ctx, req->pack->buf + 4, 16);
++	EVP_DigestUpdate(evp_ctx, attr->val.octets, 2);
++	EVP_DigestFinal_ex(evp_ctx, md5, NULL);
+ 
+ 	memcpy(plain, attr->val.octets + 2, 32);
+ 
+@@ -88,18 +99,20 @@ static int decrypt_mppe_key(struct rad_req_t *req, struct rad_attr_t *attr, uint
+ 
+ 	if (plain[0] != 16) {
+ 		log_ppp_warn("radius: %s: incorrect key length (%i)\n", attr->attr->name, plain[0]);
++		EVP_MD_CTX_free(evp_ctx);
+ 		return -1;
+ 	}
+ 
+-	MD5_Init(&md5_ctx);
+-	MD5_Update(&md5_ctx, req->serv->secret, strlen(req->serv->secret));
+-	MD5_Update(&md5_ctx, attr->val.octets + 2, 16);
+-	MD5_Final(md5, &md5_ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++	EVP_DigestUpdate(evp_ctx, req->serv->secret, strlen(req->serv->secret));
++	EVP_DigestUpdate(evp_ctx, attr->val.octets + 2, 16);
++	EVP_DigestFinal_ex(evp_ctx, md5, NULL);
+ 
+ 	plain[16] ^= md5[0];
+ 
+ 	memcpy(key, plain + 1, 16);
+ 
++	EVP_MD_CTX_free(evp_ctx);
+ 	return 0;
+ }
+ 
+@@ -109,7 +122,7 @@ static uint8_t* encrypt_password(const char *passwd, const char *secret, const u
+ 	uint8_t *epasswd;
+ 	int i, j, chunk_cnt;
+ 	uint8_t b[16], c[16];
+-	MD5_CTX ctx;
++	EVP_MD_CTX *evp_ctx = NULL;
+ 
+ 	if (strlen(passwd))
+ 		chunk_cnt = (strlen(passwd) - 1) / 16 + 1;
+@@ -128,11 +141,17 @@ static uint8_t* encrypt_password(const char *passwd, const char *secret, const u
+ 	memcpy(epasswd, passwd, strlen(passwd));
+ 	memcpy(c, RA, 16);
+ 
++	evp_ctx = EVP_MD_CTX_new();
++	if (evp_ctx == NULL) {
++		log_ppp_error("radius: can't create EVP context\n");
++		return NULL;
++	}
++
+ 	for (i = 0; i < chunk_cnt; i++) {
+-		MD5_Init(&ctx);
+-		MD5_Update(&ctx, secret, strlen(secret));
+-		MD5_Update(&ctx, c, 16);
+-		MD5_Final(b, &ctx);
++		EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++		EVP_DigestUpdate(evp_ctx, secret, strlen(secret));
++		EVP_DigestUpdate(evp_ctx, c, 16);
++		EVP_DigestFinal_ex(evp_ctx, b, NULL);
+ 
+ 		for(j = 0; j < 16; j++)
+ 			epasswd[i * 16 + j] ^= b[j];
+@@ -141,6 +160,8 @@ static uint8_t* encrypt_password(const char *passwd, const char *secret, const u
+ 	}
+ 
+ 	*epasswd_len = chunk_cnt * 16;
++
++	EVP_MD_CTX_free(evp_ctx);
+ 	return epasswd;
+ }
+ 
+diff --git a/accel-pppd/radius/dm_coa.c b/accel-pppd/radius/dm_coa.c
+index df8cdf3e..9d67e30d 100644
+--- a/accel-pppd/radius/dm_coa.c
++++ b/accel-pppd/radius/dm_coa.c
+@@ -10,7 +10,7 @@
+ #include <netinet/in.h>
+ #include <sys/socket.h>
+ 
+-#include <openssl/md5.h>
++#include <openssl/evp.h>
+ 
+ #include "triton.h"
+ #include "events.h"
+@@ -34,28 +34,40 @@ static struct dm_coa_serv_t serv;
+ static int dm_coa_check_RA(struct rad_packet_t *pack, const char *secret)
+ {
+ 	uint8_t RA[16];
+-	MD5_CTX ctx;
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
++
++	if (evp_ctx == NULL)
++		return -1;
+ 
+ 	memset(RA, 0, 16);
+ 
+-	MD5_Init(&ctx);
+-	MD5_Update(&ctx, pack->buf, 4);
+-	MD5_Update(&ctx, RA, 16);
+-	MD5_Update(&ctx, pack->buf + 20, pack->len - 20);
+-	MD5_Update(&ctx, secret, strlen(secret));
+-	MD5_Final(RA, &ctx);
++	EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++	EVP_DigestUpdate(evp_ctx, pack->buf, 4);
++	EVP_DigestUpdate(evp_ctx, RA, 16);
++	EVP_DigestUpdate(evp_ctx, pack->buf + 20, pack->len - 20);
++	EVP_DigestUpdate(evp_ctx, secret, strlen(secret));
++	EVP_DigestFinal_ex(evp_ctx, RA, NULL);
++
++	EVP_MD_CTX_free(evp_ctx);
+ 
+ 	return memcmp(RA, pack->buf + 4, 16);
+ }
+ 
+-static void dm_coa_set_RA(struct rad_packet_t *pack, const char *secret)
++static int dm_coa_set_RA(struct rad_packet_t *pack, const char *secret)
+ {
+-	MD5_CTX ctx;
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
++
++	if (evp_ctx == NULL)
++		return -1;
++
++	EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++	EVP_DigestUpdate(evp_ctx, pack->buf, pack->len);
++	EVP_DigestUpdate(evp_ctx, secret, strlen(secret));
++	EVP_DigestFinal_ex(evp_ctx, pack->buf + 4, NULL);
++
++	EVP_MD_CTX_free(evp_ctx);
+ 
+-	MD5_Init(&ctx);
+-	MD5_Update(&ctx, pack->buf, pack->len);
+-	MD5_Update(&ctx, secret, strlen(secret));
+-	MD5_Final(pack->buf + 4, &ctx);
++	return 0;
+ }
+ 
+ static int dm_coa_send_ack(int fd, struct rad_packet_t *req, struct sockaddr_in *addr)
+@@ -76,7 +88,10 @@ static int dm_coa_send_ack(int fd, struct rad_packet_t *req, struct sockaddr_in
+ 		return -1;
+ 	}
+ 
+-	dm_coa_set_RA(reply, conf_dm_coa_secret);
++	if (dm_coa_set_RA(reply, conf_dm_coa_secret)) {
++		rad_packet_free(reply);
++		return -1;
++	}
+ 
+ 	if (conf_verbose) {
+ 		log_ppp_info2("send ");
+@@ -112,7 +127,10 @@ static int dm_coa_send_nak(int fd, struct rad_packet_t *req, struct sockaddr_in
+ 		return -1;
+ 	}
+ 
+-	dm_coa_set_RA(reply, conf_dm_coa_secret);
++	if (dm_coa_set_RA(reply, conf_dm_coa_secret)) {
++		rad_packet_free(reply);
++		return -1;
++	}
+ 
+ 	if (conf_verbose) {
+ 		log_ppp_info2("send ");
+diff --git a/accel-pppd/radius/serv.c b/accel-pppd/radius/serv.c
+index 9954afd5..d45f4217 100644
+--- a/accel-pppd/radius/serv.c
++++ b/accel-pppd/radius/serv.c
+@@ -11,7 +11,7 @@
+ #include <netinet/in.h>
+ #include <arpa/inet.h>
+ 
+-#include <openssl/md5.h>
++#include <openssl/evp.h>
+ 
+ #include "log.h"
+ #include "triton.h"
+@@ -360,15 +360,22 @@ void rad_server_reply(struct rad_server_t *s)
+ 
+ static int req_set_RA(struct rad_req_t *req, const char *secret)
+ {
+-	MD5_CTX ctx;
++	EVP_MD_CTX *evp_ctx = EVP_MD_CTX_new();
+ 
+-	if (rad_packet_build(req->pack, req->RA))
++	if (evp_ctx == NULL)
+ 		return -1;
+ 
+-	MD5_Init(&ctx);
+-	MD5_Update(&ctx, req->pack->buf, req->pack->len);
+-	MD5_Update(&ctx, secret, strlen(secret));
+-	MD5_Final(req->pack->buf + 4, &ctx);
++	if (rad_packet_build(req->pack, req->RA)) {
++		EVP_MD_CTX_free(evp_ctx);
++		return -1;
++	}
++
++	EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
++	EVP_DigestUpdate(evp_ctx, req->pack->buf, req->pack->len);
++	EVP_DigestUpdate(evp_ctx, secret, strlen(secret));
++	EVP_DigestFinal_ex(evp_ctx, req->pack->buf + 4, NULL);
++
++	EVP_MD_CTX_free(evp_ctx);
+ 
+ 	return 0;
+ }
+-- 
+2.51.0
+
