@@ -11,10 +11,13 @@
 #include <errno.h>
 #include <time.h>
 #include <sys/uio.h>
-//#include <linux/if_link.h>
+#ifdef HAVE_VRF
+#include <linux/if_link.h>
+#endif
 //#include <linux/if_addr.h>
 //#include <linux/rtnetlink.h>
 #include <linux/fib_rules.h>
+#include <net/if.h>
 
 #include "log.h"
 
@@ -458,7 +461,81 @@ int __export ipaddr_del_peer(int ifindex, in_addr_t addr, in_addr_t peer)
 	return r;
 }
 
-int __export iproute_add(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw, int proto, int mask, uint32_t prio)
+#ifdef HAVE_VRF
+static int ipvrf_get_table(uint32_t *tb_id, const char *vrf_name)
+{
+	struct iplink_req {
+		struct nlmsghdr n;
+		struct ifinfomsg i;
+		char buf[4096];
+	} req;
+	struct rtnl_handle *rth = net->rtnl_get();
+	struct rtattr *tb[IFLA_MAX+1];
+	struct rtattr *li[IFLA_INFO_MAX+1];
+	struct rtattr *vrf_attr[IFLA_VRF_MAX + 1];
+	struct ifinfomsg *ifi;
+	int len;
+	int r = -1;
+	*tb_id = RT_TABLE_MAIN;
+
+	log_ppp_info2("utils: getting route table for %s\n", vrf_name);
+
+	if (!vrf_name)
+		return 0;
+
+	memset(&req, 0, sizeof(req) - 4096);
+
+	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+	req.n.nlmsg_flags = NLM_F_REQUEST;
+	req.n.nlmsg_type = RTM_GETLINK;
+	req.i.ifi_family = AF_UNSPEC;
+
+	addattr_l(&req.n, 4096, IFLA_IFNAME, vrf_name, strnlen(vrf_name, IFNAMSIZ));
+
+	r = rtnl_talk(rth, &req.n, 0, 0, &req.n, NULL, NULL, 0);
+	if (r < 0) {
+		log_ppp_error("BUG: route table \"%s\" not found\n", vrf_name);
+		return r;
+	}
+
+	ifi = NLMSG_DATA(&req.n);
+
+	len = req.n.nlmsg_len;
+
+	len -= NLMSG_LENGTH(sizeof(*ifi));
+	if (len < 0) {
+		goto error;
+	}
+
+	parse_rtattr(tb, IFLA_MAX, IFLA_RTA(ifi), len);
+
+	if (!tb[IFLA_LINKINFO])
+		goto error;
+
+	parse_rtattr_nested(li, IFLA_INFO_MAX, tb[IFLA_LINKINFO]);
+
+	if (!li[IFLA_INFO_KIND] || !li[IFLA_INFO_DATA])
+		goto error;
+
+	if (strncmp(RTA_DATA(li[IFLA_INFO_KIND]), "vrf", 4)) {
+		log_ppp_error("BUG: link \"%s\" is not VRF\n", vrf_name);
+		goto error;
+	}
+
+	parse_rtattr_nested(vrf_attr, IFLA_VRF_MAX, li[IFLA_INFO_DATA]);
+	if (vrf_attr[IFLA_VRF_TABLE])
+		*tb_id = *(uint32_t *)RTA_DATA(vrf_attr[IFLA_VRF_TABLE]);
+
+	if (!tb_id)
+		log_ppp_error("BUG: VRF %s is missing table id\n", vrf_name);
+
+	return 0;
+error:
+	return -1;
+}
+#endif
+
+int __export iproute_add(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw, int proto, int mask, uint32_t prio, const char *vrf_name)
 {
 	struct ipaddr_req {
 		struct nlmsghdr n;
@@ -473,16 +550,24 @@ int __export iproute_add(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw
 
 	memset(&req, 0, sizeof(req) - 4096);
 
+	uint32_t rt_table = RT_TABLE_MAIN;
+#ifdef HAVE_VRF
+	if (ipvrf_get_table(&rt_table, vrf_name) < 0)
+		return -1;
+#endif
+
 	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
 	req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE;
 	req.n.nlmsg_type = RTM_NEWROUTE;
 	req.i.rtm_family = AF_INET;
-	req.i.rtm_table = RT_TABLE_MAIN;
+	req.i.rtm_table = rt_table;
 	req.i.rtm_scope = gw ? RT_SCOPE_UNIVERSE : RT_SCOPE_LINK;
 	req.i.rtm_protocol = proto;
 	req.i.rtm_type = RTN_UNICAST;
 	req.i.rtm_dst_len = mask;
 
+	if (rt_table != RT_TABLE_MAIN)
+		addattr32(&req.n, sizeof(req), RTA_TABLE, rt_table);
 	if (ifindex)
 		addattr32(&req.n, sizeof(req), RTA_OIF, ifindex);
 	if (src)
@@ -501,7 +586,7 @@ int __export iproute_add(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw
 	return r;
 }
 
-int __export iproute_del(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw, int proto, int mask, uint32_t prio)
+int __export iproute_del(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw, int proto, int mask, uint32_t prio, const char *vrf_name)
 {
 	struct ipaddr_req {
 		struct nlmsghdr n;
@@ -515,17 +600,25 @@ int __export iproute_del(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw
 		return -1;
 
 	memset(&req, 0, sizeof(req) - 4096);
+
+	uint32_t rt_table = RT_TABLE_MAIN;
+#ifdef HAVE_VRF
+	if (ipvrf_get_table(&rt_table, vrf_name) < 0)
+		return -1;
+#endif
 
 	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
 	req.n.nlmsg_flags = NLM_F_REQUEST;
 	req.n.nlmsg_type = RTM_DELROUTE;
 	req.i.rtm_family = AF_INET;
-	req.i.rtm_table = RT_TABLE_MAIN;
+	req.i.rtm_table = rt_table;
 	req.i.rtm_scope = gw ? RT_SCOPE_UNIVERSE : RT_SCOPE_LINK;
 	req.i.rtm_protocol = proto;
 	req.i.rtm_type = RTN_UNICAST;
 	req.i.rtm_dst_len = mask;
 
+	if (rt_table != RT_TABLE_MAIN)
+		addattr32(&req.n, sizeof(req), RTA_TABLE, rt_table);
 	if (ifindex)
 		addattr32(&req.n, sizeof(req), RTA_OIF, ifindex);
 	if (src)
@@ -544,7 +637,7 @@ int __export iproute_del(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw
 	return r;
 }
 
-int __export ip6route_add(int ifindex, const struct in6_addr *dst, int pref_len, const struct in6_addr *gw, int proto, uint32_t prio)
+int __export ip6route_add(int ifindex, const struct in6_addr *dst, int pref_len, const struct in6_addr *gw, int proto, uint32_t prio, const char *vrf_name)
 {
 	struct ipaddr_req {
 		struct nlmsghdr n;
@@ -559,17 +652,25 @@ int __export ip6route_add(int ifindex, const struct in6_addr *dst, int pref_len,
 
 	memset(&req, 0, sizeof(req) - 4096);
 
+	uint32_t rt_table = RT_TABLE_MAIN;
+#ifdef HAVE_VRF
+	if (ipvrf_get_table(&rt_table, vrf_name) < 0)
+		return -1;
+#endif
+
 	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
 	req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE;
 	req.n.nlmsg_type = RTM_NEWROUTE;
 	req.i.rtm_family = AF_INET6;
-	req.i.rtm_table = RT_TABLE_MAIN;
+	req.i.rtm_table = rt_table;
 	req.i.rtm_scope = RT_SCOPE_UNIVERSE;
 	req.i.rtm_protocol = proto;
 	req.i.rtm_type = RTN_UNICAST;
 	req.i.rtm_dst_len = pref_len;
 
 	addattr_l(&req.n, sizeof(req), RTA_DST, dst, sizeof(*dst));
+	if (rt_table != RT_TABLE_MAIN)
+		addattr32(&req.n, sizeof(req), RTA_TABLE, rt_table);
 	if (ifindex)
 		addattr32(&req.n, sizeof(req), RTA_OIF, ifindex);
 	if (gw)
@@ -585,7 +686,7 @@ int __export ip6route_add(int ifindex, const struct in6_addr *dst, int pref_len,
 	return r;
 }
 
-int __export ip6route_del(int ifindex, const struct in6_addr *dst, int pref_len, const struct in6_addr *gw, int proto, uint32_t prio)
+int __export ip6route_del(int ifindex, const struct in6_addr *dst, int pref_len, const struct in6_addr *gw, int proto, uint32_t prio, const char *vrf_name)
 {
 	struct ipaddr_req {
 		struct nlmsghdr n;
@@ -600,17 +701,25 @@ int __export ip6route_del(int ifindex, const struct in6_addr *dst, int pref_len,
 
 	memset(&req, 0, sizeof(req) - 4096);
 
+	uint32_t rt_table = RT_TABLE_MAIN;
+#ifdef HAVE_VRF
+	if (ipvrf_get_table(&rt_table, vrf_name) < 0)
+		return -1;
+#endif
+
 	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
 	req.n.nlmsg_flags = NLM_F_REQUEST;
 	req.n.nlmsg_type = RTM_DELROUTE;
 	req.i.rtm_family = AF_INET6;
-	req.i.rtm_table = RT_TABLE_MAIN;
+	req.i.rtm_table = rt_table;
 	req.i.rtm_scope = RT_SCOPE_UNIVERSE;
 	req.i.rtm_protocol = proto;
 	req.i.rtm_type = RTN_UNICAST;
 	req.i.rtm_dst_len = pref_len;
 
 	addattr_l(&req.n, sizeof(req), RTA_DST, dst, sizeof(*dst));
+	if (rt_table != RT_TABLE_MAIN)
+		addattr32(&req.n, sizeof(req), RTA_TABLE, rt_table);
 	if (ifindex)
 		addattr32(&req.n, sizeof(req), RTA_OIF, ifindex);
 	if (gw)
