@@ -27,6 +27,10 @@
 #include "config.h"
 #include "memdebug.h"
 
+#ifdef HAVE_SESSION_HOOKS
+# include "ap_session_hooks.h"
+#endif /* HAVE_SESSION_HOOKS */
+
 #define SID_SOURCE_SEQ 0
 #define SID_SOURCE_URANDOM 1
 
@@ -76,6 +80,12 @@ void __export ap_session_init(struct ap_session *ses)
 	ses->ifindex = -1;
 	ses->unit_idx = -1;
 	ses->net = net;
+
+#ifdef HAVE_SESSION_HOOKS
+	ses->hooks = NULL;
+#endif /* HAVE_SESSION_HOOKS */
+
+	ses->vrf_name = NULL;
 }
 
 void __export ap_session_set_ifindex(struct ap_session *ses)
