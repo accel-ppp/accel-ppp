@@ -201,6 +201,11 @@ void __export triton_timer_del(struct triton_timer_t *ud)
 {
 	struct _triton_timer_t *t = (struct _triton_timer_t *)ud->tpd;
 
+	if (ud == NULL || t == NULL) {
+		/* double time del? */
+		return;
+	}
+
 	spin_lock(&t->ctx->lock);
 	t->ud = NULL;
 	list_del(&t->entry);
