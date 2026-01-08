@@ -85,6 +85,9 @@ IF (HAVE_LOGWTMP)
 	ADD_DEFINITIONS(-DHAVE_LOGWTMP)
 ENDIF (HAVE_LOGWTMP)
 
+IF (HAVE_SESSION_HOOKS)
+	ADD_DEFINITIONS(-DHAVE_SESSION_HOOKS)
+ENDIF (HAVE_SESSION_HOOKS)
 
 ADD_SUBDIRECTORY(triton)
 ADD_SUBDIRECTORY(vlan-mon)
@@ -158,6 +161,7 @@ ADD_EXECUTABLE(accel-pppd
 	libnetlink/iputils.c
 	libnetlink/genl.c
 	libnetlink/ipset.c
+	libnetlink/new_link_event.c
 
 	pwdb.c
 	ipdb.c
@@ -167,9 +171,17 @@ ADD_EXECUTABLE(accel-pppd
 	utils.c
 	rbtree.c
 
+	accel_iputils.c
+
 	log.c
 	main.c
 )
+
+IF (HAVE_SESSION_HOOKS)
+	TARGET_SOURCES(accel-pppd PRIVATE
+		ap_session_hooks.c)
+	ADD_SUBDIRECTORY(session_hooks)
+ENDIF (HAVE_SESSION_HOOKS)
 
 # check if we have getcontext/setcontext
 INCLUDE(CheckFunctionExists)
