@@ -163,6 +163,15 @@ void __export ap_session_activate(struct ap_session *ses)
 	if (ap_shutdown)
 		return;
 
+#ifdef HAVE_SESSION_HOOKS
+	if (ses->hooks != NULL && ses->hooks->pppoe_create_session_interface) {
+		if (ses->hooks->pppoe_create_session_interface(ses)) {
+			ap_session_terminate(ses, TERM_NAS_ERROR, 0);
+			return;
+		}
+	}
+#endif /* HAVE_SESSION_HOOKS */
+
 	ap_session_ifup(ses);
 
 	if (ses->stop_time)
@@ -285,6 +294,11 @@ void __export ap_session_finished(struct ap_session *ses)
 		else
 			kill(getpid(), SIGTERM);
 	}
+
+#ifdef HAVE_SESSION_HOOKS
+	if (ses->hooks && ses->hooks->session_hook_deinit)
+		ses->hooks->session_hook_deinit(ses);
+#endif /* HAVE_SESSION_HOOKS */
 }
 
 void __export ap_session_terminate(struct ap_session *ses, int cause, int hard)
