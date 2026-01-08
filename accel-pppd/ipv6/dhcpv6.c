@@ -26,6 +26,10 @@
 #include "dhcpv6.h"
 
 #include "memdebug.h"
+
+#ifdef HAVE_SESSION_HOOKS
+# include "ppp_ipv6layer.h"
+#endif /* HAVE_SESSION_HOOKS */
 #include "accel_iputils.h"
 
 #define BUF_SIZE 65536
@@ -64,13 +68,17 @@ static void *pd_key;
 
 static int dhcpv6_read(struct triton_md_handler_t *h);
 
+#ifdef HAVE_SESSION_HOOKS
+int dhcpv6_external_process_udp(struct ap_session *ses, const void *buf, size_t n, struct in6_addr *addr, unsigned short port);
+#endif /* HAVE_SESSION_HOOKS */
+
 static void ev_ses_started(struct ap_session *ses)
 {
 	struct ipv6_mreq mreq;
 	struct dhcpv6_pd *pd;
 	struct sockaddr_in6 addr;
 	struct ipv6db_addr_t *a;
-	int sock;
+	int sock = -1;
 	int f = 1;
 
 	if (!ses->ipv6 || list_empty(&ses->ipv6->addr_list))
@@ -80,46 +88,53 @@ static void ev_ses_started(struct ap_session *ses)
 	if (a->prefix_len == 0 || IN6_IS_ADDR_UNSPECIFIED(&a->addr))
 		return;
 
-	net->enter_ns();
-	sock = net->socket(AF_INET6, SOCK_DGRAM, 0);
-	net->exit_ns();
+#ifdef HAVE_SESSION_HOOKS
+	if (ses->hooks && ses->hooks->is_non_socket_dhcpv6_nd) {
+		ipv6layer_unit_enable_dhcpv6(ses, dhcpv6_external_process_udp);
+	} else
+#endif /* HAVE_SESSION_HOOKS */
+	{
+		net->enter_ns();
+		sock = net->socket(AF_INET6, SOCK_DGRAM, 0);
+		net->exit_ns();
 
-	if (!sock) {
-		log_ppp_error("dhcpv6: socket: %s\n", strerror(errno));
-		return;
+		if (!sock) {
+			log_ppp_error("dhcpv6: socket: %s\n", strerror(errno));
+			return;
+		}
+
+		net->setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &f, sizeof(f));
+
+		if (net->setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, ses->ifname, strlen(ses->ifname))) {
+			log_ppp_error("dhcpv6: setsockopt(SO_BINDTODEVICE): %s\n", strerror(errno));
+			close(sock);
+			return;
+		}
+
+		memset(&addr, 0, sizeof(addr));
+		addr.sin6_family = AF_INET6;
+		addr.sin6_port = htons(DHCPV6_SERV_PORT);
+
+		if (net->bind(sock, (struct sockaddr *)&addr, sizeof(addr))) {
+			log_ppp_error("dhcpv6: bind: %s\n", strerror(errno));
+			close(sock);
+			return;
+		}
+
+		memset(&mreq, 0, sizeof(mreq));
+		mreq.ipv6mr_interface = ses->ifindex;
+		mreq.ipv6mr_multiaddr.s6_addr32[0] = htonl(0xff020000);
+		mreq.ipv6mr_multiaddr.s6_addr32[3] = htonl(0x010002);
+
+		if (net->setsockopt(sock, SOL_IPV6, IPV6_ADD_MEMBERSHIP, &mreq, sizeof(mreq))) {
+			log_ppp_error("dhcpv6: failed to join to All_DHCP_Relay_Agents_and_Servers\n");
+			close(sock);
+			return;
+		}
+
+		fcntl(sock, F_SETFD, fcntl(sock, F_GETFD) | FD_CLOEXEC);
+		net->set_nonblocking(sock, 1);
 	}
-
-	net->setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &f, sizeof(f));
-
-	if (net->setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, ses->ifname, strlen(ses->ifname))) {
-		log_ppp_error("dhcpv6: setsockopt(SO_BINDTODEVICE): %s\n", strerror(errno));
-		close(sock);
-		return;
-	}
-
-	memset(&addr, 0, sizeof(addr));
-	addr.sin6_family = AF_INET6;
-	addr.sin6_port = htons(DHCPV6_SERV_PORT);
-
-	if (net->bind(sock, (struct sockaddr *)&addr, sizeof(addr))) {
-		log_ppp_error("dhcpv6: bind: %s\n", strerror(errno));
-		close(sock);
-		return;
-	}
-
-	memset(&mreq, 0, sizeof(mreq));
-	mreq.ipv6mr_interface = ses->ifindex;
-	mreq.ipv6mr_multiaddr.s6_addr32[0] = htonl(0xff020000);
-	mreq.ipv6mr_multiaddr.s6_addr32[3] = htonl(0x010002);
-
-	if (net->setsockopt(sock, SOL_IPV6, IPV6_ADD_MEMBERSHIP, &mreq, sizeof(mreq))) {
-		log_ppp_error("dhcpv6: failed to join to All_DHCP_Relay_Agents_and_Servers\n");
-		close(sock);
-		return;
-	}
-
-	fcntl(sock, F_SETFD, fcntl(sock, F_GETFD) | FD_CLOEXEC);
-	net->set_nonblocking(sock, 1);
 
 	pd = _malloc(sizeof(*pd));
 	memset(pd, 0, sizeof(*pd));
@@ -129,10 +144,15 @@ static void ev_ses_started(struct ap_session *ses)
 
 	pd->ses = ses;
 
-	pd->hnd.fd = sock;
-	pd->hnd.read = dhcpv6_read;
-	triton_md_register_handler(ses->ctrl->ctx, &pd->hnd);
-	triton_md_enable_handler(&pd->hnd, MD_MODE_READ);
+#ifdef HAVE_SESSION_HOOKS
+	if (!(ses->hooks && ses->hooks->is_non_socket_dhcpv6_nd))
+#endif /* HAVE_SESSION_HOOKS */
+	{
+		pd->hnd.fd = sock;
+		pd->hnd.read = dhcpv6_read;
+		triton_md_register_handler(ses->ctrl->ctx, &pd->hnd);
+		triton_md_enable_handler(&pd->hnd, MD_MODE_READ);
+	}
 }
 
 static struct dhcpv6_pd *find_pd(struct ap_session *ses)
@@ -169,7 +189,14 @@ static void ev_ses_finished(struct ap_session *ses)
 		ipdb_put_ipv6_prefix(ses, ses->ipv6_dp);
 	}
 
-	triton_md_unregister_handler(&pd->hnd, 1);
+#ifdef HAVE_SESSION_HOOKS
+	if (ses->hooks && ses->hooks->is_non_socket_dhcpv6_nd) {
+		ipv6layer_unit_disable_dhcpv6(ses);
+	} else
+#endif /* HAVE_SESSION_HOOKS */
+	{
+		triton_md_unregister_handler(&pd->hnd, 1);
+	}
 
 	_free(pd);
 }
@@ -463,7 +490,15 @@ static void dhcpv6_send_reply(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, i
 
 	dhcpv6_fill_relay_info(reply);
 
-	net->sendto(pd->hnd.fd, reply->hdr, reply->endptr - (void *)reply->hdr, 0, (struct sockaddr *)&req->addr, sizeof(req->addr));
+#ifdef HAVE_SESSION_HOOKS
+	if (ses->hooks && ses->hooks->is_non_socket_dhcpv6_nd) {
+		ipv6layer_unit_dhcpv6_send(ses, reply->hdr, reply->endptr - (void *)reply->hdr, (struct sockaddr *)&req->addr, sizeof(req->addr));
+	} else
+#endif /* HAVE_SESSION_HOOKS */
+	{
+		req->addr.sin6_scope_id = ses->ifindex;
+		net->sendto(pd->hnd.fd, reply->hdr, reply->endptr - (void *)reply->hdr, 0, (struct sockaddr *)&req->addr, sizeof(req->addr));
+	}
 
 	dhcpv6_packet_free(reply);
 }
@@ -618,7 +653,15 @@ static void dhcpv6_send_reply2(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, 
 
 	dhcpv6_fill_relay_info(reply);
 
-	net->sendto(pd->hnd.fd, reply->hdr, reply->endptr - (void *)reply->hdr, 0, (struct sockaddr *)&req->addr, sizeof(req->addr));
+#ifdef HAVE_SESSION_HOOKS
+	if (ses->hooks && ses->hooks->is_non_socket_dhcpv6_nd) {
+		ipv6layer_unit_dhcpv6_send(ses, reply->hdr, reply->endptr - (void *)reply->hdr, (struct sockaddr *)&req->addr, sizeof(req->addr));
+	} else
+#endif /* HAVE_SESSION_HOOKS */
+	{
+		req->addr.sin6_scope_id = ses->ifindex;
+		net->sendto(pd->hnd.fd, reply->hdr, reply->endptr - (void *)reply->hdr, 0, (struct sockaddr *)&req->addr, sizeof(req->addr));
+	}
 
 out:
 	dhcpv6_packet_free(reply);
@@ -827,6 +870,43 @@ static void dhcpv6_recv_packet(struct dhcpv6_packet *pkt)
 	dhcpv6_packet_free(pkt);
 }
 
+int dhcpv6_read_process_udp(struct ap_session *ses, struct dhcpv6_pd *pd, const uint8_t *buf, int n, struct sockaddr_in6 *addr) {
+
+	struct dhcpv6_packet *pkt;
+
+	if (!IN6_IS_ADDR_LINKLOCAL(&addr->sin6_addr))
+		return 1;
+
+	if (addr->sin6_port != ntohs(DHCPV6_CLIENT_PORT))
+		return 1;
+
+	pkt = dhcpv6_packet_parse(buf, n);
+	if (!pkt || !pkt->clientid) {
+		return 1;
+	}
+
+	pkt->ses = ses;
+	pkt->pd = pd;
+	pkt->addr = *addr;
+
+	dhcpv6_recv_packet(pkt);
+
+	return 0;
+}
+
+#ifdef HAVE_SESSION_HOOKS
+int dhcpv6_external_process_udp(struct ap_session *ses, const void *buf, size_t n, struct in6_addr *addr, unsigned short port)
+{
+	struct dhcpv6_pd *pd = find_pd(ses); /* TODO: add check */
+	struct sockaddr_in6 saddr;
+	saddr.sin6_family = AF_INET6;
+	memcpy(&saddr.sin6_addr, addr, sizeof(*addr));
+	saddr.sin6_port = port;
+
+	return dhcpv6_read_process_udp(ses, pd, (const uint8_t *)buf, n, &saddr);
+}
+#endif /* HAVE_SESSION_HOOKS */
+
 static int dhcpv6_read(struct triton_md_handler_t *h)
 {
 	struct dhcpv6_pd *pd = container_of(h, typeof(*pd), hnd);
@@ -834,7 +914,6 @@ static int dhcpv6_read(struct triton_md_handler_t *h)
 	int n;
 	struct sockaddr_in6 addr;
 	socklen_t len = sizeof(addr);
-	struct dhcpv6_packet *pkt;
 	uint8_t *buf = _malloc(BUF_SIZE);
 
 	while (1) {
@@ -846,22 +925,7 @@ static int dhcpv6_read(struct triton_md_handler_t *h)
 			continue;
 		}
 
-		if (!IN6_IS_ADDR_LINKLOCAL(&addr.sin6_addr))
-			continue;
-
-		if (addr.sin6_port != ntohs(DHCPV6_CLIENT_PORT))
-			continue;
-
-		pkt = dhcpv6_packet_parse(buf, n);
-		if (!pkt || !pkt->clientid) {
-			continue;
-		}
-
-		pkt->ses = ses;
-		pkt->pd = pd;
-		pkt->addr = addr;
-
-		dhcpv6_recv_packet(pkt);
+		dhcpv6_read_process_udp(ses, pd, buf, n, &addr);
 	}
 
 	_free(buf);

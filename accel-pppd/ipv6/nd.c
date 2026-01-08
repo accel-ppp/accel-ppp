@@ -18,6 +18,10 @@
 #include "mempool.h"
 #include "ipdb.h"
 #include "iputils.h"
+
+#ifdef HAVE_SESSION_HOOKS
+# include "ppp_ipv6layer.h"
+#endif /* HAVE_SESSION_HOOKS */
 #include "accel_iputils.h"
 
 #include "memdebug.h"
@@ -201,7 +205,14 @@ static void ipv6_nd_send_ra(struct ipv6_nd_handler_t *h, struct sockaddr_in6 *ds
 	} else
 		endptr = rdnss_addr;
 
-	net->sendto(h->hnd.fd, buf, endptr - buf, 0, (struct sockaddr *)dst_addr, sizeof(*dst_addr));
+#ifdef HAVE_SESSION_HOOKS
+	if (ses->hooks && ses->hooks->is_non_socket_dhcpv6_nd) {
+		ipv6layer_unit_icmpv6_send(h->ses, buf, endptr - buf, (struct sockaddr *)dst_addr, sizeof(*dst_addr));
+	} else
+#endif /* HAVE_SESSION_HOOKS */
+	{
+		net->sendto(h->hnd.fd, buf, endptr - buf, 0, (struct sockaddr *)dst_addr, sizeof(*dst_addr));
+	}
 
 	mempool_free(buf);
 }
@@ -227,6 +238,28 @@ static void send_ra_timer(struct triton_timer_t *t)
 	ipv6_nd_send_ra(h, &addr);
 }
 
+int ipv6_nd_process_icmp(struct ipv6_nd_handler_t *h, const struct icmp6_hdr *icmph, struct sockaddr_in6 *addr)
+{
+	if (icmph->icmp6_type != ND_ROUTER_SOLICIT) {
+		log_ppp_warn("ipv6_nd: received unexcpected icmp packet (%i)\n", icmph->icmp6_type);
+		return 1;
+	}
+
+	if (!IN6_IS_ADDR_LINKLOCAL(&addr->sin6_addr)) {
+		log_ppp_warn("ipv6_nd: received icmp packet from non link-local address\n");
+		return 1;
+	}
+
+		/*if (*(uint64_t *)(addr.sin6_addr.s6_addr + 8) != *(uint64_t *)(h->ses->ipv6_addr.s6_addr + 8)) {
+		log_ppp_warn("ipv6_nd: received icmp packet from unknown address\n");
+		continue;
+	}*/
+
+	ipv6_nd_send_ra(h, addr);
+
+	return 0;
+}
+
 static int ipv6_nd_read(struct triton_md_handler_t *_h)
 {
 	struct ipv6_nd_handler_t *h = container_of(_h, typeof(*h), hnd);
@@ -249,27 +282,7 @@ static int ipv6_nd_read(struct triton_md_handler_t *_h)
 			continue;
 		}
 
-		if (n < sizeof(*icmph)) {
-			log_ppp_warn("ipv6_nd: received short icmp packet (%i)\n", n);
-			continue;
-		}
-
-		if (icmph->icmp6_type != ND_ROUTER_SOLICIT) {
-			log_ppp_warn("ipv6_nd: received unexcpected icmp packet (%i)\n", icmph->icmp6_type);
-			continue;
-		}
-
-		if (!IN6_IS_ADDR_LINKLOCAL(&addr.sin6_addr)) {
-			log_ppp_warn("ipv6_nd: received icmp packet from non link-local address\n");
-			continue;
-		}
-
-		/*if (*(uint64_t *)(addr.sin6_addr.s6_addr + 8) != *(uint64_t *)(h->ses->ipv6_addr.s6_addr + 8)) {
-			log_ppp_warn("ipv6_nd: received icmp packet from unknown address\n");
-			continue;
-		}*/
-
-		ipv6_nd_send_ra(h, &addr);
+		ipv6_nd_process_icmp(h, icmph, &addr);
 	}
 
 	mempool_free(icmph);
@@ -277,85 +290,108 @@ static int ipv6_nd_read(struct triton_md_handler_t *_h)
 	return 0;
 }
 
+#ifdef HAVE_SESSION_HOOKS
+static int ipv6_nd_external_process_icmp(struct ap_session *ses, const void *buf, size_t size, struct in6_addr *addr);
+#endif /* HAVE_SESSION_HOOKS */
+
 static int ipv6_nd_start(struct ap_session *ses)
 {
-	int sock;
+	int sock = -1;
 	struct icmp6_filter filter;
 	struct ipv6_mreq mreq;
 	int val;
 	struct ipv6_nd_handler_t *h;
 
-	net->enter_ns();
-	sock = net->socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6);
-	net->exit_ns();
+#ifdef HAVE_SESSION_HOOKS
+	if (ses->hooks && ses->hooks->is_non_socket_dhcpv6_nd) {
+		ipv6layer_unit_enable_nd(ses, ipv6_nd_external_process_icmp);
+	} else
+#endif /* HAVE_SESSION_HOOKS */
+	{
+		net->enter_ns();
+		sock = net->socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6);
+		net->exit_ns();
 
-	if (sock < 0) {
-		log_ppp_error("socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6): %s\n", strerror(errno));
-		return -1;
+		if (sock < 0) {
+			log_ppp_error("socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6): %s\n", strerror(errno));
+			return -1;
+		}
+
+		if (net->setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, ses->ifname, strlen(ses->ifname))) {
+			log_ppp_error("ipv6_nd: setsockopt(SO_BINDTODEVICE): %s\n", strerror(errno));
+			goto out_err;
+		}
+
+		val = 2;
+		if (net->setsockopt(sock, IPPROTO_RAW, IPV6_CHECKSUM, &val, sizeof(val))) {
+			log_ppp_error("ipv6_nd: setsockopt(IPV6_CHECKSUM): %s\n", strerror(errno));
+			goto out_err;
+		}
+
+		val = 255;
+		if (net->setsockopt(sock, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &val, sizeof(val))) {
+			log_ppp_error("ipv6_nd: setsockopt(IPV6_UNICAST_HOPS): %s\n", strerror(errno));
+			goto out_err;
+		}
+
+		if (net->setsockopt(sock, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &val, sizeof(val))) {
+			log_ppp_error("ipv6_nd: setsockopt(IPV6_MULTICAST_HOPS): %s\n", strerror(errno));
+			goto out_err;
+		}
+
+		/*val = 1;
+		if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVHOPLIMIT, &val, sizeof(val))) {
+			log_ppp_error("ipv6_nd: setsockopt(IPV6_HOPLIMIT): %s\n", strerror(errno));
+			goto out_err;
+		}*/
+
+		ICMP6_FILTER_SETBLOCKALL(&filter);
+		ICMP6_FILTER_SETPASS(ND_ROUTER_SOLICIT, &filter);
+
+		if (net->setsockopt(sock, IPPROTO_ICMPV6, ICMP6_FILTER, &filter, sizeof(filter))) {
+			log_ppp_error("ipv6_nd: setsockopt(ICMP6_FILTER): %s\n", strerror(errno));
+			goto out_err;
+		}
+
+		memset(&mreq, 0, sizeof(mreq));
+		mreq.ipv6mr_interface = ses->ifindex;
+		mreq.ipv6mr_multiaddr.s6_addr32[0] = htonl(0xff020000);
+		mreq.ipv6mr_multiaddr.s6_addr32[3] = htonl(0x2);
+
+		if (net->setsockopt(sock, SOL_IPV6, IPV6_ADD_MEMBERSHIP, &mreq, sizeof(mreq))) {
+			log_ppp_error("ipv6_nd: failed to join ipv6 allrouters\n");
+			goto out_err;
+		}
+
+		fcntl(sock, F_SETFD, fcntl(sock, F_GETFD) | FD_CLOEXEC);
+
+		net->set_nonblocking(sock, 1);
 	}
-
-	if (net->setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, ses->ifname, strlen(ses->ifname))) {
-		log_ppp_error("ipv6_nd: setsockopt(SO_BINDTODEVICE): %s\n", strerror(errno));
-		goto out_err;
-	}
-
-	val = 2;
-	if (net->setsockopt(sock, IPPROTO_RAW, IPV6_CHECKSUM, &val, sizeof(val))) {
-		log_ppp_error("ipv6_nd: setsockopt(IPV6_CHECKSUM): %s\n", strerror(errno));
-		goto out_err;
-	}
-
-	val = 255;
-	if (net->setsockopt(sock, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &val, sizeof(val))) {
-		log_ppp_error("ipv6_nd: setsockopt(IPV6_UNICAST_HOPS): %s\n", strerror(errno));
-		goto out_err;
-	}
-
-	if (net->setsockopt(sock, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &val, sizeof(val))) {
-		log_ppp_error("ipv6_nd: setsockopt(IPV6_MULTICAST_HOPS): %s\n", strerror(errno));
-		goto out_err;
-	}
-
-	/*val = 1;
-	if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVHOPLIMIT, &val, sizeof(val))) {
-		log_ppp_error("ipv6_nd: setsockopt(IPV6_HOPLIMIT): %s\n", strerror(errno));
-		goto out_err;
-	}*/
-
-	ICMP6_FILTER_SETBLOCKALL(&filter);
-	ICMP6_FILTER_SETPASS(ND_ROUTER_SOLICIT, &filter);
-
-	if (net->setsockopt(sock, IPPROTO_ICMPV6, ICMP6_FILTER, &filter, sizeof(filter))) {
-		log_ppp_error("ipv6_nd: setsockopt(ICMP6_FILTER): %s\n", strerror(errno));
-		goto out_err;
-	}
-
-	memset(&mreq, 0, sizeof(mreq));
-	mreq.ipv6mr_interface = ses->ifindex;
-	mreq.ipv6mr_multiaddr.s6_addr32[0] = htonl(0xff020000);
-	mreq.ipv6mr_multiaddr.s6_addr32[3] = htonl(0x2);
-
-	if (net->setsockopt(sock, SOL_IPV6, IPV6_ADD_MEMBERSHIP, &mreq, sizeof(mreq))) {
-		log_ppp_error("ipv6_nd: failed to join ipv6 allrouters\n");
-		goto out_err;
-	}
-
-	fcntl(sock, F_SETFD, fcntl(sock, F_GETFD) | FD_CLOEXEC);
-
-	net->set_nonblocking(sock, 1);
 
 	h = _malloc(sizeof(*h));
 	memset(h, 0, sizeof(*h));
 	h->ses = ses;
 	h->pd.key = &pd_key;
-	h->hnd.fd = sock;
-	h->hnd.read = ipv6_nd_read;
+
+#ifdef HAVE_SESSION_HOOKS
+	if (!(ses->hooks && ses->hooks->is_non_socket_dhcpv6_nd))
+#endif /* HAVE_SESSION_HOOKS */
+	{
+		h->hnd.fd = sock;
+		h->hnd.read = ipv6_nd_read;
+	}
+
 	h->timer.expire = send_ra_timer;
 	h->timer.period = conf_init_ra_interval * 1000;
 	list_add_tail(&h->pd.entry, &ses->pd_list);
 
-	triton_md_register_handler(ses->ctrl->ctx, &h->hnd);
-	triton_md_enable_handler(&h->hnd, MD_MODE_READ);
+#ifdef HAVE_SESSION_HOOKS
+	if (!(ses->hooks && ses->hooks->is_non_socket_dhcpv6_nd))
+#endif /* HAVE_SESSION_HOOKS */
+	{
+		triton_md_register_handler(ses->ctrl->ctx, &h->hnd);
+		triton_md_enable_handler(&h->hnd, MD_MODE_READ);
+	}
 
 	triton_timer_add(ses->ctrl->ctx, &h->timer, 0);
 	send_ra_timer(&h->timer);
@@ -378,6 +414,19 @@ static struct ipv6_nd_handler_t *find_pd(struct ap_session *ses)
 
 	return NULL;
 }
+
+#ifdef HAVE_SESSION_HOOKS
+static int ipv6_nd_external_process_icmp(struct ap_session *ses, const void *buf, size_t size, struct in6_addr *addr)
+{
+	struct ipv6_nd_handler_t *h = find_pd(ses);
+	struct sockaddr_in6 saddr;
+	memset(&saddr, 0, sizeof(saddr));
+	saddr.sin6_family = AF_INET6;
+	memcpy(&saddr.sin6_addr, addr, sizeof(*addr));
+
+	return ipv6_nd_process_icmp(h, (const struct icmp6_hdr *)buf, &saddr);
+}
+#endif /* HAVE_SESSION_HOOKS */
 
 static void ev_ses_started(struct ap_session *ses)
 {
@@ -404,7 +453,14 @@ static void ev_ses_finishing(struct ap_session *ses)
 	if (h->timer.tpd)
 		triton_timer_del(&h->timer);
 
-	triton_md_unregister_handler(&h->hnd, 1);
+#ifdef HAVE_SESSION_HOOKS
+	if (ses->hooks && ses->hooks->is_non_socket_dhcpv6_nd) {
+		ipv6layer_unit_disable_nd(ses);
+	} else
+#endif /* HAVE_SESSION_HOOKS */
+	{
+		triton_md_unregister_handler(&h->hnd, 1);
+	}
 
 	list_del(&h->pd.entry);
 

@@ -120,6 +120,10 @@ struct ap_session
 	uint64_t acct_rx_bytes_i;
 	uint64_t acct_tx_bytes_i;
 	int acct_start;
+
+	int (*ppp_ipv6_nd_recv)(struct ap_session *, const void *, size_t, struct in6_addr *);
+	int (*ppp_ipv6_dhcpv6_recv)(struct ap_session *, const void *, size_t, struct in6_addr *, unsigned short);
+
 #ifdef HAVE_SESSION_HOOKS
 	struct ap_session_hooks_t *hooks;
 #endif /* HAVE_SESSION_HOOKS */
