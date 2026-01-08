@@ -106,6 +106,7 @@ struct pppoe_serv_t
 	unsigned int stopping:1;
 	unsigned int vlan_mon:1;
 	unsigned int is_vpppoe:1;
+	unsigned int stop_cause;
 
 #ifdef HAVE_SESSION_HOOKS
 	/* hooks set to sessions for this server */
@@ -132,6 +133,13 @@ extern unsigned long stat_filtered;
 
 extern pthread_rwlock_t serv_lock;
 extern struct list_head serv_list;
+
+struct monitored_link_list_entry_t {
+	struct list_head entry;
+	char *name;
+	char *opt;
+};
+extern struct list_head monitored_link_list;
 
 int mac_filter_check(const uint8_t *addr);
 void pppoe_server_start(const char *intf, void *client);
