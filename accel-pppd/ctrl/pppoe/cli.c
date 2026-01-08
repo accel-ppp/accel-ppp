@@ -27,12 +27,13 @@ static void show_interfaces(void *cli)
 
 static void intf_help(char * const *fields, int fields_cnt, void *client)
 {
-	uint8_t show = 7;
+	uint8_t show = 15;
 
 	if (fields_cnt >= 3) {
-		show &= (strcmp(fields[2], "add")) ? ~1 : ~0;
-		show &= (strcmp(fields[2], "del")) ? ~2 : ~0;
-		show &= (strcmp(fields[2], "show")) ? ~4 : ~0;
+		show &= (strncmp(fields[2], "add", sizeof("add"))) ? ~1 : ~0;
+		show &= (strncmp(fields[2], "del", sizeof("del"))) ? ~2 : ~0;
+		show &= (strncmp(fields[2], "show", sizeof("show"))) ? ~4 : ~0;
+		show &= (strncmp(fields[2], "monitored", sizeof("monitored"))) ? ~8 : ~0;
 		if (show == 0) {
 			cli_sendv(client, "Invalid action \"%s\"\r\n",
 				  fields[2]);
@@ -51,8 +52,13 @@ static void intf_help(char * const *fields, int fields_cnt, void *client)
 	if (show & 4)
 		cli_send(client,
 			 "pppoe interface show"
-			 " - show interfaces on which pppoe server"
+			 " - show interfaces where PPPoE server is running"
 			 " started\r\n");
+	if (show & 8)
+		cli_send(client,
+			 "pppoe interface monitored"
+			 " - show the list of monitored interfaces where PPPoE service"
+			 " would be launched automatically when the link appears\r\n");
 }
 
 static int intf_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
@@ -63,6 +69,15 @@ static int intf_exec(const char *cmd, char * const *fields, int fields_cnt, void
 	if (fields_cnt == 3) {
 		if (!strcmp(fields[2], "show"))
 			show_interfaces(client);
+		else if(!strncmp(fields[2], "monitored", sizeof("monitored"))) {
+			struct monitored_link_list_entry_t *e;
+			cli_send(client, "interface:   options:\r\n");
+			cli_send(client, "---------------------\r\n");
+			pthread_rwlock_rdlock(&serv_lock);
+			list_for_each_entry(e, &monitored_link_list, entry)
+				cli_sendv(client, "%9s    %s\r\n", e->name, e->opt != NULL ? e->opt : "" );
+			pthread_rwlock_unlock(&serv_lock);
+		}
 		else
 			goto help;
 

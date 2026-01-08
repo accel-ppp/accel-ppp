@@ -34,6 +34,10 @@
 
 #include "memdebug.h"
 
+#include "ipdb.h"
+
+#include "new_link_event.h"
+
 #define SID_MAX 65536
 
 #ifndef min
@@ -133,6 +137,13 @@ static pthread_mutex_t sid_lock = PTHREAD_MUTEX_INITIALIZER;
 static unsigned long *sid_map;
 static unsigned long *sid_ptr;
 static int sid_idx;
+
+struct nnle_handler_t pppoe_nnle_handler;
+LIST_HEAD(monitored_link_list);
+
+static void monitored_link_list_add(const char *name, const char *opt);
+static void monitored_link_list_del(const char *name);
+struct monitored_link_list_entry_t * monitored_link_list_find(const char *name);
 
 static uint8_t bc_addr[ETH_ALEN] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
@@ -1523,13 +1534,17 @@ static void __pppoe_server_start(const char *ifname, const char *opt, void *cli,
 
 	pthread_rwlock_rdlock(&serv_lock);
 	list_for_each_entry(serv, &serv_list, entry) {
-		if (serv->net == net && !strcmp(serv->ifname, ifname)) {
+		if (serv->net == net && !strcmp(serv->ifname, ifname) && !serv->stopping) {
 			if (cli)
 				cli_send(cli, "error: already exists\r\n");
 			pthread_rwlock_unlock(&serv_lock);
 			return;
 		}
 	}
+	pthread_rwlock_unlock(&serv_lock);
+
+	pthread_rwlock_wrlock(&serv_lock);
+	monitored_link_list_add(ifname, opt);
 	pthread_rwlock_unlock(&serv_lock);
 
 	if (vid && !vlan_mon && vlan_mon_check_busy(parent_ifindex, vid))
@@ -1546,6 +1561,8 @@ static void __pppoe_server_start(const char *ifname, const char *opt, void *cli,
 	}
 
 	strncpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
+
+	serv->stop_cause = TERM_ADMIN_RESET;
 
 #ifdef HAVE_SESSION_HOOKS
 	serv->is_vpppoe = is_vpppoe;
@@ -1674,7 +1691,7 @@ out_err:
 
 static void _conn_stop(struct pppoe_conn_t *conn)
 {
-	ap_session_terminate(&conn->ppp.ses, TERM_ADMIN_RESET, 0);
+	ap_session_terminate(&conn->ppp.ses, conn->serv->stop_cause, 0);
 }
 
 void _server_stop(struct pppoe_serv_t *serv)
@@ -1741,9 +1758,13 @@ void pppoe_server_stop(const char *ifname)
 {
 	struct pppoe_serv_t *serv;
 
+	pthread_rwlock_wrlock(&serv_lock);
+	monitored_link_list_del(ifname);
+	pthread_rwlock_unlock(&serv_lock);
+
 	pthread_rwlock_rdlock(&serv_lock);
 	list_for_each_entry(serv, &serv_list, entry) {
-		if (strcmp(serv->ifname, ifname))
+		if (strcmp(serv->ifname, ifname) || serv->stopping)
 			continue;
 		triton_context_call(&serv->ctx, (triton_event_func)_server_stop, serv);
 		break;
@@ -2237,6 +2258,89 @@ static void load_interfaces()
 	}
 }
 
+static void monitored_link_list_add(const char *name, const char *opt)
+{
+	struct monitored_link_list_entry_t *s;
+
+	if (name == NULL) {
+		return;
+	}
+
+	s = monitored_link_list_find(name);
+	/* TODO: update opt? */
+	/* already exists */
+	if (s != NULL)
+		return;
+
+	s = malloc(sizeof(*s));
+	s->name = strdup(name);
+	s->opt = NULL;
+	if (opt)
+		s->opt = strdup(opt);
+
+	list_add_tail(&s->entry, &monitored_link_list);
+}
+
+static void monitored_link_list_del(const char *name)
+{
+	struct monitored_link_list_entry_t *s;
+
+	s = monitored_link_list_find(name);
+	if (s == NULL)
+		return;
+
+	list_del(&s->entry);
+	free(s->name);
+	if (s->opt)
+		free(s->opt);
+
+	free(s);
+}
+
+struct monitored_link_list_entry_t * monitored_link_list_find(const char *name)
+{
+	struct monitored_link_list_entry_t *s;
+
+	if (name == NULL)
+		return NULL;
+
+	list_for_each_entry(s, &monitored_link_list, entry) {
+		if (!strncmp(name, s->name, IFNAMSIZ - 1)) {
+			return s;
+		}
+	}
+
+	return NULL;
+}
+
+static void pppoe_on_add_link(const char *name)
+{
+	pthread_rwlock_rdlock(&serv_lock);
+	struct monitored_link_list_entry_t *s = monitored_link_list_find(name);
+	pthread_rwlock_unlock(&serv_lock);
+	if (s != NULL) {
+		__pppoe_server_start(s->name, s->opt, NULL, -1, 0, 0);
+		log_info1("pppoe: new link event received, starting the service on: %s with options \"%s\"\n", s->name, s->opt);
+	}
+}
+
+static void pppoe_on_del_link(const char *name)
+{
+	/* TODO: it is a copy of pppoe_server_stop() without monitored delete */
+	struct pppoe_serv_t *serv;
+
+	pthread_rwlock_rdlock(&serv_lock);
+	list_for_each_entry(serv, &serv_list, entry) {
+		if (strcmp(serv->ifname, name) || serv->stopping)
+			continue;
+		serv->stop_cause = TERM_NAS_ERROR;
+		triton_context_call(&serv->ctx, (triton_event_func)_server_stop, serv);
+		log_warn("pppoe: delete link event received, stopping the service on: %s ifindex %d\n", serv->ifname, serv->ifindex);
+		break;
+	}
+	pthread_rwlock_unlock(&serv_lock);
+}
+
 static void pppoe_init(void)
 {
 	int fd;
@@ -2268,6 +2372,10 @@ static void pppoe_init(void)
 	load_config();
 
 	connlimit_loaded = triton_module_loaded("connlimit");
+
+	pppoe_nnle_handler.on_new_link = pppoe_on_add_link;
+	pppoe_nnle_handler.on_del_link = pppoe_on_del_link;
+	nnle_add_handler(&pppoe_nnle_handler);
 
 	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
 }
