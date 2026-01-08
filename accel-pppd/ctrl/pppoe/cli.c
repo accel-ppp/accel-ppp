@@ -14,12 +14,13 @@ static void show_interfaces(void *cli)
 {
 	struct pppoe_serv_t *serv;
 
-	cli_send(cli, "interface:   connections:    state:\r\n");
-	cli_send(cli, "-----------------------------------\r\n");
+	cli_send(cli, "interface:   connections:    state:    vpp-cp:\r\n");
+	cli_send(cli, "----------------------------------------------\r\n");
 
 	pthread_rwlock_rdlock(&serv_lock);
 	list_for_each_entry(serv, &serv_list, entry) {
-		cli_sendv(cli, "%9s    %11u    %6s\r\n", serv->ifname, serv->conn_cnt, serv->stopping ? "stop" : "active");
+		cli_sendv(cli, "%9s    %11u    %6s    %7s\r\n", serv->ifname, serv->conn_cnt, serv->stopping ? "stop" : "active",
+				serv->is_vpppoe ? "enable" : "disable");
 	}
 	pthread_rwlock_unlock(&serv_lock);
 }

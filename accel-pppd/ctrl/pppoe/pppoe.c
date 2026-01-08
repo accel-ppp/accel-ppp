@@ -219,6 +219,20 @@ static void ppp_started(struct ap_session *ses)
 	log_ppp_debug("pppoe: ppp started\n");
 }
 
+int pppoe_terminate(struct ap_session *ses, int hard) {
+	int ret = 0;
+
+#ifdef HAVE_SESSION_HOOKS
+	if (ses->hooks && ses->hooks->pppoe_terminate &&
+		ses->hooks->pppoe_terminate(ses, hard))
+		log_ppp_warn("pppoe: issue to terminate PPPoE session with hook\n");
+#endif /* HAVE_SESSION_HOOKS */
+
+	ret = ppp_terminate(ses, hard);
+
+	return ret;
+}
+
 static void ppp_finished(struct ap_session *ses)
 {
 	struct ppp_t *ppp = container_of(ses, typeof(*ppp), ses);
@@ -343,7 +357,7 @@ static struct pppoe_conn_t *allocate_channel(struct pppoe_serv_t *serv, const ui
 	conn->ctrl.ctx = &conn->ctx;
 	conn->ctrl.started = ppp_started;
 	conn->ctrl.finished = ppp_finished;
-	conn->ctrl.terminate = ppp_terminate;
+	conn->ctrl.terminate = pppoe_terminate;
 	conn->ctrl.max_mtu = min(ETH_DATA_LEN, serv->mtu) - 8;
 	conn->ctrl.type = CTRL_TYPE_PPPOE;
 	conn->ctrl.ppp = 1;
@@ -409,6 +423,30 @@ static struct pppoe_conn_t *allocate_channel(struct pppoe_serv_t *serv, const ui
 			addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
 
 	ppp_init(&conn->ppp);
+
+#ifdef HAVE_SESSION_HOOKS
+	if (serv->is_vpppoe) {
+		conn->ppp.ses.hooks = serv->ses_hooks;
+		if (conn->ppp.ses.hooks->session_hook_init &&
+			conn->ppp.ses.hooks->session_hook_init(&conn->ppp.ses)) {
+			log_ppp_error("pppoe: issue to initialize hook for session.\n");
+
+			_free(conn->ctrl.service_name);
+			_free(conn->ctrl.calling_station_id);
+			_free(conn->ctrl.called_station_id);
+			_free(conn->service_name);
+			if (conn->host_uniq)
+				_free(conn->host_uniq);
+			if (conn->relay_sid)
+				_free(conn->relay_sid);
+			if (conn->tr101)
+				_free(conn->tr101);
+
+			mempool_free(conn);
+			return NULL;
+		}
+	}
+#endif /* HAVE_SESSION_HOOKS */
 
 	conn->ppp.ses.net = serv->net;
 	conn->ppp.ses.ctrl = &conn->ctrl;
@@ -1329,10 +1367,13 @@ static void pppoe_serv_timeout(struct triton_timer_t *t)
 	pppoe_server_free(serv);
 }
 
-static int parse_server(const char *opt, int *padi_limit, struct ap_net **net)
+static int parse_server(const char *opt, int *padi_limit, struct ap_net **net, int *is_vpppoe)
 {
 	char *ptr, *endptr;
-	char name[64];
+	char optval[64];
+
+	if (is_vpppoe)
+		*is_vpppoe = 0;
 
 	while (*opt == ',') {
 		opt++;
@@ -1347,13 +1388,22 @@ static int parse_server(const char *opt, int *padi_limit, struct ap_net **net)
 		} else if (!strncmp(opt, "net=", sizeof("net=") - 1)) {
 			ptr++;
 			for (endptr = ptr + 1; *endptr && *endptr != ','; endptr++);
-			if (endptr - ptr >= sizeof(name))
+			if (endptr - ptr >= sizeof(optval))
 				goto out_err;
-			memcpy(name, ptr, endptr - ptr);
-			name[endptr - ptr] = 0;
-			*net = ap_net_find(name);
+			memcpy(optval, ptr, endptr - ptr);
+			optval[endptr - ptr] = 0;
+			*net = ap_net_find(optval);
 			if (!*net)
 				goto out_err;
+		} else if (!strncmp(opt, "vpp-cp=", sizeof("vpp-cp=") - 1)) {
+			ptr++;
+			for (endptr = ptr + 1; *endptr && *endptr != ','; endptr++);
+			memcpy(optval, ptr, endptr - ptr);
+			optval[endptr - ptr] = 0;
+			if (is_vpppoe)
+				*is_vpppoe = !strncasecmp(optval, "enable", sizeof("enable") - 1) ||
+								!strncasecmp(optval, "true", sizeof("true") - 1) ||
+								!strncasecmp(optval, "1", sizeof("1") - 1);
 		} else
 			goto out_err;
 	}
@@ -1445,9 +1495,10 @@ static void __pppoe_server_start(const char *ifname, const char *opt, void *cli,
 	struct pppoe_serv_t *serv;
 	struct ifreq ifr;
 	int padi_limit = conf_padi_limit;
+	int is_vpppoe = 0;
 	net = def_net;
 
-	if (parse_server(opt, &padi_limit, &net)) {
+	if (parse_server(opt, &padi_limit, &net, &is_vpppoe)) {
 		if (cli)
 			cli_sendv(cli, "failed to parse '%s'\r\n", opt);
 		else
@@ -1455,6 +1506,17 @@ static void __pppoe_server_start(const char *ifname, const char *opt, void *cli,
 
 		return;
 	}
+
+#ifndef HAVE_SESSION_HOOKS
+	if (is_vpppoe) {
+		if (cli)
+			cli_sendv(cli, "No support for vpp, option vpp-cp invalid for interface %s\r\n", ifname);
+		else
+			log_error("pppoe: No support for vpp, option vpp-cp invalid for interface %s\r\n", ifname);
+
+		return;
+	}
+#endif /* HAVE_SESSION_HOOKS */
 
 	pthread_rwlock_rdlock(&serv_lock);
 	list_for_each_entry(serv, &serv_list, entry) {
@@ -1481,6 +1543,23 @@ static void __pppoe_server_start(const char *ifname, const char *opt, void *cli,
 	}
 
 	strncpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
+
+#ifdef HAVE_SESSION_HOOKS
+	serv->is_vpppoe = is_vpppoe;
+	if (serv->is_vpppoe) {
+		struct ap_session_hooks_t *ses_hooks = NULL;
+		ses_hooks = ap_session_hooks_find("vpp");
+		if (ses_hooks == NULL) {
+			if (cli)
+				cli_sendv(cli, "No \"vpp\" session hooks are present, load the VPP plugin\r\n");
+			log_error("No \"vpp\" session hooks are present, load the VPP plugin\n");
+			_free(serv);
+			return;
+		}
+
+		serv->ses_hooks = ses_hooks;
+	}
+#endif /* HAVE_SESSION_HOOKS */
 
 	if (net->sock_ioctl(SIOCGIFFLAGS, &ifr)) {
 		if (cli)
@@ -1647,6 +1726,15 @@ void __export pppoe_get_stat(unsigned int **starting, unsigned int **active)
 {
 	*starting = &stat_starting;
 	*active = &stat_active;
+}
+
+void __export pppoe_get_session_mac_and_sid(struct ap_session *ses, uint8_t **mac, uint16_t *sid)
+{
+	struct ppp_t *ppp = container_of(ses, typeof(*ppp), ses);
+	struct pppoe_conn_t *conn = container_of(ppp, typeof(*conn), ppp);
+
+	*mac = conn->addr;
+	*sid = conn->sid;
 }
 
 static int init_secret(struct pppoe_serv_t *serv)

@@ -11,6 +11,10 @@
 
 #include "rbtree.h"
 
+#ifdef HAVE_SESSION_HOOKS
+# include "ap_session_hooks.h"
+#endif /* HAVE_SESSION_HOOKS */
+
 /* PPPoE codes */
 #define CODE_PADI           0x09
 #define CODE_PADO           0x07
@@ -101,6 +105,12 @@ struct pppoe_serv_t
 
 	unsigned int stopping:1;
 	unsigned int vlan_mon:1;
+	unsigned int is_vpppoe:1;
+
+#ifdef HAVE_SESSION_HOOKS
+	/* hooks set to sessions for this server */
+	struct ap_session_hooks_t *ses_hooks;
+#endif /* HAVE_SESSION_HOOKS */
 };
 
 extern int conf_verbose;
