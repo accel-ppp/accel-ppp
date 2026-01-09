@@ -475,6 +475,7 @@ int rad_proc_attrs(struct rad_req_t *req)
 			} else if (attr->vendor->id == VENDOR_Accel_PPP) {
 				switch (attr->attr->id) {
 					case Accel_VRF_Name:
+						log_ppp_info2("radius: setting vrf_name to %s\n", attr->val.string);
 						if (rpd->ses->vrf_name)
 							_free(rpd->ses->vrf_name);
 						rpd->ses->vrf_name = _malloc(attr->len + 1);
@@ -567,6 +568,12 @@ int rad_proc_attrs(struct rad_req_t *req)
 			case Framed_IPv6_Route:
 				rad_add_framed_ipv6_route(attr->val.string, rpd);
 				break;
+			case DNS_Server_IPv6_Address:
+				a = _malloc(sizeof(*a));
+				memset(a, 0, sizeof(*a));
+				a->addr = attr->val.ipv6addr;
+				list_add_tail(&a->entry, &rpd->ipv6_dns.addr_list);
+				break;
 		}
 	}
 
@@ -583,6 +590,9 @@ int rad_proc_attrs(struct rad_req_t *req)
 
 	if (!rpd->ses->ipv6_dp && !list_empty(&rpd->ipv6_dp.prefix_list))
 		rpd->ses->ipv6_dp = &rpd->ipv6_dp;
+
+	if (!rpd->ses->ipv6_dns && !list_empty(&rpd->ipv6_dns.addr_list))
+		rpd->ses->ipv6_dns = &rpd->ipv6_dns;
 
 	return res;
 }
@@ -748,10 +758,12 @@ static void ses_starting(struct ap_session *ses)
 	INIT_LIST_HEAD(&rpd->plugin_list);
 	INIT_LIST_HEAD(&rpd->ipv6_addr.addr_list);
 	INIT_LIST_HEAD(&rpd->ipv6_dp.prefix_list);
+	INIT_LIST_HEAD(&rpd->ipv6_dns.addr_list);
 
 	rpd->ipv4_addr.owner = &ipdb;
 	rpd->ipv6_addr.owner = &ipdb;
 	rpd->ipv6_dp.owner = &ipdb;
+	rpd->ipv6_dns.owner = &ipdb;
 
 	list_add_tail(&rpd->pd.entry, &ses->pd_list);
 
@@ -926,6 +938,12 @@ static void ses_finished(struct ap_session *ses)
 
 	while (!list_empty(&rpd->ipv6_dp.prefix_list)) {
 		a = list_entry(rpd->ipv6_dp.prefix_list.next, typeof(*a), entry);
+		list_del(&a->entry);
+		_free(a);
+	}
+
+	while (!list_empty(&rpd->ipv6_dns.addr_list)) {
+		a = list_entry(rpd->ipv6_dns.addr_list.next, typeof(*a), entry);
 		list_del(&a->entry);
 		_free(a);
 	}
