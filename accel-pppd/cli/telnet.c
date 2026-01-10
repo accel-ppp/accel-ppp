@@ -83,6 +83,8 @@ static void disconnect(struct telnet_client_t *cln)
 
 	log_debug("cli: disconnect\n");
 
+	cli_log_stream_on_disconnect(&cln->cli_client);
+
 	triton_stop_collect_cpu_usage();
 
 	list_del(&cln->entry);
