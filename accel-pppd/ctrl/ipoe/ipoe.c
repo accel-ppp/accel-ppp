@@ -122,6 +122,8 @@ static int conf_nat;
 static int conf_arp;
 static int conf_ipv6;
 static uint32_t conf_src;
+static uint32_t conf_router;
+static int conf_router_force;
 static const char *conf_ip_pool;
 static const char *conf_ipv6_pool;
 static const char *conf_dpv6_pool;
@@ -864,6 +866,9 @@ static void __ipoe_session_start(struct ipoe_session *ses)
 			ap_session_terminate(&ses->ses, TERM_NAS_REQUEST, 1);
 		}
 	}
+
+	if (!ses->router && ses->serv->opt_router)
+		ses->router = ses->serv->opt_router;
 
 	if (ses->ses.ipv4) {
 		if (!ses->mask)
@@ -2029,7 +2034,7 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 		ses->mask = parse_dhcpv4_mask(ntohl(*(uint32_t *)opt->data));
 
 	opt = dhcpv4_packet_find_opt(pack, 3);
-	if (opt)
+	if (opt && !ses->serv->opt_router_force)
 		ses->router = *(uint32_t *)opt->data;
 
 	if (pack->msg_type == DHCPOFFER) {
@@ -2375,6 +2380,8 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
 					ses->siaddr = attr->val.ipaddr;
 					break;
 				case DHCP_Router_Address:
+					if (ses->serv->opt_router_force)
+						break;
 					ses->router = *(in_addr_t *)attr->raw;
 					break;
 				case DHCP_Subnet_Mask:
@@ -2405,7 +2412,7 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
 
 		if (attr->attr->id == conf_attr_dhcp_client_ip)
 			ses->yiaddr = attr->val.ipaddr;
-		else if (attr->attr->id == conf_attr_dhcp_router_ip)
+		else if (attr->attr->id == conf_attr_dhcp_router_ip && !ses->serv->opt_router_force)
 			ses->router = attr->val.ipaddr;
 		else if (attr->attr->id == conf_attr_dhcp_mask) {
 			if (attr->attr->type == ATTR_TYPE_INTEGER) {
@@ -2998,6 +3005,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	in_addr_t relay_addr = conf_relay ? inet_addr(conf_relay) : 0;
 	in_addr_t opt_giaddr = 0;
 	in_addr_t opt_src = conf_src;
+	in_addr_t opt_router = conf_router;
+	int opt_router_force = conf_router_force;
 	int opt_arp = conf_arp;
 	int opt_check_mac_change = conf_check_mac_change;
 	struct ifreq ifr;
@@ -3055,6 +3064,10 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 				opt_nat = atoi(ptr1);
 			} else if (strcmp(str, "src") == 0) {
 				opt_src = inet_addr(ptr1);
+			} else if (strcmp(str, "router") == 0) {
+				opt_router = inet_addr(ptr1);
+			} else if (strcmp(str, "router-force") == 0) {
+				opt_router_force = atoi(ptr1);
 			} else if (strcmp(str, "proxy-arp") == 0) {
 				opt_arp = atoi(ptr1);
 			} else if (strcmp(str, "check-mac-change") == 0) {
@@ -3169,6 +3182,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		serv->opt_ifcfg = opt_ifcfg;
 		serv->opt_nat = opt_nat;
 		serv->opt_src = opt_src;
+		serv->opt_router = opt_router;
+		serv->opt_router_force = !!(opt_router && opt_router_force);
 		serv->opt_arp = opt_arp;
 		serv->opt_username = opt_username;
 		serv->opt_ipv6 = opt_ipv6;
@@ -3256,6 +3271,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	serv->opt_ifcfg = opt_ifcfg;
 	serv->opt_nat = opt_nat;
 	serv->opt_src = opt_src;
+	serv->opt_router = opt_router;
+	serv->opt_router_force = !!(opt_router && opt_router_force);
 	serv->opt_arp = opt_arp;
 	serv->opt_username = opt_username;
 	serv->opt_ipv6 = opt_ipv6;
@@ -3984,6 +4001,18 @@ static void load_config(void)
 		conf_src = inet_addr(opt);
 	else
 		conf_src = 0;
+
+	opt = conf_get_opt("ipoe", "router");
+	if (opt)
+		conf_router = inet_addr(opt);
+	else
+		conf_router = 0;
+
+	opt = conf_get_opt("ipoe", "router-force");
+	if (opt)
+		conf_router_force = atoi(opt);
+	else
+		conf_router_force = 1;
 
 	opt = conf_get_opt("ipoe", "proxy-arp");
 	if (opt)
