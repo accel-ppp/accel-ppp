@@ -50,6 +50,10 @@
 #define MODE_L3 3
 
 #define LEASE_TIME 600
+#define LEASE_REBIND_TIME_RATIO 7 / 8
+#define LEASE_RENEW_TIME_RATIO 1 / 2
+#define LEASE_RENEW_REBIND_TIME_RATIO 	4 / 7
+#define LEASE_TIMEOUT_TIME_RATIO 11 / 10
 
 #define SESSION_TERMINATED "Session was terminated"
 
@@ -167,10 +171,10 @@ static int conf_relay_timeout = 3;
 static int conf_relay_retransmit = 3;
 static LIST_HEAD(conf_gw_addr);
 static int conf_netmask = 24;
-static int conf_lease_time = LEASE_TIME;
-static int conf_lease_timeout = LEASE_TIME + LEASE_TIME/10;
-static int conf_renew_time = LEASE_TIME/2;
-static int conf_rebind_time = LEASE_TIME/2 + LEASE_TIME/4 + LEASE_TIME/8;
+static int conf_lease_time;
+static int conf_renew_time;
+static int conf_lease_timeout;
+static int conf_rebind_time;
 static int conf_verbose;
 static const char *conf_agent_remote_id;
 static const char *conf_link_selection;
@@ -2019,10 +2023,14 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 	opt = dhcpv4_packet_find_opt(pack, 58);
 	if (opt)
 		ses->renew_time = ntohl(*(uint32_t *)opt->data);
+	if (!opt || ses->renew_time >= ses->lease_time)
+		ses->renew_time = ses->lease_time * LEASE_RENEW_TIME_RATIO;
 
 	opt = dhcpv4_packet_find_opt(pack, 59);
 	if (opt)
 		ses->rebind_time = ntohl(*(uint32_t *)opt->data);
+	if (!opt || ses->rebind_time <= ses->renew_time)
+		ses->rebind_time = ses->lease_time * LEASE_REBIND_TIME_RATIO;
 
 	opt = dhcpv4_packet_find_opt(pack, 1);
 	if (opt)
@@ -2437,23 +2445,23 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
 	}
 
 	if (lease_time_set && !renew_time_set)
-		ses->renew_time = ses->lease_time/2;
+		ses->renew_time = ses->lease_time * LEASE_RENEW_TIME_RATIO;
 	else if (renew_time_set && ses->renew_time > ses->lease_time) {
 		log_ppp_warn("ipoe: overriding renew time\n");
-		ses->renew_time = ses->lease_time/2;
+		ses->renew_time = ses->lease_time * LEASE_RENEW_TIME_RATIO;
 	}
 
 	if (lease_time_set && !rebind_time_set)
 		ses->rebind_time = ses->lease_time/2 + ses->lease_time/4 + ses->lease_time/8;
 	else if (rebind_time_set && ses->rebind_time > ses->lease_time) {
 		log_ppp_warn("ipoe: overriding rebind time\n");
-		ses->rebind_time = ses->lease_time/2 + ses->lease_time/4 + ses->lease_time/8;
+		ses->rebind_time = ses->lease_time * LEASE_REBIND_TIME_RATIO;
 	}
 
 	if (ses->renew_time && ses->rebind_time && ses->renew_time > ses->rebind_time) {
 		if (renew_time_set)
 			log_ppp_warn("ipoe: overriding renew time\n");
-		ses->renew_time = ses->rebind_time*4/7;
+		ses->renew_time = ses->rebind_time * LEASE_RENEW_REBIND_TIME_RATIO;
 	}
 
 	if (!ses->siaddr)
@@ -2510,23 +2518,23 @@ static void ev_radius_coa(struct ev_radius_t *ev)
 	}
 
 	if (lease_time_set && !renew_time_set)
-		ses->renew_time = ses->lease_time/2;
+		ses->renew_time = ses->lease_time * LEASE_RENEW_TIME_RATIO;
 	else if (renew_time_set && ses->renew_time > ses->lease_time) {
 		log_ppp_warn("ipoe: overriding renew time\n");
-		ses->renew_time = ses->lease_time/2;
+		ses->renew_time = ses->lease_time * LEASE_RENEW_TIME_RATIO;
 	}
 
 	if (lease_time_set && !rebind_time_set)
-		ses->rebind_time = ses->lease_time/2 + ses->lease_time/4 + ses->lease_time/8;
+		ses->rebind_time = ses->lease_time * LEASE_REBIND_TIME_RATIO;
 	else if (rebind_time_set && ses->rebind_time > ses->lease_time) {
 		log_ppp_warn("ipoe: overriding rebind time\n");
-		ses->rebind_time = ses->lease_time/2 + ses->lease_time/4 + ses->lease_time/8;
+		ses->rebind_time = ses->lease_time * LEASE_REBIND_TIME_RATIO;
 	}
 
 	if (ses->renew_time && ses->rebind_time && ses->renew_time > ses->rebind_time) {
 		if (renew_time_set)
 			log_ppp_warn("ipoe: overriding renew time\n");
-		ses->renew_time = ses->rebind_time*4/7;
+		ses->renew_time = ses->rebind_time * LEASE_RENEW_REBIND_TIME_RATIO;
 	}
 
 	if (l4_redirect >= 0 && ev->ses->state == AP_STATE_ACTIVE) {
@@ -3918,22 +3926,22 @@ static void load_config(void)
 	if (opt)
 		conf_renew_time = atoi(opt);
 	if (!opt || conf_renew_time > conf_lease_time)
-		conf_renew_time = conf_lease_time/2;
+		conf_renew_time = conf_lease_time * LEASE_RENEW_TIME_RATIO;
 
 	opt = conf_get_opt("ipoe", "rebind-time");
 	if (opt)
 		conf_rebind_time = atoi(opt);
 	if (!opt || conf_rebind_time > conf_lease_time)
-		conf_rebind_time = conf_lease_time/2 + conf_lease_time/4 + conf_lease_time/8;
+		conf_rebind_time = conf_lease_time * LEASE_REBIND_TIME_RATIO;
 
 	if (conf_renew_time && conf_rebind_time && conf_renew_time > conf_rebind_time)
-		conf_renew_time = conf_rebind_time*4/7;
+		conf_renew_time = conf_rebind_time * LEASE_RENEW_REBIND_TIME_RATIO;
 
 	opt = conf_get_opt("ipoe", "max-lease-time");
 	if (opt)
 		conf_lease_timeout = atoi(opt);
 	else
-		conf_lease_timeout = conf_lease_time + conf_lease_time/10;
+		conf_lease_timeout = conf_lease_time * LEASE_TIMEOUT_TIME_RATIO;
 
 	opt = conf_get_opt("ipoe", "unit-cache");
 	if (opt)
