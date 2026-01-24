@@ -60,6 +60,7 @@ const char *conf_attr_tunnel_type;
 
 int conf_acct_delay_start;
 int conf_blast_protection;
+int conf_framed_route_strict;
 
 static LIST_HEAD(sessions);
 static pthread_rwlock_t sessions_lock = PTHREAD_RWLOCK_INITIALIZER;
@@ -108,6 +109,8 @@ static int parse_framed_route_v4(const char *str, struct framed_route *fr)
 	struct in_addr mask_addr;
 	uint8_t plen;
 	uint32_t prio;
+	uint32_t mask = 0;
+	uint32_t addr_hbo;
 
 	// Take a steady breath and skip leading RFC-style spaces so everything starts clean.
 	ptr = str + u_parse_spaces(str);
@@ -117,6 +120,7 @@ static int parse_framed_route_v4(const char *str, struct framed_route *fr)
 		// Happy path: CIDR tells us exactly what we need.
 		fr->dst = dst.s_addr;
 		fr->mask = plen;
+		mask = plen ? (0xffffffffu << (32 - plen)) : 0;
 		ptr += len;
 	} else {
 		// If CIDR didn't show up, we gently switch to plain IPv4 and optional mask.
@@ -132,16 +136,27 @@ static int parse_framed_route_v4(const char *str, struct framed_route *fr)
 			if (len) {
 				if (ipv4_mask_to_prefix(mask_addr, &fr->mask))
 					return -1;
+				mask = ntohl(mask_addr.s_addr);
 				ptr += len;
 			} else {
 				len = u_parse_u8(ptr, &plen);
 				if (!len || plen > 32)
 					return -1;
 				fr->mask = plen;
+				mask = plen ? (0xffffffffu << (32 - plen)) : 0;
 				ptr += len;
 			}
 		} else
 			fr->mask = 32;
+	}
+
+	if (!mask)
+		mask = fr->mask ? (0xffffffffu << (32 - fr->mask)) : 0;
+
+	if (conf_framed_route_strict) {
+		addr_hbo = ntohl(fr->dst);
+		if (addr_hbo & ~mask)
+			return -1;
 	}
 
 	// If the string ends here, we can relax: no gateway or metric specified.
@@ -1326,6 +1341,11 @@ dae_allow_unlock:
 	} else {
 		conf_blast_protection = 0;
 	}
+	opt = conf_get_opt("radius", "framed-route-strict");
+	if (opt && atoi(opt) > 0)
+		conf_framed_route_strict = 1;
+	else
+		conf_framed_route_strict = 0;
 
 	return 0;
 }

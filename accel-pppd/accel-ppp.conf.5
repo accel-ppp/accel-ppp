@@ -1099,6 +1099,11 @@ If enabled, checks that the NAS-Identifier or NAS-IP-Address in DM/CoA requests 
 If this option is given and
 .B 1
 is specified then radius module will include Message-Authenticator attribute in Access-Request packets.
+.TP
+.BI "framed-route-strict=" 0|1
+If enabled, only accepts Framed-Route destinations that are valid IPv4 network prefixes
+for the specified mask (host bits must be zero). This enforces RFC-style network prefixes.
+Default is 0 (disabled).
 .SH [log]
 .br
 Configuration of log and log_file modules.
