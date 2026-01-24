@@ -1236,12 +1236,6 @@ static int load_config(void)
 			dae_allow_clear();
 		}
 
-		if (conf_dm_coa_secret && !dae_allow_ranges) {
-			if (dae_allowed_present)
-				log_warn("radius: dae-server configured without a valid dae-allowed list; this will become mandatory\n");
-			else
-				log_warn("radius: dae-server configured without dae-allowed; this will become mandatory\n");
-		}
 dae_allow_unlock:
 		pthread_rwlock_unlock(&dae_allow_lock);
 		if (parse_rc)

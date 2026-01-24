@@ -1031,6 +1031,7 @@ Specifies IP address, port to bind and secret for Dynamic Authorization Extensio
 .TP
 .BI "dae-allowed=" ip[,ip/cidr][,ip[/cidr]...]
 Specifies allowed source IPv4 addresses or CIDR ranges for DM/CoA requests.
+This setting is generally recommended to restrict DM/CoA sources, but it is not required.
 .br
 .TP
 .BI "dm_coa_secret=" secret (deprecated, use dae-server instead)
