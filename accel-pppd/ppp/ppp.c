@@ -268,6 +268,7 @@ static void destablish_ppp(struct ppp_t *ppp)
 	if (conf_unit_cache) {
 		struct ifreq ifr;
 
+		memset(&ifr, 0, sizeof(ifr));
 		if (ppp->ses.net != def_net) {
 			if (net->move_link(def_net, ppp->ses.ifindex)) {
 				log_ppp_warn("failed to attach to default namespace\n");
