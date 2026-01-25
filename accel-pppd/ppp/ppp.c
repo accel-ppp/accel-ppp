@@ -143,15 +143,13 @@ int __export connect_ppp_channel(struct ppp_t *ppp)
 		return 0;
 	}
 
-	if (uc_size) {
-		pthread_mutex_lock(&uc_lock);
-		if (!list_empty(&uc_list)) {
-			uc = list_entry(uc_list.next, typeof(*uc), entry);
-			list_del(&uc->entry);
-			--uc_size;
-		}
-		pthread_mutex_unlock(&uc_lock);
+	pthread_mutex_lock(&uc_lock);
+	if (!list_empty(&uc_list)) {
+		uc = list_entry(uc_list.next, typeof(*uc), entry);
+		list_del(&uc->entry);
+		--uc_size;
 	}
+	pthread_mutex_unlock(&uc_lock);
 
 	if (uc) {
 		ppp->unit_fd = uc->fd;
