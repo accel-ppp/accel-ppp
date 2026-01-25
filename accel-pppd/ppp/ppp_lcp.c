@@ -738,6 +738,8 @@ static void lcp_recv(struct ppp_handler_t*h)
 	struct ppp_lcp_t *lcp = container_of(h, typeof(*lcp), hnd);
 	int r;
 	char *term_msg;
+	uint16_t len;
+	int buf_len;
 
 	if (lcp->ppp->buf_size < PPP_HEADERLEN + 2) {
 		log_ppp_warn("LCP: short packet received\n");
@@ -745,7 +747,9 @@ static void lcp_recv(struct ppp_handler_t*h)
 	}
 
 	hdr = (struct lcp_hdr_t *)lcp->ppp->buf;
-	if (ntohs(hdr->len) < PPP_HEADERLEN) {
+	len = ntohs(hdr->len);
+	buf_len = lcp->ppp->buf_size;
+	if (len < PPP_HEADERLEN) {
 		log_ppp_warn("LCP: short packet received\n");
 		return;
 	}
@@ -832,25 +836,53 @@ static void lcp_recv(struct ppp_handler_t*h)
 			ppp_fsm_recv_code_rej_bad(&lcp->fsm);
 			break;
 		case ECHOREQ:
+			if (len < PPP_HDRLEN + 4 || buf_len < (int)(sizeof(*hdr) + 4)) {
+				log_ppp_warn("LCP: short EchoReq received\n");
+				break;
+			}
 			if (conf_ppp_verbose)
 				log_ppp_debug("recv [LCP EchoReq id=%x <magic %08x>]\n", hdr->id, ntohl(*(uint32_t*)(hdr + 1)));
 			send_echo_reply(lcp);
 			break;
 		case ECHOREP:
+			if (len < PPP_HDRLEN + 4 || buf_len < (int)(sizeof(*hdr) + 4)) {
+				log_ppp_warn("LCP: short EchoRep received\n");
+				break;
+			}
 			lcp_recv_echo_repl(lcp, (uint8_t*)(hdr + 1), ntohs(hdr->len) - PPP_HDRLEN);
 			break;
 		case PROTOREJ:
-			if (conf_ppp_verbose)
+			if (conf_ppp_verbose) {
+				if (len < PPP_HDRLEN + 2 || buf_len < (int)(sizeof(*hdr) + 2)) {
+					log_ppp_warn("LCP: short ProtoRej received\n");
+					break;
+				}
 				log_ppp_info2("recv [LCP ProtoRej id=%x <%04x>]\n", hdr->id, ntohs(*(uint16_t*)(hdr + 1)));
+			}
+			if (len < PPP_HDRLEN + 2 || buf_len < (int)(sizeof(*hdr) + 2))
+				break;
 			ppp_recv_proto_rej(lcp->ppp, ntohs(*(uint16_t *)(hdr + 1)));
 			break;
 		case DISCARDREQ:
-			if (conf_ppp_verbose)
+			if (conf_ppp_verbose) {
+				if (len < PPP_HDRLEN + 4 || buf_len < (int)(sizeof(*hdr) + 4)) {
+					log_ppp_warn("LCP: short DiscardReq received\n");
+					break;
+				}
 				log_ppp_info2("recv [LCP DiscardReq id=%x <magic %08x>]\n", hdr->id, ntohl(*(uint32_t*)(hdr + 1)));
+			}
 			break;
 		case IDENT:
 			if (conf_ppp_verbose) {
-				term_msg = _strndup((char*)(hdr + 1) + 4, ntohs(hdr->len) - 4 - 4);
+				int id_len;
+				if (len < PPP_HDRLEN + 4 || buf_len < (int)(sizeof(*hdr) + 4)) {
+					log_ppp_warn("LCP: short Ident received\n");
+					break;
+				}
+				id_len = len - PPP_HDRLEN - 4;
+				if (buf_len < (int)(sizeof(*hdr) + 4 + id_len))
+					id_len = buf_len - sizeof(*hdr) - 4;
+				term_msg = _strndup((char*)(hdr + 1) + 4, id_len);
 				log_ppp_info2("recv [LCP Ident id=%x <%s>]\n", hdr->id, term_msg);
 				_free(term_msg);
 			}
