@@ -195,7 +195,7 @@ static void parse_framed_route(struct radius_pd_t *rpd, const char *attr)
 {
 	struct framed_route *fr;
 
-	// RFC 2865: Framed-Route is IPv4-only and uses spaces; IPv6 lives in Framed-IPv6-Route.
+	/* RFC 2865: Framed-Route is IPv4-only and uses spaces; IPv6 lives in Framed-IPv6-Route. */
 	if (strchr(attr, ':')) {
 		log_ppp_warn("radius: Framed-Route is IPv4-only per RFC 2865, use Framed-IPv6-Route for %s\n", attr);
 		return;
