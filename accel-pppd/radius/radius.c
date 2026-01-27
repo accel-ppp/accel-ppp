@@ -217,7 +217,7 @@ static void parse_framed_route(struct radius_pd_t *rpd, const char *attr)
 out_err_free:
 	_free(fr);
 out_err:
-	log_ppp_warn("radius: failed to parse Framed-Route=%s\n", attr);
+	log_ppp_warn("radius: failed to parse Framed-Route=\"%s\" (expected \"dst[/mask] gw [metric]\"; check destination, mask, gateway, and metric fields)\n", attr);
 }
 
 static char *trim_spaces(char *str)
