@@ -247,6 +247,7 @@ static int show_ses_exec(const char *cmd, char * const *f, int f_cnt, void *cli)
 				goto oom;
 			cell->col = col;
 			list_add_tail(&cell->entry, &row->cell_list);
+			cell->buf[0] = 0;
 			col->column->print(ses, cell->buf);
 			n = strlen(cell->buf);
 			if (n > col->width)
