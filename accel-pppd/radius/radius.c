@@ -60,6 +60,7 @@ const char *conf_attr_tunnel_type;
 
 int conf_acct_delay_start;
 int conf_blast_protection;
+int conf_framed_route_strict;
 
 static LIST_HEAD(sessions);
 static pthread_rwlock_t sessions_lock = PTHREAD_RWLOCK_INITIALIZER;
@@ -79,92 +80,144 @@ static struct ipdb_t ipdb;
 static mempool_t rpd_pool;
 static mempool_t auth_ctx_pool;
 
+static int rad_add_framed_ipv6_route(const char *str, struct radius_pd_t *rpd);
+
+static int ipv4_mask_to_prefix(struct in_addr mask, int *plen)
+{
+	uint32_t m = ntohl(mask.s_addr);
+	uint32_t inv = ~m;
+	int p = 0;
+
+	if (inv & (inv + 1))
+		return -1;
+
+	while (m & 0x80000000) {
+		p++;
+		m <<= 1;
+	}
+
+	*plen = p;
+	return 0;
+}
+
+static int parse_framed_route_v4(const char *str, struct framed_route *fr)
+{
+	const char *ptr;
+	size_t len;
+	struct in_addr dst;
+	struct in_addr gw;
+	struct in_addr mask_addr;
+	uint8_t plen;
+	uint32_t prio;
+	uint32_t mask = 0;
+	uint32_t addr_hbo;
+
+	// Take a steady breath and skip leading RFC-style spaces so everything starts clean.
+	ptr = str + u_parse_spaces(str);
+
+	len = u_parse_ip4cidr(ptr, &dst, &plen);
+	if (len) {
+		// Happy path: CIDR tells us exactly what we need.
+		fr->dst = dst.s_addr;
+		fr->mask = plen;
+		mask = plen ? (0xffffffffu << (32 - plen)) : 0;
+		ptr += len;
+	} else {
+		// If CIDR didn't show up, we gently switch to plain IPv4 and optional mask.
+		len = u_parse_ip4addr(ptr, &dst);
+		if (!len)
+			return -1;
+		fr->dst = dst.s_addr;
+		ptr += len;
+
+		if (*ptr == '/') {
+			ptr++;
+			len = u_parse_ip4addr(ptr, &mask_addr);
+			if (len) {
+				if (ipv4_mask_to_prefix(mask_addr, &fr->mask))
+					return -1;
+				mask = ntohl(mask_addr.s_addr);
+				ptr += len;
+			} else {
+				len = u_parse_u8(ptr, &plen);
+				if (!len || plen > 32)
+					return -1;
+				fr->mask = plen;
+				mask = plen ? (0xffffffffu << (32 - plen)) : 0;
+				ptr += len;
+			}
+		} else
+			fr->mask = 32;
+	}
+
+	if (!mask)
+		mask = fr->mask ? (0xffffffffu << (32 - fr->mask)) : 0;
+
+	if (conf_framed_route_strict) {
+		addr_hbo = ntohl(fr->dst);
+		if (addr_hbo & ~mask)
+			return -1;
+	}
+
+	// If the string ends here, we can relax: no gateway or metric specified.
+	ptr += u_parse_spaces(ptr);
+	if (u_parse_endstr(ptr)) {
+		fr->gw = 0;
+		fr->prio = 0;
+		return 0;
+	}
+
+	len = u_parse_ip4addr(ptr, &gw);
+	if (!len)
+		return -1;
+	fr->gw = gw.s_addr;
+	ptr += len;
+
+	ptr += u_parse_spaces(ptr);
+	if (u_parse_endstr(ptr)) {
+		fr->prio = 0;
+		return 0;
+	}
+
+	len = u_parse_u32(ptr, &prio);
+	if (!len)
+		return -1;
+	ptr += len;
+
+	if (!u_parse_endstr(ptr))
+		return -1;
+
+	fr->prio = prio;
+	return 0;
+}
+
 static void parse_framed_route(struct radius_pd_t *rpd, const char *attr)
 {
-	char str[32];
-	char *ptr;
-	long int prio = 0;
-	in_addr_t dst;
-	in_addr_t gw;
-	int mask;
 	struct framed_route *fr;
 
-	ptr = strchr(attr, '/');
-	if (ptr && ptr - attr > 16)
-		goto out_err;
-
-	if (ptr) {
-		memcpy(str, attr, ptr - attr);
-		str[ptr - attr] = 0;
-	} else {
-		ptr = strchr(attr, ' ');
-		if (ptr) {
-			memcpy(str, attr, ptr - attr);
-			str[ptr - attr] = 0;
-		} else
-			strcpy(str, attr);
+	/* RFC 2865: Framed-Route is IPv4-only and uses spaces; IPv6 lives in Framed-IPv6-Route. */
+	if (strchr(attr, ':')) {
+		log_ppp_warn("radius: Framed-Route is IPv4-only per RFC 2865, use Framed-IPv6-Route for %s\n", attr);
+		return;
 	}
 
-	dst = inet_addr(str);
-	if (dst == INADDR_NONE)
+	fr = _malloc(sizeof(*fr));
+	if (!fr)
 		goto out_err;
+	memset(fr, 0, sizeof(*fr));
 
-	if (ptr) {
-		if (*ptr == '/') {
-			char *ptr2;
-			for (ptr2 = ++ptr; *ptr2 && *ptr2 != '.' && *ptr2 != ' '; ptr2++);
-			if (*ptr2 == '.' && ptr2 - ptr <= 16) {
-				in_addr_t a;
-				memcpy(str, ptr, ptr2 - ptr);
-				str[ptr2 - ptr] = 0;
-				a = ntohl(inet_addr(str));
-				if (a == INADDR_NONE)
-					goto out_err;
-				mask = 33 - htonl(inet_addr(str));
-				if ((uint32_t)(~(((uint64_t)1 << (32 - mask)) - 1)) != a)
-					goto out_err;
-			} else if (*ptr2 == ' ' || *ptr2 == 0) {
-				char *ptr3;
-				mask = strtol(ptr, &ptr3, 10);
-				if (mask < 0 || mask > 32 || ptr3 != ptr2)
-					goto out_err;
-			} else
-				goto out_err;
-		} else
-			mask = 32;
+	if (parse_framed_route_v4(attr, fr) < 0)
+		goto out_err_free;
 
-		for (++ptr; *ptr && *ptr != ' '; ptr++);
-		if (*ptr == ' ')
-			gw = inet_addr(ptr + 1);
-		else if (*ptr == 0)
-			gw = 0;
-		else
-			goto out_err;
-
-		/* Parse priority, if any */
-		if (*ptr) {
-			for (++ptr; *ptr && *ptr != ' '; ptr++);
-			if (*ptr == ' ')
-				if (u_readlong(&prio, ptr + 1, 0, UINT32_MAX) < 0)
-					goto out_err;
-		}
-	} else {
-		mask = 32;
-		gw = 0;
-	}
-
-	fr = _malloc(sizeof (*fr));
-	fr->dst = dst;
-	fr->mask = mask;
-	fr->gw = gw;
-	fr->prio = prio;
 	fr->next = rpd->fr;
 	rpd->fr = fr;
 
 	return;
 
+out_err_free:
+	_free(fr);
 out_err:
-	log_ppp_warn("radius: failed to parse Framed-Route=%s\n", attr);
+	log_ppp_warn("radius: failed to parse Framed-Route=\"%s\" (expected \"dst[/mask] gw [metric]\"; check destination, mask, gateway, and metric fields)\n", attr);
 }
 
 static char *trim_spaces(char *str)
@@ -1288,6 +1341,11 @@ dae_allow_unlock:
 	} else {
 		conf_blast_protection = 0;
 	}
+	opt = conf_get_opt("radius", "framed-route-strict");
+	if (opt && atoi(opt) > 0)
+		conf_framed_route_strict = 1;
+	else
+		conf_framed_route_strict = 0;
 
 	return 0;
 }
