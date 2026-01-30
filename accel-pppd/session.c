@@ -76,6 +76,7 @@ void __export ap_session_init(struct ap_session *ses)
 	ses->ifindex = -1;
 	ses->unit_idx = -1;
 	ses->net = net;
+	ses->vrf_name = NULL;
 }
 
 void __export ap_session_set_ifindex(struct ap_session *ses)

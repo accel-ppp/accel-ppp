@@ -526,6 +526,7 @@ int rad_proc_attrs(struct rad_req_t *req)
 			} else if (attr->vendor->id == VENDOR_Accel_PPP) {
 				switch (attr->attr->id) {
 					case Accel_VRF_Name:
+						log_ppp_info2("radius: setting vrf_name to %s\n", attr->val.string);
 						if (rpd->ses->vrf_name)
 							_free(rpd->ses->vrf_name);
 						rpd->ses->vrf_name = _malloc(attr->len + 1);
@@ -855,7 +856,7 @@ static void ses_started(struct ap_session *ses)
 		char nbuf[INET6_ADDRSTRLEN];
 		char gwbuf[INET6_ADDRSTRLEN];
 
-		if (ip6route_add(gw_spec ? 0 : rpd->ses->ifindex, &fr6->prefix, fr6->plen, gw_spec ? &fr6->gw : NULL, 3, fr6->prio)) {
+		if (ip6route_add(gw_spec ? 0 : rpd->ses->ifindex, &fr6->prefix, fr6->plen, gw_spec ? &fr6->gw : NULL, 3, fr6->prio, rpd->ses->vrf_name)) {
 			log_ppp_warn("radius: failed to add route %s/%hhu %s %u\n",
 				     u_ip6str(&fr6->prefix, nbuf), fr6->plen,
 				     u_ip6str(&fr6->gw, gwbuf), fr6->prio);
@@ -863,7 +864,7 @@ static void ses_started(struct ap_session *ses)
 	}
 
 	for (fr = rpd->fr; fr; fr = fr->next) {
-		if (iproute_add(fr->gw ? 0 : rpd->ses->ifindex, 0, fr->dst, fr->gw, 3, fr->mask, fr->prio)) {
+		if (iproute_add(fr->gw ? 0 : rpd->ses->ifindex, 0, fr->dst, fr->gw, 3, fr->mask, fr->prio, rpd->ses->vrf_name)) {
 			char dst[17], gw[17];
 			u_inet_ntoa(fr->dst, dst);
 			u_inet_ntoa(fr->gw, gw);
@@ -902,12 +903,12 @@ static void ses_finishing(struct ap_session *ses)
 		 * when the interface is removed.
 		 */
 		if (!IN6_IS_ADDR_UNSPECIFIED(&fr6->gw))
-			ip6route_del(0, &fr6->prefix, fr6->plen, &fr6->gw, 3, fr6->prio);
+			ip6route_del(0, &fr6->prefix, fr6->plen, &fr6->gw, 3, fr6->prio, rpd->ses->vrf_name);
 	}
 
 	for (fr = rpd->fr; fr; fr = fr->next) {
 		if (fr->gw)
-			iproute_del(0, 0, fr->dst, fr->gw, 3, fr->mask, fr->prio);
+			iproute_del(0, 0, fr->dst, fr->gw, 3, fr->mask, fr->prio, rpd->ses->vrf_name);
 	}
 
 	if (rpd->acct_started || rpd->acct_req)
