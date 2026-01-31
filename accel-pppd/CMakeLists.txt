@@ -104,6 +104,7 @@ ENDIF (SHAPER)
 
 INCLUDE(CheckIncludeFile)
 CHECK_INCLUDE_FILE("linux/netfilter/ipset/ip_set.h" HAVE_IPSET)
+CHECK_INCLUDE_FILE("linux/netfilter/nf_tables.h" HAVE_NFTABLES)
 # MUSL does not have printf.h
 CHECK_INCLUDE_FILE("printf.h" HAVE_PRINTF_H)
 IF (HAVE_PRINTF_H)
@@ -158,6 +159,7 @@ ADD_EXECUTABLE(accel-pppd
 	libnetlink/iputils.c
 	libnetlink/genl.c
 	libnetlink/ipset.c
+	libnetlink/nftables_set.c
 
 	pwdb.c
 	ipdb.c

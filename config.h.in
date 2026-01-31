@@ -3,3 +3,4 @@
 #cmakedefine HAVE_IPSET
 #cmakedefine HAVE_SETNS
 #cmakedefine HAVE_VRF
+#cmakedefine HAVE_NFTABLES
