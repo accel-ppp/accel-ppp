@@ -57,7 +57,7 @@ static mempool_t uc_pool;
 
 static int ppp_chan_read(struct triton_md_handler_t*);
 static int ppp_unit_read(struct triton_md_handler_t*);
-static void init_layers(struct ppp_t *);
+static int init_layers(struct ppp_t *);
 static void _free_layers(struct ppp_t *);
 static void start_first_layer(struct ppp_t *);
 static int setup_ppp_mru(struct ppp_t *ppp);
@@ -101,7 +101,8 @@ int __export establish_ppp(struct ppp_t *ppp)
 		goto exit_close_chan;
 	}
 
-	init_layers(ppp);
+	if (init_layers(ppp))
+		goto exit_close_chan;
 	if (list_empty(&ppp->layers)) {
 		log_ppp_error("no layers to start\n");
 		goto exit_close_chan;
@@ -143,15 +144,13 @@ int __export connect_ppp_channel(struct ppp_t *ppp)
 		return 0;
 	}
 
-	if (uc_size) {
-		pthread_mutex_lock(&uc_lock);
-		if (!list_empty(&uc_list)) {
-			uc = list_entry(uc_list.next, typeof(*uc), entry);
-			list_del(&uc->entry);
-			--uc_size;
-		}
-		pthread_mutex_unlock(&uc_lock);
+	pthread_mutex_lock(&uc_lock);
+	if (!list_empty(&uc_list)) {
+		uc = list_entry(uc_list.next, typeof(*uc), entry);
+		list_del(&uc->entry);
+		--uc_size;
 	}
+	pthread_mutex_unlock(&uc_lock);
 
 	if (uc) {
 		ppp->unit_fd = uc->fd;
@@ -270,6 +269,7 @@ static void destablish_ppp(struct ppp_t *ppp)
 	if (conf_unit_cache) {
 		struct ifreq ifr;
 
+		memset(&ifr, 0, sizeof(ifr));
 		if (ppp->ses.net != def_net) {
 			if (net->move_link(def_net, ppp->ses.ifindex)) {
 				log_ppp_warn("failed to attach to default namespace\n");
@@ -671,7 +671,7 @@ void __export ppp_unregister_layer(struct ppp_layer_t *layer)
 	list_del(&layer->entry);
 }
 
-static void init_layers(struct ppp_t *ppp)
+static int init_layers(struct ppp_t *ppp)
 {
 	struct layer_node_t *n, *n1;
 	struct ppp_layer_t *l;
@@ -684,12 +684,18 @@ static void init_layers(struct ppp_t *ppp)
 		list_add_tail(&n1->entry, &ppp->layers);
 		list_for_each_entry(l, &n->items, entry) {
 			d = l->init(ppp);
+			if (!d) {
+				log_ppp_error("ppp layer init failed\n");
+				_free_layers(ppp);
+				return -1;
+			}
 			d->layer = l;
 			d->started = 0;
 			d->node = n1;
 			list_add_tail(&d->entry, &n1->items);
 		}
 	}
+	return 0;
 }
 
 static void _free_layers(struct ppp_t *ppp)
