@@ -96,6 +96,7 @@ struct ipoe_session {
 	uint32_t relay_server_id;
 	int l4_redirect_table;
 	char *l4_redirect_ipset;
+	char *l4_redirect_nftables;
 	int mask;
 	int lease_time;
 	int renew_time;

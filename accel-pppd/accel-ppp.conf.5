@@ -353,6 +353,13 @@ Specifies number of table. If L4-Redirect radius attribute is received and it's 
 .BI "l4-redirect-ipset=" name
 Specifies name of ipset list. If L4-Redirect radius attribute is received and it's value is not 0 or '0' then accel-ppp will add client's ip to that ipset name.
 .TP
+.BI "l4-redirect-nftables=" family=<ip|inet>,table=<table name>,set=<set name>
+Specifies the nftables configuration for L4-Redirect. All three fields are required and must match an existing set in your nftables rules:
+- \fIfamily\fR: Either "ip" (IPv4) or "inet" (IPv4+IPv6).  
+- \fitable\fR: Name of the nftables table containing the set.  
+- \fiset\fR: Name of the nftables set to which client's IPv4 will be added.
+If a L4-Redirect RADIUS is received with a non-zero value, accel-ppp will automatically add the client’s IPv4 address to the specified nftables set.
+.TP
 .BI "l4-redirect-on-reject=" n
 If specified then if radius rejects access 'ip rule add from ip_addr table l4-redirect-table' rule will be created for time
 .B n

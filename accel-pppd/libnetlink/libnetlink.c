@@ -650,3 +650,33 @@ int __parse_rtattr_nested_compat(struct rtattr *tb[], int max, struct rtattr *rt
 	memset(tb, 0, sizeof(struct rtattr *) * (max + 1));
 	return 0;
 }
+
+void __export nlattr_put(struct nlmsghdr *nlh, uint16_t type, size_t len, const void *data)
+{
+	uint8_t *payload_tail = (uint8_t *)nlh + NLA_ALIGN(nlh->nlmsg_len);
+	struct nlattr *attr = (struct nlattr *)payload_tail;  
+	uint16_t payload_len = NLA_ALIGN(sizeof(struct nlattr)) + len;
+	int pad; 
+	attr->nla_type = type;
+	attr->nla_len = payload_len;
+	memcpy((uint8_t *)attr + NLA_HDRLEN, data, len);
+	pad = NLA_ALIGN(len) - len;
+	if (pad > 0)
+		memset((uint8_t *)attr + NLA_HDRLEN + len, 0, pad); 
+	nlh->nlmsg_len += NLA_ALIGN(payload_len);
+}
+
+struct __export nlattr *nlattr_nest_start(struct nlmsghdr *nlh, uint16_t type)
+{
+	uint8_t *payload_tail = (uint8_t *)nlh + NLA_ALIGN(nlh->nlmsg_len);
+	struct nlattr *start = (struct nlattr *)payload_tail; 
+	start->nla_type = NLA_F_NESTED | type;
+	nlh->nlmsg_len += NLA_ALIGN(sizeof(struct nlattr)); 
+	return start;
+}
+
+void __export nlattr_nest_end(struct nlmsghdr *nlh, struct nlattr *start)
+{ 
+	uint8_t *payload_tail = (uint8_t *)nlh + NLA_ALIGN(nlh->nlmsg_len);
+	start->nla_len = payload_tail - (uint8_t *)start; 
+}
