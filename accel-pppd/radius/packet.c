@@ -167,9 +167,8 @@ int rad_packet_recv(int fd, struct rad_packet_t **p, struct sockaddr_in *addr)
 	if (!pack)
 		return 0;
 
-	//ptr = mmap(NULL, REQ_LENGTH_MAX, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	ptr = mempool_alloc(buf_pool);
-	if (ptr == MAP_FAILED) {
+	if (!ptr) {
 		log_emerg("radius:packet: out of memory\n");
 		goto out_err;
 	}
