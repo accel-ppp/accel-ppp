@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <linux/if.h>
+#include <stdbool.h>
 
 #include "triton.h"
 #include "ap_session.h"
@@ -164,6 +165,8 @@ void arpd_stop(void *arp);
 void arp_send(int ifindex, struct _arphdr *arph, int bc);
 
 int ipoe_check_localnet(in_addr_t addr);
+
+void ipoe_netlink_mon_notify(int ifindex, const char *ifname, bool add);
 
 #endif
 

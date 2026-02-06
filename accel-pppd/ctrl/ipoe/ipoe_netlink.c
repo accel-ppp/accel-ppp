@@ -518,82 +518,22 @@ static void ipoe_up_handler(const struct sockaddr_nl *addr, struct nlmsghdr *h)
 	}
 }
 
+static int ipoe_mc_read_handler(const struct sockaddr_nl *nladdr,
+		      struct nlmsghdr *hdr, void *arg)
+{
+	struct genlmsghdr *ghdr;
+
+	ghdr = NLMSG_DATA(hdr);
+
+	if (ghdr->cmd == IPOE_REP_PKT)
+		ipoe_up_handler(nladdr, hdr);
+
+	return 0;
+}
+
 static int ipoe_mc_read(struct triton_md_handler_t *h)
 {
-	int status;
-	struct nlmsghdr *hdr;
-	struct genlmsghdr *ghdr;
-	struct sockaddr_nl nladdr;
-	struct iovec iov;
-	struct msghdr msg = {
-		.msg_name = &nladdr,
-		.msg_namelen = sizeof(nladdr),
-		.msg_iov = &iov,
-		.msg_iovlen = 1,
-	};
-	char   buf[8192];
-
-	memset(&nladdr, 0, sizeof(nladdr));
-	nladdr.nl_family = AF_NETLINK;
-	nladdr.nl_pid = 0;
-	nladdr.nl_groups = 0;
-
-	iov.iov_base = buf;
-	while (1) {
-		iov.iov_len = sizeof(buf);
-		status = recvmsg(h->fd, &msg, 0);
-
-		if (status < 0) {
-			if (errno == EAGAIN)
-				break;
-			log_error("ipoe: netlink error: %s\n", strerror(errno));
-			if (errno == ENOBUFS)
-				continue;
-			return 0;
-		}
-
-		if (status == 0) {
-			log_error("ipoe: EOF on netlink\n");
-			return 0;
-		}
-
-		if (msg.msg_namelen != sizeof(nladdr)) {
-			log_error("ipoe: netlink sender address length == %d\n", msg.msg_namelen);
-			return 0;
-		}
-
-		for (hdr = (struct nlmsghdr*)buf; status >= sizeof(*hdr); ) {
-			int len = hdr->nlmsg_len;
-			int l = len - sizeof(*h);
-
-			if (l<0 || len>status) {
-				if (msg.msg_flags & MSG_TRUNC) {
-					log_warn("ipoe: truncated netlink message\n");
-					continue;
-				}
-				log_error("ipoe: malformed netlink message\n");
-				continue;
-			}
-
-			ghdr = NLMSG_DATA(hdr);
-
-			if (ghdr->cmd == IPOE_REP_PKT)
-				ipoe_up_handler(&nladdr, hdr);
-
-			status -= NLMSG_ALIGN(len);
-			hdr = (struct nlmsghdr*)((char*)hdr + NLMSG_ALIGN(len));
-		}
-
-		if (msg.msg_flags & MSG_TRUNC) {
-			log_warn("ipoe: netlink message truncated\n");
-			continue;
-		}
-
-		if (status) {
-			log_error("ipoe: netlink remnant of size %d\n", status);
-			return 0;
-		}
-	}
+	rtnl_listen(&rth, ipoe_mc_read_handler, NULL);
 
 	return 0;
 }

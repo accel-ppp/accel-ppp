@@ -39,6 +39,7 @@
 #include "vlan_mon.h"
 
 #include "ipoe.h"
+#include "if_ipoe.h"
 
 #include "memdebug.h"
 
@@ -217,6 +218,7 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet *pack, int force);
 static void ipoe_session_keepalive(struct dhcpv4_packet *pack);
 static void add_interface(const char *ifname, int ifindex, const char *opt, int parent_ifindex, int vid, int vlan_mon);
+static void del_interface(const char *ifname, struct ipoe_serv *serv);
 static int get_offer_delay();
 static void __ipoe_session_start(struct ipoe_session *ses);
 static int ipoe_rad_send_auth_request(struct rad_plugin_t *rad, struct rad_packet_t *pack);
@@ -226,6 +228,7 @@ static void ipoe_serv_timeout(struct triton_timer_t *t);
 static struct ipoe_session *ipoe_session_create_up(struct ipoe_serv *serv, struct ethhdr *eth, struct iphdr *iph, struct _arphdr *arph);
 static void __terminate(struct ap_session *ses);
 static void ipoe_ipv6_disable(struct ipoe_serv *serv);
+static struct conf_option_t *ipoe_find_opt(const char *name);
 
 static void ipoe_ctx_switch(struct triton_context_t *ctx, void *arg)
 {
@@ -2767,6 +2770,62 @@ struct ipoe_serv *ipoe_find_serv(const char *ifname)
 	return NULL;
 }
 
+static struct conf_option_t *ipoe_find_opt(const char *ifname)
+{
+	struct conf_sect_t *sect = conf_get_section("ipoe");
+	struct conf_option_t *opt;
+	const char *pcre_err;
+	struct ifreq ifr;
+	int pcre_offset;
+	const char *ptr;
+	pcre *re = NULL;
+	char *pattern;
+
+	list_for_each_entry(opt, &sect->items, entry) {
+		if (strcmp(opt->name, "interface"))
+			continue;
+		if (!opt->val)
+			continue;
+
+		for (ptr = opt->val; *ptr && *ptr != ','; ptr++);
+
+		if (strlen(opt->val) > 3 && memcmp(opt->val, "re:", 3) == 0) {
+			pattern = _malloc(ptr - (opt->val + 3) + 1);
+			memcpy(pattern, opt->val + 3, ptr - (opt->val + 3));
+			pattern[ptr - (opt->val + 3)] = 0;
+
+			re = pcre_compile2(pattern, 0, NULL, &pcre_err, &pcre_offset, NULL);
+
+			_free(pattern);
+
+			if (!re) {
+				log_error("ipoe: '%s': %s at %i\r\n", pattern, pcre_err, pcre_offset);
+				pcre_free(re);
+				continue;
+			}
+
+			if (pcre_exec(re, NULL, ifname, strlen(ifname), 0, 0, NULL, 0) < 0) {
+				pcre_free(re);
+				continue;
+			}
+
+			pcre_free(re);
+		} else {
+			if (ptr - opt->val >= sizeof(ifr.ifr_name))
+				continue;
+
+			memcpy(ifr.ifr_name, opt->val, ptr - opt->val);
+			ifr.ifr_name[ptr - opt->val] = 0;
+
+			if (strcmp(ifr.ifr_name, ifname) != 0)
+				continue;
+		}
+		return opt;
+	}
+
+	return NULL;
+}
+
 static int get_offer_delay()
 {
 	struct delay *r, *prev = NULL;
@@ -2793,6 +2852,52 @@ static void set_vlan_timeout(struct ipoe_serv *serv)
 
 		if (list_empty(&serv->sessions))
 			triton_timer_add(&serv->ctx, &serv->timer, 0);
+	}
+}
+
+void ipoe_netlink_mon_notify(int ifindex, const char *ifname, bool add)
+{
+	struct conf_option_t *opt;
+	struct ipoe_serv *serv;
+	int vid, parent_ifindex;
+
+	opt = ipoe_find_opt(ifname);
+	if (!opt)
+		return;
+
+	serv = ipoe_find_serv(ifname);
+
+	if (add) {
+		if (serv && serv->active) {
+			/* interface is already loaded */
+			if (serv->ifindex == ifindex)
+				/* no change */
+				return;
+			else
+				/* unload previous interface */
+				del_interface(ifname, serv);
+		}
+
+		if (serv) {
+			/* VLAN information was already registered last time add_interface()
+			 * was called. They cannot change unless the interface is deleted
+			 * and re-created with the same name but with different VLAN info.
+			 * In that case, del_interface() would be called and then
+			 * add_interface()
+			 */
+			vid = 0;
+			parent_ifindex = 0;
+		} else
+			vid = iplink_vlan_get_vid(ifindex, &parent_ifindex);
+
+		add_interface(ifname, ifindex, opt->val, parent_ifindex, vid, 0);
+	} else {
+		if (!serv || !serv->active)
+			/* interface is not loaded */
+			return;
+
+		/* unload interface */
+		del_interface(ifname, serv);
 	}
 }
 
@@ -3322,6 +3427,18 @@ out_err:
 	_free(str0);
 }
 
+static void del_interface(const char *ifname, struct ipoe_serv *serv)
+{
+	pthread_mutex_lock(&serv->lock);
+
+	serv->active = 0;
+	ipoe_drop_sessions(serv, NULL);
+	serv->need_close = 1;
+	triton_context_call(&serv->ctx, (triton_event_func)ipoe_serv_release, serv);
+
+	pthread_mutex_unlock(&serv->lock);
+}
+
 static void load_interface(const char *opt)
 {
 	const char *ptr;
@@ -3419,6 +3536,12 @@ static void load_interfaces(struct conf_sect_t *sect)
 {
 	struct ipoe_serv *serv;
 	struct conf_option_t *opt;
+	static int ipoe_netlink_mon_registered = 0;
+
+	if (!ipoe_netlink_mon_registered) {
+		ipoe_netlink_mon_register(ipoe_netlink_mon_notify);
+		ipoe_netlink_mon_registered = 1;
+	}
 
 	list_for_each_entry(serv, &serv_list, entry)
 		serv->active = 0;

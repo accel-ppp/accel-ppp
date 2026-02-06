@@ -433,7 +433,7 @@ int __export rtnl_listen(struct rtnl_handle *rtnl,
 		.msg_iov = &iov,
 		.msg_iovlen = 1,
 	};
-	char   buf[8192];
+	char   buf[MAX_MSG];
 
 	memset(&nladdr, 0, sizeof(nladdr));
 	nladdr.nl_family = AF_NETLINK;
@@ -447,7 +447,7 @@ int __export rtnl_listen(struct rtnl_handle *rtnl,
 
 		if (status < 0) {
 			if (errno == EINTR || errno == EAGAIN)
-				continue;
+				break;
 			log_debug("libnetlink: ""netlink receive error %s (%d)\n",
 				strerror(errno), errno);
 			if (errno == ENOBUFS)
@@ -460,7 +460,7 @@ int __export rtnl_listen(struct rtnl_handle *rtnl,
 		}
 		if (msg.msg_namelen != sizeof(nladdr)) {
 			log_debug("libnetlink: ""Sender address length == %d\n", msg.msg_namelen);
-			exit(1);
+			return -1;
 		}
 		for (h = (struct nlmsghdr*)buf; status >= sizeof(*h); ) {
 			int err;
@@ -473,7 +473,7 @@ int __export rtnl_listen(struct rtnl_handle *rtnl,
 					return -1;
 				}
 				log_debug("libnetlink: ""!!!malformed message: len=%d\n", len);
-				exit(1);
+				return -1;
 			}
 
 			err = handler(&nladdr, h, jarg);
@@ -489,9 +489,11 @@ int __export rtnl_listen(struct rtnl_handle *rtnl,
 		}
 		if (status) {
 			log_debug("libnetlink: ""!!!Remnant of size %d\n", status);
-			exit(1);
+			return -1;
 		}
 	}
+
+	return 0;
 }
 
 int __export addattr32(struct nlmsghdr *n, int maxlen, int type, __u32 data)
