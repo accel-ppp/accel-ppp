@@ -292,15 +292,22 @@ int rad_packet_recv(int fd, struct rad_packet_t **p, struct sockaddr_in *addr)
 						attr->val.octets = ptr;
 						break;
 					case ATTR_TYPE_INTEGER:
-						if (len != da->size)
+						if (len != da->size) {
 							log_ppp_warn("radius:packet: attribute %s has invalid length %i (must be %i)\n", da->name, len, da->size);
-					case ATTR_TYPE_DATE:
+							break;
+						}
 						if (len == 4)
 							attr->val.integer = ntohl(*(uint32_t*)ptr);
 						else if (len == 2)
 							attr->val.integer = ntohs(*(uint16_t*)ptr);
 						else if (len == 1)
 							attr->val.integer = *ptr;
+						break;
+					case ATTR_TYPE_DATE:
+						if (len == 4)
+							attr->val.integer = ntohl(*(uint32_t*)ptr);
+						else
+							log_ppp_warn("radius:packet: attribute %s has invalid length %i (must be 4)\n", da->name, len);
 						break;
 					case ATTR_TYPE_IPADDR:
 					case ATTR_TYPE_IFID:
