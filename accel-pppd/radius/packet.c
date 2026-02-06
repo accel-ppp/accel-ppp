@@ -224,9 +224,17 @@ int rad_packet_recv(int fd, struct rad_packet_t **p, struct sockaddr_in *addr)
 			goto out_err;
 		}
 		if (id == 26) {
+			if (len < 4) {
+				log_ppp_warn("radius:packet: vendor attribute too short (%i)\n", len);
+				goto out_err;
+			}
 			vendor_id = ntohl(*(uint32_t *)ptr);
 			vendor = rad_dict_find_vendor_id(vendor_id);
 			if (vendor) {
+				if (len < 4 + vendor->tag + vendor->len) {
+					log_ppp_warn("radius:packet: vendor %i attribute too short (%i)\n", vendor_id, len);
+					goto out_err;
+				}
 				ptr += 4;
 
 				if (vendor->tag == 2)
