@@ -59,7 +59,7 @@ int __export triton_event_register_handler(int ev_id, triton_event_func func)
 	return 0;
 }
 
-/*int triton_event_unregister_handler(int ev_id, triton_event_func func)
+int __export triton_event_unregister_handler(int ev_id, triton_event_func func)
 {
 	struct _triton_event_t *ev;
 	struct event_handler_t *h;
@@ -85,12 +85,13 @@ int __export triton_event_register_handler(int ev_id, triton_event_func func)
 	}
 
 	return -1;
-}*/
+}
 
 void __export triton_event_fire(int ev_id, void *arg)
 {
 	struct _triton_event_t *ev;
 	struct event_handler_t *h;
+	struct event_handler_t *tmp;
 
 	if (ev_id >= max_events)
 		return;
@@ -99,7 +100,16 @@ void __export triton_event_fire(int ev_id, void *arg)
 	if (!ev)
 		return;
 
+	ev->in_progress = 1;
 	list_for_each_entry(h, &ev->handlers, entry)
-		h->func(arg);
-}
+		if (h->func)
+			h->func(arg);
+	ev->in_progress = 0;
 
+	list_for_each_entry_safe(h, tmp, &ev->handlers, entry) {
+		if (!h->func) {
+			list_del(&h->entry);
+			_free(h);
+		}
+	}
+}
