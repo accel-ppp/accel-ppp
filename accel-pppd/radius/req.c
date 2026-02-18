@@ -255,13 +255,15 @@ int rad_req_acct_fill(struct rad_req_t *req)
 	return 0;
 }
 
-void rad_req_free(struct rad_req_t *req)
+struct rad_server_t *rad_req_free(struct rad_req_t *req)
 {
+	struct rad_server_t *s = NULL;
+
 	assert(!req->active);
 	assert(!req->entry.next);
 
 	if (req->serv)
-		rad_server_put(req->serv, req->type);
+		s = rad_server_put(req->serv, req->type);
 
 	if (req->hnd.tpd)
 		triton_md_unregister_handler(&req->hnd, 1);
@@ -278,6 +280,8 @@ void rad_req_free(struct rad_req_t *req)
 		rad_packet_free(req->reply);
 
 	mempool_free(req);
+
+	return s;
 }
 
 static int make_socket(struct rad_req_t *req)
