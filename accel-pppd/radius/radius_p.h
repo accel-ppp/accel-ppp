@@ -211,7 +211,7 @@ struct rad_req_t *rad_req_alloc(struct radius_pd_t *rpd, int code, const char *u
 struct rad_req_t *rad_req_alloc2(struct radius_pd_t *rpd, int code, const char *username, in_addr_t addr, int port);
 struct rad_req_t *rad_req_alloc_empty();
 int rad_req_acct_fill(struct rad_req_t *);
-void rad_req_free(struct rad_req_t *);
+struct rad_server_t *rad_req_free(struct rad_req_t *);
 int rad_req_send(struct rad_req_t *req);
 int __rad_req_send(struct rad_req_t *req, int async);
 int rad_req_read(struct triton_md_handler_t *h);
@@ -244,7 +244,7 @@ int rad_dae_src_check(in_addr_t ipaddr);
 
 struct rad_server_t *rad_server_get(int);
 struct rad_server_t *rad_server_get2(int, in_addr_t, int);
-void rad_server_put(struct rad_server_t *, int);
+struct rad_server_t *rad_server_put(struct rad_server_t *, int);
 int rad_server_req_enter(struct rad_req_t *);
 void rad_server_req_exit(struct rad_req_t *);
 int rad_server_req_cancel(struct rad_req_t *, int full);
