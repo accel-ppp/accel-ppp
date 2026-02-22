@@ -104,12 +104,6 @@ ENDIF (SHAPER)
 
 INCLUDE(CheckIncludeFile)
 CHECK_INCLUDE_FILE("linux/netfilter/ipset/ip_set.h" HAVE_IPSET)
-# MUSL does not have printf.h
-CHECK_INCLUDE_FILE("printf.h" HAVE_PRINTF_H)
-IF (HAVE_PRINTF_H)
-	ADD_DEFINITIONS(-DHAVE_PRINTF_H)
-ENDIF (HAVE_PRINTF_H)
-
 
 INCLUDE(CheckFunctionExists)
 CHECK_FUNCTION_EXISTS(setns HAVE_SETNS)
