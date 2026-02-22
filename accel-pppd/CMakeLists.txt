@@ -44,34 +44,6 @@ IF (RADIUS)
 	ADD_SUBDIRECTORY(radius)
 ENDIF (RADIUS)
 
-# define __free_fn_t in musl
-INCLUDE (CheckCSourceCompiles)
-CHECK_C_SOURCE_COMPILES("
-#include <stdlib.h>
-#include <search.h>
-int main(void)
-{
-	__free_fn_t *f;
-	return 0;
-}" HAVE_FREE_FN_T)
-IF (HAVE_FREE_FN_T)
-	ADD_DEFINITIONS(-DHAVE_FREE_FN_T)
-ENDIF (HAVE_FREE_FN_T)
-
-INCLUDE (CheckCSourceCompiles)
-CHECK_C_SOURCE_COMPILES("
-#include <sys/socket.h>
-#include <linux/if_arp.h>
-#include <net/ethernet.h>
-int main(void)
-{
-	return 0;
-}" HAVE_GOOD_IFARP)
-
-IF (HAVE_GOOD_IFARP)
-	ADD_DEFINITIONS(-DHAVE_GOOD_IFARP)
-ENDIF (HAVE_GOOD_IFARP)
-
 INCLUDE (CheckCSourceCompiles)
 CHECK_C_SOURCE_COMPILES("
 #include <utmp.h>
