@@ -10,7 +10,7 @@
 #include <net/ethernet.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
-#include <linux/if.h>
+#include <net/if.h>
 #include <linux/genetlink.h>
 
 #include "triton.h"
