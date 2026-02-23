@@ -11,9 +11,6 @@
 #include <net/ethernet.h>
 #include <netpacket/packet.h>
 #include <arpa/inet.h>
-#ifdef HAVE_PRINTF_H
-#include <printf.h>
-#endif
 
 #include "events.h"
 #include "triton.h"
