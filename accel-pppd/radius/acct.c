@@ -424,12 +424,16 @@ static void rad_acct_stop_timeout(struct triton_timer_t *t)
 	}
 
 	if (req->try == conf_max_try) {
+		if (req->rpd)
+			req->rpd->acct_req = NULL;
 		rad_req_free(req);
 		return;
 	}
 
 	if (rad_req_send(req)) {
 		if (ap_shutdown) {
+			if (req->rpd)
+				req->rpd->acct_req = NULL;
 			rad_req_free(req);
 			return;
 		}
@@ -532,7 +536,7 @@ int rad_acct_stop(struct radius_pd_t *rpd)
 	req_set_RA(req, req->serv->secret);
 
 	req->recv = rad_acct_stop_recv;
-	req->timeout.expire = rad_acct_start_timeout;
+	req->timeout.expire = rad_acct_stop_timeout;
 	req->timeout.expire_tv.tv_sec = conf_timeout;
 	req->sent = rad_acct_stop_sent;
 	req->log = conf_verbose ? log_ppp_info1 : NULL;
