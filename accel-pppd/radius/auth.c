@@ -434,7 +434,10 @@ static int rad_auth_mschap_v2_recv(struct rad_req_t *req)
 	if (req->reply->code == CODE_ACCESS_ACCEPT) {
 		ra = rad_packet_find_attr(req->reply, "Microsoft", "MS-CHAP2-Success");
 		if (!ra) {
-			log_error("radius:auth:mschap-v2: 'MS-CHAP-Success' not found in radius response\n");
+			log_error("radius:auth:mschap-v2: 'MS-CHAP2-Success' not found in radius response\n");
+			return -1;
+		} else if (ra->len < 43) {
+			log_error("radius:auth:mschap-v2: 'MS-CHAP2-Success' too short (%i)\n", ra->len);
 			return -1;
 		} else
 			memcpy(rpd->auth_ctx->authenticator, ra->val.octets + 3, 40);
