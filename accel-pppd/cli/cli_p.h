@@ -15,8 +15,9 @@ struct cli_client_t
 
 int cli_process_cmd(struct cli_client_t *cln);
 
+void cli_log_stream_on_disconnect(struct cli_client_t *cln);
+
 extern char *conf_cli_passwd;
 extern char *conf_cli_prompt;
 
 #endif
-

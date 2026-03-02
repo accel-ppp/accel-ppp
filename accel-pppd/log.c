@@ -96,7 +96,8 @@ static void do_log(int level, const char *fmt, va_list ap, struct ap_session *se
 	if (add_msg(cur_msg, stat_buf))
 		goto out;
 
-	if (stat_buf[strlen(stat_buf) - 1] != '\n')
+	size_t len = strlen(stat_buf);
+	if (len == 0 || stat_buf[len - 1] != '\n')
 		return;
 
 	if (debug_file)
@@ -477,6 +478,11 @@ void __export log_switch(struct triton_context_t *ctx, void *arg)
 void __export log_register_target(struct log_target_t *t)
 {
 	list_add_tail(&t->entry, &targets);
+}
+
+void __export log_unregister_target(struct log_target_t *t)
+{
+	list_del(&t->entry);
 }
 
 static void sighup(int n)
