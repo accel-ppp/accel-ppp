@@ -506,6 +506,15 @@ List must to be sorted by count key.
 .BI "offer-timeout=" n
 Specified timeout waiting DHCP-Request from client in seconds (default 10).
 .TP
+.BI "relay-retransmit=" n
+Specified the maximum number of retransmissions of the a packet from the
+DHCP relay to the DHCP server before the expiration of the session (default 3).
+.TP
+.BI "relay-timeout=" n
+Specified timeout in seconds waiting for a response from the DHCP server before
+retransmitting the packet. If no reponse is received after the last
+transmission, the session expires (default 3).
+.TP
 .BI "vlan-mon=" [re:]name[,filter]
 Starts vlan monitor on specified interface (requires vlan_mon kernel module).
 .br
