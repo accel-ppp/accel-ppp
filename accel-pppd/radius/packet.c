@@ -167,9 +167,8 @@ int rad_packet_recv(int fd, struct rad_packet_t **p, struct sockaddr_in *addr)
 	if (!pack)
 		return 0;
 
-	//ptr = mmap(NULL, REQ_LENGTH_MAX, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	ptr = mempool_alloc(buf_pool);
-	if (ptr == MAP_FAILED) {
+	if (!ptr) {
 		log_emerg("radius:packet: out of memory\n");
 		goto out_err;
 	}
@@ -224,9 +223,17 @@ int rad_packet_recv(int fd, struct rad_packet_t **p, struct sockaddr_in *addr)
 			goto out_err;
 		}
 		if (id == 26) {
+			if (len < 4) {
+				log_ppp_warn("radius:packet: vendor attribute too short (%i)\n", len);
+				goto out_err;
+			}
 			vendor_id = ntohl(*(uint32_t *)ptr);
 			vendor = rad_dict_find_vendor_id(vendor_id);
 			if (vendor) {
+				if (len < 4 + vendor->tag + vendor->len) {
+					log_ppp_warn("radius:packet: vendor %i attribute too short (%i)\n", vendor_id, len);
+					goto out_err;
+				}
 				ptr += 4;
 
 				if (vendor->tag == 2)
@@ -285,15 +292,22 @@ int rad_packet_recv(int fd, struct rad_packet_t **p, struct sockaddr_in *addr)
 						attr->val.octets = ptr;
 						break;
 					case ATTR_TYPE_INTEGER:
-						if (len != da->size)
+						if (len != da->size) {
 							log_ppp_warn("radius:packet: attribute %s has invalid length %i (must be %i)\n", da->name, len, da->size);
-					case ATTR_TYPE_DATE:
+							break;
+						}
 						if (len == 4)
 							attr->val.integer = ntohl(*(uint32_t*)ptr);
 						else if (len == 2)
 							attr->val.integer = ntohs(*(uint16_t*)ptr);
 						else if (len == 1)
 							attr->val.integer = *ptr;
+						break;
+					case ATTR_TYPE_DATE:
+						if (len == 4)
+							attr->val.integer = ntohl(*(uint32_t*)ptr);
+						else
+							log_ppp_warn("radius:packet: attribute %s has invalid length %i (must be 4)\n", da->name, len);
 						break;
 					case ATTR_TYPE_IPADDR:
 					case ATTR_TYPE_IFID:
