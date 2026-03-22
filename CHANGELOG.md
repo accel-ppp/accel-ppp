@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.14.1 - 2026-03-23
+
+### Fixes
+- RADIUS: fix use-after-free in request handling.
+- RADIUS: fix vendor attribute parsing over-reads.
+- RADIUS: fix MS-CHAP2-Success unchecked memcpy (40 bytes).
+- RADIUS: fix invalid check after mempool allocation.
+- RADIUS: fix mismatched allocator/deallocator types.
+- RADIUS: fix invalid integer and date attribute parsing.
+- RADIUS: fix buggy Framed-Route parsing and improve error messages.
+- RADIUS: fix stop accounting timeout flow and request cleanup.
+- PPP: fix uninitialized struct fields.
+- PPP: fix TOCTOU race on uc_size (not guarded by mutex).
+- PPP: guard LCP logging field reads.
+- PPP: defend against possible ppp init failure.
+- CLI: clear show sessions cell buffer to avoid stale output.
+
+### Build / Portability
+- Replace `linux/if.h` with `net/if.h` includes for broader portability.
+- Refactor ARP header includes in arp.c.
+- Refactor session free function pointer in l2tp.c (remove `__free_fn_t` ifdef).
+- Remove unused `printf.h` include and CMake checks.
+- Clean up CMakeLists.txt by removing unused checks.
+
 ## 1.14.0 - 2026-01-24
 
 ### Breaking / Compatibility
