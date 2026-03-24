@@ -126,8 +126,8 @@ struct rad_server_t {
 	int auth_port;
 	int acct_port;
 	int req_limit;
-	int req_cnt;
-	int queue_cnt;
+	int req_cnt[2];
+	int queue_cnt[2];
 	int fail_timeout;
 	int max_fail;
 	char bind_device[IFNAMSIZ];
