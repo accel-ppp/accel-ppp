@@ -18,7 +18,6 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include "linux_ppp.h"
-#include <regex.h>
 
 /*
  * Suppress OpenSSL 3.0 deprecation warnings for DH API.
@@ -2793,7 +2792,7 @@ void __export sstp_get_stat(unsigned int **starting, unsigned int **active)
 static void load_config(void)
 {
 	int ipmode;
-	char *opt, *ptr;
+	char *opt;
 
 	opt = conf_get_opt("sstp", "verbose");
 	if (opt && atoi(opt) >= 0)
@@ -2801,12 +2800,10 @@ static void load_config(void)
 
 	opt = conf_get_opt("sstp", "host-name");
 		if (opt) {
-			ptr = opt;
 			conf_hostname = strsep(&opt, "/");
 				if (opt) {
 					conf_pathname = opt;
 				}
-			opt = ptr;
 		}
 
 	opt = conf_get_opt("sstp", "http-error");
