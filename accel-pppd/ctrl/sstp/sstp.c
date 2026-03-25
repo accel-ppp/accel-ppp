@@ -18,6 +18,7 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include "linux_ppp.h"
+#include <regex.h>
 
 /*
  * Suppress OpenSSL 3.0 deprecation warnings for DH API.
@@ -175,6 +176,7 @@ static struct hash_t conf_hash_sha1 = { .len = 0 };
 static struct hash_t conf_hash_sha256 = { .len = 0 };
 //static int conf_bypass_auth = 0;
 static const char *conf_hostname = NULL;
+static const char *conf_pathname = NULL;
 enum {
 	HTTP_ERR_ALLOW = -1,
 	HTTP_ERR_DENY = 0,
@@ -868,9 +870,9 @@ static int http_send_response(struct sstp_conn_t *conn, char *proto, char *statu
 static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
 {
 	char httpbuf[1024], linebuf[1024];
-	char *line, *method, *request, *proto, *host;
+	char *line, *method, *request, *proto, *host, *uri;
 	struct buffer_t buf;
-	int host_error;
+	int host_error, match;
 
 	buf.head = data;
 	buf.end = data + len;
@@ -920,7 +922,16 @@ static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
 		return -1;
 	}
 
-	if (strcasecmp(method, SSTP_HTTP_METHOD) != 0 || strcasecmp(request, SSTP_HTTP_URI) != 0) {
+	if (!conf_pathname)
+		uri = strdup(SSTP_HTTP_URI);
+	else if (_asprintf(&uri, "%c%s%s", '/', conf_pathname, SSTP_HTTP_URI) < 0)
+		uri = NULL;
+	if (!uri)
+		return -1;
+	match = strcasecmp(method, SSTP_HTTP_METHOD) == 0 && strcasecmp(request, uri) == 0;
+	_free(uri);
+
+	if (!match) {
 		if (conf_http_mode > 0) {
 			if (_asprintf(&line, "Location: %s%s\r\n",
 			    conf_http_url, (conf_http_mode == HTTP_ERR_REDIRECT_APPEND) ? request : "") < 0)
@@ -2782,13 +2793,21 @@ void __export sstp_get_stat(unsigned int **starting, unsigned int **active)
 static void load_config(void)
 {
 	int ipmode;
-	char *opt;
+	char *opt, *ptr;
 
 	opt = conf_get_opt("sstp", "verbose");
 	if (opt && atoi(opt) >= 0)
 		conf_verbose = atoi(opt) > 0;
 
-	conf_hostname = conf_get_opt("sstp", "host-name");
+	opt = conf_get_opt("sstp", "host-name");
+		if (opt) {
+			ptr = opt;
+			conf_hostname = strsep(&opt, "/");
+				if (opt) {
+					conf_pathname = opt;
+				}
+			opt = ptr;
+		}
 
 	opt = conf_get_opt("sstp", "http-error");
 	if (opt) {
