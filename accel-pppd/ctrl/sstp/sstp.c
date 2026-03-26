@@ -922,7 +922,7 @@ static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
 	}
 
 	if (!conf_pathname)
-		uri = strdup(SSTP_HTTP_URI);
+		uri = _strdup(SSTP_HTTP_URI);
 	else if (_asprintf(&uri, "%c%s%s", '/', conf_pathname, SSTP_HTTP_URI) < 0)
 		uri = NULL;
 	if (!uri)
@@ -2799,12 +2799,11 @@ static void load_config(void)
 		conf_verbose = atoi(opt) > 0;
 
 	opt = conf_get_opt("sstp", "host-name");
-		if (opt) {
-			conf_hostname = strsep(&opt, "/");
-				if (opt) {
-					conf_pathname = opt;
-				}
-		}
+	if (opt) {
+		conf_hostname = strsep(&opt, "/");
+			if (opt)
+				conf_pathname = opt;
+	}
 
 	opt = conf_get_opt("sstp", "http-error");
 	if (opt) {
