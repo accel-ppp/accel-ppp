@@ -929,10 +929,10 @@ Given hexadecimal value overrides SHA256 hash computed from the
 .BI pemfile
 certificate or used directly for non-ssl mode.
 .TP
-.BI "host-name=" string
-If this option is given, only sstp connection to specified host and with the same TLS SNI will be allowed.
+.BI "host-name=" [[host.]...]domain[.tld][/path]
+If this option is given, only sstp connection to specified host and path with the same TLS SNI will be allowed.
 .TP
-.BI "http-error=" deny|allow|http[s]://host.tld[/path]
+.BI "http-error=" deny|allow|http[s]://[[host.]...]domain[.tld][/path]
 Specify http layer error behavior for non-sstp requests.
 .br
 .B deny
