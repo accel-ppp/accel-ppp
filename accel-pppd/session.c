@@ -136,7 +136,7 @@ static void ap_session_timer(struct triton_timer_t *t)
 
 	if (ses->idle_timeout && ts.tv_sec - ses->idle_time >= ses->idle_timeout) {
 		log_ppp_msg("idle timeout\n");
-		ap_session_terminate(ses, TERM_SESSION_TIMEOUT, 0);
+		ap_session_terminate(ses, TERM_IDLE_TIMEOUT, 0);
 	} else if (ses->session_timeout) {
 		if (ts.tv_sec - ses->start_time >= ses->session_timeout) {
 			log_ppp_msg("session timeout\n");

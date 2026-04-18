@@ -978,10 +978,12 @@ static void __ipoe_session_start(struct ipoe_session *ses)
 		}
 	}
 
-	ses->timer.expire = ipoe_session_timeout;
-	ses->timer.period = 0;
-	ses->timer.expire_tv.tv_sec = conf_offer_timeout;
-	triton_timer_add(&ses->ctx, &ses->timer, 0);
+	if (!ses->UP) {
+		ses->timer.expire = ipoe_session_timeout;
+		ses->timer.period = 0;
+		ses->timer.expire_tv.tv_sec = conf_offer_timeout;
+		triton_timer_add(&ses->ctx, &ses->timer, 0);
+	}
 }
 
 static void make_ipv6_intfid(uint64_t *intfid, const uint8_t *hwaddr)
