@@ -70,7 +70,7 @@ static void rad_acct_sent(struct rad_req_t *req, int res)
 	if (res)
 		return;
 
-	__sync_add_and_fetch(&req->serv->stat_interim_sent, 1);
+	rad_server_stat_interim_sent(req->serv);
 
 	if (!req->hnd.tpd)
 		triton_md_register_handler(req->rpd->ses->ctrl->ctx, &req->hnd);
@@ -88,8 +88,7 @@ static void rad_acct_recv(struct rad_req_t *req)
 	int dt = (req->reply->tv.tv_sec - req->pack->tv.tv_sec) * 1000 +
 		(req->reply->tv.tv_nsec - req->pack->tv.tv_nsec) / 1000000;
 
-	stat_accm_add(req->serv->stat_interim_query_1m, dt);
-	stat_accm_add(req->serv->stat_interim_query_5m, dt);
+	rad_server_stat_interim_query(req->serv, dt);
 
 	if (req->timeout.tpd)
 		triton_timer_del(&req->timeout);
@@ -109,9 +108,7 @@ static void rad_acct_timeout(struct triton_timer_t *t)
 	rad_server_req_exit(req);
 	rad_server_timeout(req->serv);
 
-	__sync_add_and_fetch(&req->serv->stat_interim_lost, 1);
-	stat_accm_add(req->serv->stat_interim_lost_1m, 1);
-	stat_accm_add(req->serv->stat_interim_lost_5m, 1);
+	rad_server_stat_interim_lost(req->serv);
 
 	if (conf_acct_timeout == 0) {
 		triton_timer_del(t);
@@ -227,7 +224,7 @@ static void rad_acct_start_sent(struct rad_req_t *req, int res)
 		return;
 	}
 
-	__sync_add_and_fetch(&req->serv->stat_acct_sent, 1);
+	rad_server_stat_acct_sent(req->serv);
 
 	if (!req->hnd.tpd)
 		triton_md_register_handler(req->rpd->ses->ctrl->ctx, &req->hnd);
@@ -246,8 +243,7 @@ static void rad_acct_start_recv(struct rad_req_t *req)
 	int dt = (req->reply->tv.tv_sec - req->pack->tv.tv_sec) * 1000 +
 					(req->reply->tv.tv_nsec - req->pack->tv.tv_nsec) / 1000000;
 
-	stat_accm_add(req->serv->stat_acct_query_1m, dt);
-	stat_accm_add(req->serv->stat_acct_query_5m, dt);
+	rad_server_stat_acct_query(req->serv, dt);
 
 	triton_timer_del(&req->timeout);
 
@@ -289,9 +285,7 @@ static void rad_acct_start_timeout(struct triton_timer_t *t)
 
 	rad_server_timeout(req->serv);
 
-	__sync_add_and_fetch(&req->serv->stat_acct_lost, 1);
-	stat_accm_add(req->serv->stat_acct_lost_1m, 1);
-	stat_accm_add(req->serv->stat_acct_lost_5m, 1);
+	rad_server_stat_acct_lost(req->serv);
 
 	if (req->before_send)
 		req->pack->id++;
@@ -374,7 +368,7 @@ static void rad_acct_stop_sent(struct rad_req_t *req, int res)
 		return;
 	}
 
-	__sync_add_and_fetch(&req->serv->stat_acct_sent, 1);
+	rad_server_stat_acct_sent(req->serv);
 
 	if (!req->hnd.tpd)
 		triton_md_register_handler(req->rpd ? req->rpd->ses->ctrl->ctx : NULL, &req->hnd);
@@ -393,8 +387,7 @@ static void rad_acct_stop_recv(struct rad_req_t *req)
 	int dt = (req->reply->tv.tv_sec - req->pack->tv.tv_sec) * 1000 +
 					(req->reply->tv.tv_nsec - req->pack->tv.tv_nsec) / 1000000;
 
-	stat_accm_add(req->serv->stat_acct_query_1m, dt);
-	stat_accm_add(req->serv->stat_acct_query_5m, dt);
+	rad_server_stat_acct_query(req->serv, dt);
 
 	rad_req_free(req);
 
@@ -415,9 +408,7 @@ static void rad_acct_stop_timeout(struct triton_timer_t *t)
 		rad_server_timeout(req->serv);
 		rad_server_req_exit(req);
 
-		__sync_add_and_fetch(&req->serv->stat_acct_lost, 1);
-		stat_accm_add(req->serv->stat_acct_lost_1m, 1);
-		stat_accm_add(req->serv->stat_acct_lost_5m, 1);
+		rad_server_stat_acct_lost(req->serv);
 
 		if (req->before_send)
 			req->pack->id++;

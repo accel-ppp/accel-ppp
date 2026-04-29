@@ -115,6 +115,31 @@ struct rad_req_t {
 	void (*log)(const char *fmt, ...);
 };
 
+struct rad_server_stat_t {
+	unsigned long auth_sent;
+	unsigned long auth_lost;
+	unsigned long acct_sent;
+	unsigned long acct_lost;
+	unsigned long interim_sent;
+	unsigned long interim_lost;
+	unsigned long fail_cnt;
+
+	struct stat_accm_t *auth_lost_1m;
+	struct stat_accm_t *auth_lost_5m;
+	struct stat_accm_t *auth_query_1m;
+	struct stat_accm_t *auth_query_5m;
+
+	struct stat_accm_t *acct_lost_1m;
+	struct stat_accm_t *acct_lost_5m;
+	struct stat_accm_t *acct_query_1m;
+	struct stat_accm_t *acct_query_5m;
+
+	struct stat_accm_t *interim_lost_1m;
+	struct stat_accm_t *interim_lost_5m;
+	struct stat_accm_t *interim_query_1m;
+	struct stat_accm_t *interim_query_5m;
+};
+
 struct rad_server_t {
 	struct list_head entry;
 	struct triton_context_t ctx;
@@ -139,28 +164,7 @@ struct rad_server_t {
 	int weight;
 	pthread_mutex_t lock;
 
-	unsigned long stat_auth_sent;
-	unsigned long stat_auth_lost;
-	unsigned long stat_acct_sent;
-	unsigned long stat_acct_lost;
-	unsigned long stat_interim_sent;
-	unsigned long stat_interim_lost;
-	unsigned long stat_fail_cnt;
-
-	struct stat_accm_t *stat_auth_lost_1m;
-	struct stat_accm_t *stat_auth_lost_5m;
-	struct stat_accm_t *stat_auth_query_1m;
-	struct stat_accm_t *stat_auth_query_5m;
-
-	struct stat_accm_t *stat_acct_lost_1m;
-	struct stat_accm_t *stat_acct_lost_5m;
-	struct stat_accm_t *stat_acct_query_1m;
-	struct stat_accm_t *stat_acct_query_5m;
-
-	struct stat_accm_t *stat_interim_lost_1m;
-	struct stat_accm_t *stat_interim_lost_5m;
-	struct stat_accm_t *stat_interim_query_1m;
-	struct stat_accm_t *stat_interim_query_5m;
+	struct rad_server_stat_t stat;
 
 	unsigned int backup:1;
 	unsigned int starting:1;
@@ -252,6 +256,16 @@ int rad_server_realloc(struct rad_req_t *);
 void rad_server_fail(struct rad_server_t *);
 void rad_server_timeout(struct rad_server_t *);
 void rad_server_reply(struct rad_server_t *);
+void rad_server_stat_fail(struct rad_server_t *);
+void rad_server_stat_auth_sent(struct rad_server_t *);
+void rad_server_stat_auth_lost(struct rad_server_t *);
+void rad_server_stat_auth_query(struct rad_server_t *, unsigned int dt);
+void rad_server_stat_acct_sent(struct rad_server_t *);
+void rad_server_stat_acct_lost(struct rad_server_t *);
+void rad_server_stat_acct_query(struct rad_server_t *, unsigned int dt);
+void rad_server_stat_interim_sent(struct rad_server_t *);
+void rad_server_stat_interim_lost(struct rad_server_t *);
+void rad_server_stat_interim_query(struct rad_server_t *, unsigned int dt);
 
 void rad_update_session_timeout(struct radius_pd_t *rpd, int timeout);
 
