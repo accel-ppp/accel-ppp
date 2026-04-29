@@ -104,7 +104,7 @@ void __export *mempool_alloc(mempool_t *pool)
 		spin_unlock(&p->lock);
 
 		--p->objects;
-		__sync_sub_and_fetch(&triton_stat.mempool_available, size);
+		triton_stat_mempool_available_sub(size);
 
 		return it->ptr;
 	}
@@ -121,10 +121,10 @@ void __export *mempool_alloc(mempool_t *pool)
 		it = (struct _item_t *)mmap_ptr;
 		mmap_ptr += size;
 		spin_unlock(&mmap_lock);
-		__sync_sub_and_fetch(&triton_stat.mempool_available, size);
+		triton_stat_mempool_available_sub(size);
 	} else {
 		it = _malloc(size);
-		__sync_add_and_fetch(&triton_stat.mempool_allocated, size);
+		triton_stat_mempool_allocated_add(size);
 	}
 
 	if (!it) {
@@ -184,9 +184,9 @@ void __export mempool_free(void *ptr)
 #else
 	if (need_free) {
 		_free(it);
-		__sync_sub_and_fetch(&triton_stat.mempool_allocated, size);
+		triton_stat_mempool_allocated_sub(size);
 	} else
-		__sync_add_and_fetch(&triton_stat.mempool_available, size);
+		triton_stat_mempool_available_add(size);
 #endif
 
 }
@@ -238,8 +238,8 @@ static void mempool_clean(void)
 #endif
 			list_del(&it->entry);
 			_free(it);
-			__sync_sub_and_fetch(&triton_stat.mempool_allocated, size);
-			__sync_sub_and_fetch(&triton_stat.mempool_available, size);
+			triton_stat_mempool_allocated_sub(size);
+			triton_stat_mempool_available_sub(size);
 #ifdef VALGRIND
 			} else
 				break;
@@ -275,8 +275,8 @@ static int mmap_grow(void)
 
 	mmap_endptr = ptr + size;
 
-	__sync_add_and_fetch(&triton_stat.mempool_allocated, size);
-	__sync_add_and_fetch(&triton_stat.mempool_available, size);
+	triton_stat_mempool_allocated_add(size);
+	triton_stat_mempool_available_add(size);
 
 	return 0;
 oom:

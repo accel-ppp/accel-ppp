@@ -119,4 +119,28 @@ void triton_log_debug(const char *fmt, ...) __attribute__((format(gnu_printf, 1,
 int load_modules(const char *name);
 void triton_context_release(struct _triton_context_t *ctx);
 
+void triton_stat_mempool_allocated_add(uint64_t value);
+void triton_stat_mempool_allocated_sub(uint64_t value);
+void triton_stat_mempool_available_add(uint64_t value);
+void triton_stat_mempool_available_sub(uint64_t value);
+void triton_stat_thread_count_inc(void);
+void triton_stat_thread_active_inc(void);
+unsigned int triton_stat_thread_active_dec(void);
+void triton_stat_context_count_inc(void);
+unsigned int triton_stat_context_count_dec(void);
+void triton_stat_context_sleeping_inc(void);
+void triton_stat_context_sleeping_dec(void);
+void triton_stat_context_pending_inc(void);
+void triton_stat_context_pending_dec(void);
+void triton_stat_md_handler_count_inc(void);
+void triton_stat_md_handler_count_dec(void);
+void triton_stat_md_handler_pending_inc(void);
+void triton_stat_md_handler_pending_dec(void);
+void triton_stat_timer_count_inc(void);
+void triton_stat_timer_count_dec(void);
+void triton_stat_timer_pending_inc(void);
+void triton_stat_timer_pending_dec(void);
+void triton_stat_set_cpu(unsigned int value);
+void triton_stat_set_start_time(time_t value);
+
 #endif

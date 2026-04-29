@@ -70,7 +70,9 @@ struct triton_stat_t
 	unsigned int cpu;
 };
 
-extern struct triton_stat_t triton_stat;
+void triton_stat_get(struct triton_stat_t *stat);
+time_t triton_stat_start_time(void);
+unsigned int triton_stat_cpu(void);
 int triton_context_register(struct triton_context_t *, void *arg);
 void triton_context_unregister(struct triton_context_t *);
 void triton_context_set_priority(struct triton_context_t *, int);
