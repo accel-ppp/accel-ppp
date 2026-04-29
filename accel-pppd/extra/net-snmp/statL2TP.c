@@ -8,19 +8,18 @@
 #include <net-snmp/agent/net-snmp-agent-includes.h>
 
 #include "triton.h"
+#include "accel-pppd/ctrl/l2tp/l2tp.h"
 #include "statL2TP.h"
 
 
-/*
- * The variables we want to tie the relevant OIDs to.
- * The agent will handle all GET and (if applicable) SET requests
- * to these variables automatically, changing the values as needed.
- */
-
-void l2tp_get_stat(unsigned int **, unsigned int **);
-
-static unsigned int *stat_starting;
-static unsigned int *stat_active;
+static int handle_statL2TPStarting(netsnmp_mib_handler *handler,
+				   netsnmp_handler_registration *reginfo,
+				   netsnmp_agent_request_info *reqinfo,
+				   netsnmp_request_info *requests);
+static int handle_statL2TPActive(netsnmp_mib_handler *handler,
+				 netsnmp_handler_registration *reginfo,
+				 netsnmp_agent_request_info *reqinfo,
+				 netsnmp_request_info *requests);
 
 /*
  * Our initialization routine, called automatically by the agent
@@ -29,9 +28,6 @@ static unsigned int *stat_active;
 void
 init_statL2TP(void)
 {
-  netsnmp_handler_registration *reg;
-  netsnmp_watcher_info         *winfo;
-
     static oid statL2TPStarting_oid[] = { 1,3,6,1,4,1,8072,100,1,4,1 };
     static oid statL2TPActive_oid[] = { 1,3,6,1,4,1,8072,100,1,4,2 };
 
@@ -44,51 +40,75 @@ init_statL2TP(void)
 	if (!triton_module_loaded("l2tp"))
 		return;
 
-	l2tp_get_stat(&stat_starting, &stat_active);
-
-    /*
-     * Register scalar watchers for each of the MIB objects.
-     * The ASN type and RO/RW status are taken from the MIB definition,
-     * but can be adjusted if needed.
-     *
-     * In most circumstances, the scalar watcher will handle all
-     * of the necessary processing.  But the NULL parameter in the
-     * netsnmp_create_handler_registration() call can be used to
-     * supply a user-provided handler if necessary.
-     *
-     * This approach can also be used to handle Counter64, string-
-     * and OID-based watched scalars (although variable-sized writeable
-     * objects will need some more specialised initialisation).
-     */
     DEBUGMSGTL(("statL2TP",
                 "Initializing statL2TPStarting scalar integer.  Default value = %d\n",
                 0));
-    reg = netsnmp_create_handler_registration(
-             "statL2TPStarting", NULL,
+    if (netsnmp_register_scalar(netsnmp_create_handler_registration(
+             "statL2TPStarting", handle_statL2TPStarting,
               statL2TPStarting_oid, OID_LENGTH(statL2TPStarting_oid),
-              HANDLER_CAN_RONLY);
-    winfo = netsnmp_create_watcher_info(
-                stat_starting, sizeof(*stat_starting),
-                 ASN_INTEGER, WATCHER_FIXED_SIZE);
-    if (netsnmp_register_watched_scalar( reg, winfo ) < 0 ) {
-        snmp_log( LOG_ERR, "Failed to register watched statL2TPStarting" );
+              HANDLER_CAN_RONLY)) < 0 ) {
+        snmp_log( LOG_ERR, "Failed to register statL2TPStarting" );
     }
 
     DEBUGMSGTL(("statL2TP",
                 "Initializing statL2TPActive scalar integer.  Default value = %d\n",
                 0));
-    reg = netsnmp_create_handler_registration(
-             "statL2TPActive", NULL,
+    if (netsnmp_register_scalar(netsnmp_create_handler_registration(
+             "statL2TPActive", handle_statL2TPActive,
               statL2TPActive_oid, OID_LENGTH(statL2TPActive_oid),
-              HANDLER_CAN_RONLY);
-    winfo = netsnmp_create_watcher_info(
-                stat_active, sizeof(*stat_active),
-                 ASN_INTEGER, WATCHER_FIXED_SIZE);
-    if (netsnmp_register_watched_scalar( reg, winfo ) < 0 ) {
-        snmp_log( LOG_ERR, "Failed to register watched statL2TPActive" );
+              HANDLER_CAN_RONLY)) < 0 ) {
+        snmp_log( LOG_ERR, "Failed to register statL2TPActive" );
     }
 
 
   DEBUGMSGTL(("statL2TP",
               "Done initalizing statL2TP module\n"));
+}
+
+static int handle_statL2TPStarting(netsnmp_mib_handler *handler,
+				   netsnmp_handler_registration *reginfo,
+				   netsnmp_agent_request_info *reqinfo,
+				   netsnmp_request_info *requests)
+{
+	unsigned int stat;
+
+	(void)handler;
+	(void)reginfo;
+
+	switch (reqinfo->mode) {
+	case MODE_GET:
+		stat = l2tp_stat_starting();
+		snmp_set_var_typed_value(requests->requestvb, ASN_INTEGER,
+					 (u_char *)&stat, sizeof(stat));
+		break;
+	default:
+		snmp_log(LOG_ERR, "unknown mode (%d) in handle_statL2TPStarting\n", reqinfo->mode);
+		return SNMP_ERR_GENERR;
+	}
+
+	return SNMP_ERR_NOERROR;
+}
+
+static int handle_statL2TPActive(netsnmp_mib_handler *handler,
+				 netsnmp_handler_registration *reginfo,
+				 netsnmp_agent_request_info *reqinfo,
+				 netsnmp_request_info *requests)
+{
+	unsigned int stat;
+
+	(void)handler;
+	(void)reginfo;
+
+	switch (reqinfo->mode) {
+	case MODE_GET:
+		stat = l2tp_stat_active();
+		snmp_set_var_typed_value(requests->requestvb, ASN_INTEGER,
+					 (u_char *)&stat, sizeof(stat));
+		break;
+	default:
+		snmp_log(LOG_ERR, "unknown mode (%d) in handle_statL2TPActive\n", reqinfo->mode);
+		return SNMP_ERR_GENERR;
+	}
+
+	return SNMP_ERR_NOERROR;
 }
