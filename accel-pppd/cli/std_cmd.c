@@ -71,10 +71,16 @@ static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt,
 	cli_sendv(client, "  timer_pending: %u\r\n", triton_stat.timer_pending);
 
 //===========
-	cli_send(client, "sessions:\r\n");
-	cli_sendv(client, "  starting: %u\r\n", ap_session_stat.starting);
-	cli_sendv(client, "  active: %u\r\n", ap_session_stat.active);
-	cli_sendv(client, "  finishing: %u\r\n", ap_session_stat.finishing);
+	{
+		struct ap_session_stat ses_stat;
+
+		ap_session_stat_get(&ses_stat);
+
+		cli_send(client, "sessions:\r\n");
+		cli_sendv(client, "  starting: %u\r\n", ses_stat.starting);
+		cli_sendv(client, "  active: %u\r\n", ses_stat.active);
+		cli_sendv(client, "  finishing: %u\r\n", ses_stat.finishing);
+	}
 
 	return CLI_CMD_OK;
 }
