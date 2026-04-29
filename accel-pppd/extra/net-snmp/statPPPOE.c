@@ -71,7 +71,7 @@ static int handle_statPPPOEStarting(netsnmp_mib_handler *handler,
 				    netsnmp_agent_request_info *reqinfo,
 				    netsnmp_request_info *requests)
 {
-	unsigned int stat;
+	long stat;
 
 	switch (reqinfo->mode) {
 	case MODE_GET:
@@ -92,7 +92,7 @@ static int handle_statPPPOEActive(netsnmp_mib_handler *handler,
 				  netsnmp_agent_request_info *reqinfo,
 				  netsnmp_request_info *requests)
 {
-	unsigned int stat;
+	long stat;
 
 	switch (reqinfo->mode) {
 	case MODE_GET:
