@@ -80,6 +80,8 @@ handle_statCoreCPU(netsnmp_mib_handler *handler,
                           netsnmp_agent_request_info   *reqinfo,
                           netsnmp_request_info         *requests)
 {
+	long cpu;
+
     /* We are never called for a GETNEXT if it's registered as a
        "instance", as it's "magically" handled for us.  */
 
@@ -89,9 +91,10 @@ handle_statCoreCPU(netsnmp_mib_handler *handler,
     switch(reqinfo->mode) {
 
         case MODE_GET:
+            cpu = triton_stat.cpu;
             snmp_set_var_typed_value(requests->requestvb, ASN_INTEGER,
-                                     (u_char *)&triton_stat.cpu /* XXX: a pointer to the scalar's data */,
-                                     sizeof(triton_stat.cpu)/* XXX: the length of the data in bytes */);
+                                     (u_char *)&cpu /* XXX: a pointer to the scalar's data */,
+                                     sizeof(cpu)/* XXX: the length of the data in bytes */);
             break;
 
 

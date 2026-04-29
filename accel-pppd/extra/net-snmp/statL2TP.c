@@ -70,7 +70,7 @@ static int handle_statL2TPStarting(netsnmp_mib_handler *handler,
 				   netsnmp_agent_request_info *reqinfo,
 				   netsnmp_request_info *requests)
 {
-	unsigned int stat;
+	long stat;
 
 	(void)handler;
 	(void)reginfo;
@@ -94,7 +94,7 @@ static int handle_statL2TPActive(netsnmp_mib_handler *handler,
 				 netsnmp_agent_request_info *reqinfo,
 				 netsnmp_request_info *requests)
 {
-	unsigned int stat;
+	long stat;
 
 	(void)handler;
 	(void)reginfo;
