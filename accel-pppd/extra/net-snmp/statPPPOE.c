@@ -10,16 +10,17 @@
 #include "triton.h"
 #include "statPPPOE.h"
 
-/*
- * The variables we want to tie the relevant OIDs to.
- * The agent will handle all GET and (if applicable) SET requests
- * to these variables automatically, changing the values as needed.
- */
+unsigned int pppoe_stat_starting(void);
+unsigned int pppoe_stat_active(void);
 
-void pppoe_get_stat(unsigned int **, unsigned int **);
-
-static unsigned int *stat_starting;
-static unsigned int *stat_active;
+static int handle_statPPPOEStarting(netsnmp_mib_handler *handler,
+				    netsnmp_handler_registration *reginfo,
+				    netsnmp_agent_request_info *reqinfo,
+				    netsnmp_request_info *requests);
+static int handle_statPPPOEActive(netsnmp_mib_handler *handler,
+				  netsnmp_handler_registration *reginfo,
+				  netsnmp_agent_request_info *reqinfo,
+				  netsnmp_request_info *requests);
 
 /*
  * Our initialization routine, called automatically by the agent
@@ -28,9 +29,6 @@ static unsigned int *stat_active;
 void
 init_statPPPOE(void)
 {
-  netsnmp_handler_registration *reg;
-  netsnmp_watcher_info         *winfo;
-
     static oid statPPPOEStarting_oid[] = { 1,3,6,1,4,1,8072,100,1,5,1 };
     static oid statPPPOEActive_oid[] = { 1,3,6,1,4,1,8072,100,1,5,2 };
 
@@ -43,51 +41,69 @@ init_statPPPOE(void)
 	if (!triton_module_loaded("pppoe"))
 		return;
 
-	pppoe_get_stat(&stat_starting, &stat_active);
-
-    /*
-     * Register scalar watchers for each of the MIB objects.
-     * The ASN type and RO/RW status are taken from the MIB definition,
-     * but can be adjusted if needed.
-     *
-     * In most circumstances, the scalar watcher will handle all
-     * of the necessary processing.  But the NULL parameter in the
-     * netsnmp_create_handler_registration() call can be used to
-     * supply a user-provided handler if necessary.
-     *
-     * This approach can also be used to handle Counter64, string-
-     * and OID-based watched scalars (although variable-sized writeable
-     * objects will need some more specialised initialisation).
-     */
     DEBUGMSGTL(("statPPPOE",
                 "Initializing statPPPOEStarting scalar integer.  Default value = %d\n",
                 0));
-    reg = netsnmp_create_handler_registration(
-             "statPPPOEStarting", NULL,
+    if (netsnmp_register_scalar(netsnmp_create_handler_registration(
+             "statPPPOEStarting", handle_statPPPOEStarting,
               statPPPOEStarting_oid, OID_LENGTH(statPPPOEStarting_oid),
-              HANDLER_CAN_RONLY);
-    winfo = netsnmp_create_watcher_info(
-                stat_starting, sizeof(*stat_starting),
-                 ASN_INTEGER, WATCHER_FIXED_SIZE);
-    if (netsnmp_register_watched_scalar( reg, winfo ) < 0 ) {
-        snmp_log( LOG_ERR, "Failed to register watched statPPPOEStarting" );
+              HANDLER_CAN_RONLY)) < 0 ) {
+        snmp_log( LOG_ERR, "Failed to register statPPPOEStarting" );
     }
 
     DEBUGMSGTL(("statPPPOE",
                 "Initializing statPPPOEActive scalar integer.  Default value = %d\n",
                 0));
-    reg = netsnmp_create_handler_registration(
-             "statPPPOEActive", NULL,
+    if (netsnmp_register_scalar(netsnmp_create_handler_registration(
+             "statPPPOEActive", handle_statPPPOEActive,
               statPPPOEActive_oid, OID_LENGTH(statPPPOEActive_oid),
-              HANDLER_CAN_RONLY);
-    winfo = netsnmp_create_watcher_info(
-                stat_active, sizeof(*stat_active),
-                 ASN_INTEGER, WATCHER_FIXED_SIZE);
-    if (netsnmp_register_watched_scalar( reg, winfo ) < 0 ) {
-        snmp_log( LOG_ERR, "Failed to register watched statPPPOEActive" );
+              HANDLER_CAN_RONLY)) < 0 ) {
+        snmp_log( LOG_ERR, "Failed to register statPPPOEActive" );
     }
 
 
   DEBUGMSGTL(("statPPPOE",
-              "Done initalizing statPPPOE module\n"));
+	              "Done initalizing statPPPOE module\n"));
+}
+
+static int handle_statPPPOEStarting(netsnmp_mib_handler *handler,
+				    netsnmp_handler_registration *reginfo,
+				    netsnmp_agent_request_info *reqinfo,
+				    netsnmp_request_info *requests)
+{
+	unsigned int stat;
+
+	switch (reqinfo->mode) {
+	case MODE_GET:
+		stat = pppoe_stat_starting();
+		snmp_set_var_typed_value(requests->requestvb, ASN_INTEGER,
+					 (u_char *)&stat, sizeof(stat));
+		break;
+	default:
+		snmp_log(LOG_ERR, "unknown mode (%d) in handle_statPPPOEStarting\n", reqinfo->mode);
+		return SNMP_ERR_GENERR;
+	}
+
+	return SNMP_ERR_NOERROR;
+}
+
+static int handle_statPPPOEActive(netsnmp_mib_handler *handler,
+				  netsnmp_handler_registration *reginfo,
+				  netsnmp_agent_request_info *reqinfo,
+				  netsnmp_request_info *requests)
+{
+	unsigned int stat;
+
+	switch (reqinfo->mode) {
+	case MODE_GET:
+		stat = pppoe_stat_active();
+		snmp_set_var_typed_value(requests->requestvb, ASN_INTEGER,
+					 (u_char *)&stat, sizeof(stat));
+		break;
+	default:
+		snmp_log(LOG_ERR, "unknown mode (%d) in handle_statPPPOEActive\n", reqinfo->mode);
+		return SNMP_ERR_GENERR;
+	}
+
+	return SNMP_ERR_NOERROR;
 }

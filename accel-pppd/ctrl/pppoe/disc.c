@@ -329,7 +329,7 @@ static int disc_read(struct triton_md_handler_t *h)
 		}
 
 		if (mac_filter_check(ethhdr->h_source)) {
-			__sync_add_and_fetch(&stat_filtered, 1);
+			pppoe_stat_add_filtered();
 			continue;
 		}
 
