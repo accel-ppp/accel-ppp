@@ -25,6 +25,7 @@
 #include "cli.h"
 
 #include "connlimit.h"
+#include "pptp.h"
 
 #include "memdebug.h"
 
@@ -55,6 +56,19 @@ struct pptp_conn_t
 	struct ppp_t ppp;
 };
 
+struct pptp_stat_t
+{
+	unsigned int starting;
+	unsigned int active;
+};
+
+struct pptp_serv_t
+{
+	struct triton_context_t ctx;
+	struct triton_md_handler_t hnd;
+	struct pptp_stat_t stat;
+};
+
 static int conf_ppp_max_mtu = PPTP_MAX_MTU;
 static int conf_timeout = 5;
 static int conf_echo_interval = 0;
@@ -69,14 +83,53 @@ static const char *conf_ifname;
 
 static mempool_t conn_pool;
 
-static unsigned int stat_starting;
-static unsigned int stat_active;
-
 static int pptp_read(struct triton_md_handler_t *h);
 static int pptp_write(struct triton_md_handler_t *h);
 static void pptp_timeout(struct triton_timer_t *);
 static void ppp_started(struct ap_session *);
 static void ppp_finished(struct ap_session *);
+static void pptp_ctx_switch(struct triton_context_t *ctx, void *arg);
+static int pptp_connect(struct triton_md_handler_t *h);
+static void pptp_serv_close(struct triton_context_t *ctx);
+
+static struct pptp_serv_t serv =
+{
+	.hnd.read = pptp_connect,
+	.ctx.close = pptp_serv_close,
+	.ctx.before_switch = pptp_ctx_switch,
+};
+
+static void pptp_stat_inc(unsigned int *stat)
+{
+	__atomic_add_fetch(stat, 1, __ATOMIC_RELAXED);
+}
+
+static void pptp_stat_dec(unsigned int *stat)
+{
+	__atomic_sub_fetch(stat, 1, __ATOMIC_RELAXED);
+}
+
+static void pptp_stat_move(unsigned int *from, unsigned int *to)
+{
+	pptp_stat_dec(from);
+	pptp_stat_inc(to);
+}
+
+static void pptp_stat_get(struct pptp_stat_t *stat)
+{
+	stat->starting = __atomic_load_n(&serv.stat.starting, __ATOMIC_RELAXED);
+	stat->active = __atomic_load_n(&serv.stat.active, __ATOMIC_RELAXED);
+}
+
+unsigned int __export pptp_stat_starting(void)
+{
+	return __atomic_load_n(&serv.stat.starting, __ATOMIC_RELAXED);
+}
+
+unsigned int __export pptp_stat_active(void)
+{
+	return __atomic_load_n(&serv.stat.active, __ATOMIC_RELAXED);
+}
 
 static void pptp_ctx_switch(struct triton_context_t *ctx, void *arg)
 {
@@ -101,11 +154,11 @@ static void disconnect(struct pptp_conn_t *conn)
 		triton_timer_del(&conn->echo_timer);
 
 	if (conn->state == STATE_PPP) {
-		__sync_sub_and_fetch(&stat_active, 1);
+		pptp_stat_dec(&serv.stat.active);
 		conn->state = STATE_CLOSE;
 		ap_session_terminate(&conn->ppp.ses, TERM_LOST_CARRIER, 1);
 	} else if (conn->state != STATE_CLOSE)
-		__sync_sub_and_fetch(&stat_starting, 1);
+		pptp_stat_dec(&serv.stat.starting);
 
 	triton_event_fire(EV_CTRL_FINISHED, &conn->ppp.ses);
 
@@ -356,8 +409,7 @@ static int pptp_out_call_rqst(struct pptp_conn_t *conn)
 		return -1;
 	}
 	conn->state = STATE_PPP;
-	__sync_sub_and_fetch(&stat_starting, 1);
-	__sync_add_and_fetch(&stat_active, 1);
+	pptp_stat_move(&serv.stat.starting, &serv.stat.active);
 
 	if (conn->timeout_timer.tpd)
 		triton_timer_del(&conn->timeout_timer);
@@ -397,7 +449,7 @@ static int pptp_call_clear_rqst(struct pptp_conn_t *conn)
 		triton_timer_del(&conn->echo_timer);
 
 	if (conn->state == STATE_PPP) {
-		__sync_sub_and_fetch(&stat_active, 1);
+		pptp_stat_dec(&serv.stat.active);
 		conn->state = STATE_CLOSE;
 		ap_session_terminate(&conn->ppp.ses, TERM_USER_REQUEST, 1);
 	}
@@ -578,7 +630,7 @@ static void pptp_close(struct triton_context_t *ctx)
 {
 	struct pptp_conn_t *conn = container_of(ctx, typeof(*conn), ctx);
 	if (conn->state == STATE_PPP) {
-		__sync_sub_and_fetch(&stat_active, 1);
+		pptp_stat_dec(&serv.stat.active);
 		conn->state = STATE_CLOSE;
 		ap_session_terminate(&conn->ppp.ses, TERM_ADMIN_RESET, 1);
 		if (send_pptp_call_disconnect_notify(conn, 3)) {
@@ -609,7 +661,7 @@ static void ppp_finished(struct ap_session *ses)
 	if (conn->state != STATE_CLOSE) {
 		log_ppp_debug("pptp: ppp finished\n");
 		conn->state = STATE_CLOSE;
-		__sync_sub_and_fetch(&stat_active, 1);
+		pptp_stat_dec(&serv.stat.active);
 
 		if (send_pptp_call_disconnect_notify(conn, 3))
 			triton_context_call(&conn->ctx, (void (*)(void*))disconnect, conn);
@@ -625,12 +677,6 @@ static void ppp_finished(struct ap_session *ses)
 }
 
 //==================================
-
-struct pptp_serv_t
-{
-	struct triton_context_t ctx;
-	struct triton_md_handler_t hnd;
-};
 
 static int pptp_connect(struct triton_md_handler_t *h)
 {
@@ -653,12 +699,12 @@ static int pptp_connect(struct triton_md_handler_t *h)
 			continue;
 		}
 
-		if (conf_max_starting && ap_session_stat.starting >= conf_max_starting) {
+		if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting) {
 			close(sock);
 			continue;
 		}
 
-		if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions) {
+		if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions) {
 			close(sock);
 			continue;
 		}
@@ -733,7 +779,7 @@ static int pptp_connect(struct triton_md_handler_t *h)
 
 		triton_event_fire(EV_CTRL_STARTING, &conn->ppp.ses);
 
-		__sync_add_and_fetch(&stat_starting, 1);
+		pptp_stat_inc(&serv.stat.starting);
 	}
 	return 0;
 }
@@ -744,26 +790,17 @@ static void pptp_serv_close(struct triton_context_t *ctx)
 	triton_context_unregister(ctx);
 }
 
-static struct pptp_serv_t serv=
-{
-	.hnd.read = pptp_connect,
-	.ctx.close = pptp_serv_close,
-	.ctx.before_switch = pptp_ctx_switch,
-};
-
 static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
 {
+	struct pptp_stat_t stat;
+
+	pptp_stat_get(&stat);
+
 	cli_send(client, "pptp:\r\n");
-	cli_sendv(client,"  starting: %u\r\n", stat_starting);
-	cli_sendv(client,"  active: %u\r\n", stat_active);
+	cli_sendv(client,"  starting: %u\r\n", stat.starting);
+	cli_sendv(client,"  active: %u\r\n", stat.active);
 
 	return CLI_CMD_OK;
-}
-
-void __export pptp_get_stat(unsigned int **starting, unsigned int **active)
-{
-	*starting = &stat_starting;
-	*active = &stat_active;
 }
 
 static void load_config(void)

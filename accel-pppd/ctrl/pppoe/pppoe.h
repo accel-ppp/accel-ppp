@@ -109,16 +109,24 @@ extern int conf_accept_any_service;
 extern char *conf_ac_name;
 extern char *conf_pado_delay;
 
-extern unsigned int stat_starting;
-extern unsigned int stat_active;
-extern unsigned int stat_delayed_pado;
-extern unsigned long stat_PADI_recv;
-extern unsigned long stat_PADO_sent;
-extern unsigned long stat_PADR_recv;
-extern unsigned long stat_PADR_dup_recv;
-extern unsigned long stat_PADS_sent;
-extern unsigned long stat_PADI_drop;
-extern unsigned long stat_filtered;
+struct pppoe_stat_t
+{
+	unsigned int starting;
+	unsigned int active;
+	unsigned int delayed_PADO;
+	unsigned long PADI_recv;
+	unsigned long PADI_drop;
+	unsigned long PADO_sent;
+	unsigned long PADR_recv;
+	unsigned long PADR_dup_recv;
+	unsigned long PADS_sent;
+	unsigned long filtered;
+};
+
+void pppoe_stat_get(struct pppoe_stat_t *stat);
+unsigned int pppoe_stat_starting(void);
+unsigned int pppoe_stat_active(void);
+void pppoe_stat_add_filtered(void);
 
 extern pthread_rwlock_t serv_lock;
 extern struct list_head serv_list;
@@ -142,4 +150,3 @@ int tr101_send_access_request(struct pppoe_tag *tr101, struct rad_packet_t *pack
 int tr101_send_accounting_request(struct pppoe_tag *tr101, struct rad_packet_t *pack);
 
 #endif
-

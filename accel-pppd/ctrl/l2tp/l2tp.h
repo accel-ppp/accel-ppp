@@ -77,6 +77,9 @@ struct l2tp_packet_t
 extern int conf_verbose;
 extern int conf_avp_permissive;
 
+unsigned int l2tp_stat_starting(void);
+unsigned int l2tp_stat_active(void);
+
 static inline int l2tp_packet_is_ZLB(const struct l2tp_packet_t *pack)
 {
 	return list_empty(&pack->attrs);

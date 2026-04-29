@@ -172,8 +172,7 @@ static void rad_auth_recv(struct rad_req_t *req)
 	triton_timer_del(&req->timeout);
 
 	dt = (req->reply->tv.tv_sec - req->pack->tv.tv_sec) * 1000 + (req->reply->tv.tv_nsec - req->pack->tv.tv_nsec) / 1000000;
-	stat_accm_add(req->serv->stat_auth_query_1m, dt);
-	stat_accm_add(req->serv->stat_auth_query_5m, dt);
+	rad_server_stat_auth_query(req->serv, dt);
 
 	if (pack->code == CODE_ACCESS_ACCEPT) {
 		if (rad_proc_attrs(req)) {
@@ -208,9 +207,7 @@ static void rad_auth_timeout(struct triton_timer_t *t)
 
 	rad_server_timeout(req->serv);
 
-	__sync_add_and_fetch(&req->serv->stat_auth_lost, 1);
-	stat_accm_add(req->serv->stat_auth_lost_1m, 1);
-	stat_accm_add(req->serv->stat_auth_lost_5m, 1);
+	rad_server_stat_auth_lost(req->serv);
 
 	if (rad_req_send(req))
 		rad_auth_finalize(req->rpd, PWDB_DENIED);
@@ -223,7 +220,7 @@ static void rad_auth_sent(struct rad_req_t *req, int res)
 		return;
 	}
 
-	__sync_add_and_fetch(&req->serv->stat_auth_sent, 1);
+	rad_server_stat_auth_sent(req->serv);
 
 	if (!req->hnd.tpd)
 		triton_md_register_handler(req->rpd->ses->ctrl->ctx, &req->hnd);
