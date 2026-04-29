@@ -1392,10 +1392,10 @@ static struct ipoe_session *ipoe_session_create_dhcpv4(struct ipoe_serv *serv, s
 	if (ap_shutdown)
 		return NULL;
 
-	if (conf_max_starting && ap_session_stat.starting >= conf_max_starting)
+	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
 		return NULL;
 
-	if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions)
+	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
 		return NULL;
 
 	ses = ipoe_session_alloc(serv->ifname);
@@ -2137,10 +2137,10 @@ static struct ipoe_session *ipoe_session_create_up(struct ipoe_serv *serv, struc
 	if (ap_shutdown)
 		return NULL;
 
-	if (conf_max_starting && ap_session_stat.starting >= conf_max_starting)
+	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
 		return NULL;
 
-	if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions)
+	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
 		return NULL;
 
 	if (connlimit_loaded && connlimit_check(serv->opt_shared ? cl_key_from_ipv4(saddr) : serv->ifindex))

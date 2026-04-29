@@ -2836,10 +2836,10 @@ static int l2tp_recv_SCCRQ(const struct l2tp_serv_t *serv,
 		return 0;
 	}
 
-	if (conf_max_starting && ap_session_stat.starting >= conf_max_starting)
+	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
 		return 0;
 
-	if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions)
+	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
 		return 0;
 
 	if (triton_module_loaded("connlimit")
@@ -3382,10 +3382,10 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 		return 0;
 	}
 
-	if (conf_max_starting && ap_session_stat.starting >= conf_max_starting)
+	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
 		return 0;
 
-	if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions)
+	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
 		return 0;
 
 	if (triton_module_loaded("connlimit")
@@ -3722,10 +3722,10 @@ static int l2tp_recv_OCRQ(struct l2tp_conn_t *conn,
 		return 0;
 	}
 
-	if (conf_max_starting && ap_session_stat.starting >= conf_max_starting)
+	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
 		return 0;
 
-	if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions)
+	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
 		return 0;
 
 	if (triton_module_loaded("connlimit")

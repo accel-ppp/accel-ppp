@@ -2330,12 +2330,12 @@ static int sstp_connect(struct triton_md_handler_t *h)
 			continue;
 		}
 
-		if (conf_max_starting && ap_session_stat.starting >= conf_max_starting) {
+		if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting) {
 			close(sock);
 			continue;
 		}
 
-		if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions) {
+		if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions) {
 			close(sock);
 			continue;
 		}
