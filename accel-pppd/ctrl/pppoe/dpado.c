@@ -77,6 +77,7 @@ int dpado_parse(const char *str)
 {
 	char *str1 = _strdup(str);
 	char *ptr1, *ptr2, *ptr3, *endptr;
+	unsigned int active = pppoe_stat_active();
 	LIST_HEAD(range_list);
 	struct dpado_range_t *r;
 
@@ -131,7 +132,7 @@ int dpado_parse(const char *str)
 	dpado_range_prev = NULL;
 
 	list_for_each_entry(r, &dpado_range_list, entry) {
-		if (!dpado_range_prev || stat_active >= r->conn_cnt) {
+		if (!dpado_range_prev || active >= r->conn_cnt) {
 			dpado_range_prev = r;
 			if (r->entry.next != &dpado_range_list)
 				dpado_range_next = list_entry(r->entry.next, typeof(*r), entry);
