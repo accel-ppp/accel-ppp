@@ -30,6 +30,9 @@ static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt,
 #ifdef MEMDEBUG
 	struct mallinfo mi = mallinfo();
 #endif
+	struct triton_stat_t stat;
+
+	triton_stat_get(&stat);
 
 	sprintf(statm_fname, "/proc/%i/statm", getpid());
 	f = fopen(statm_fname, "r");
@@ -39,14 +42,14 @@ static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt,
 	}
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
-	dt = ts.tv_sec - triton_stat.start_time;
+	dt = ts.tv_sec - stat.start_time;
 	day = dt / (60 * 60 * 24);
 	dt %= 60 * 60 * 24;
 	hour = dt / (60 * 60);
 	dt %= 60 * 60;
 
 	cli_sendv(client, "uptime: %i.%02i:%02lu:%02lu\r\n", day, hour, dt / 60, dt % 60);
-	cli_sendv(client, "cpu: %i%%\r\n", triton_stat.cpu);
+	cli_sendv(client, "cpu: %i%%\r\n", stat.cpu);
 #ifdef MEMDEBUG
 	cli_send(client,  "memory:\r\n");
 	cli_sendv(client, "  rss/virt: %lu/%lu kB\r\n", vmrss * page_size_kb, vmsize * page_size_kb);
@@ -58,17 +61,17 @@ static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt,
 	cli_sendv(client, "mem(rss/virt): %lu/%lu kB\r\n", vmrss * page_size_kb, vmsize * page_size_kb);
 #endif
 	cli_send(client, "core:\r\n");
-	cli_sendv(client, "  mempool_allocated: %" PRIu64 "\r\n", triton_stat.mempool_allocated);
-	cli_sendv(client, "  mempool_available: %" PRIu64 "\r\n", triton_stat.mempool_available);
-	cli_sendv(client, "  thread_count: %u\r\n", triton_stat.thread_count);
-	cli_sendv(client, "  thread_active: %u\r\n", triton_stat.thread_active);
-	cli_sendv(client, "  context_count: %u\r\n", triton_stat.context_count);
-	cli_sendv(client, "  context_sleeping: %u\r\n", triton_stat.context_sleeping);
-	cli_sendv(client, "  context_pending: %u\r\n", triton_stat.context_pending);
-	cli_sendv(client, "  md_handler_count: %u\r\n", triton_stat.md_handler_count);
-	cli_sendv(client, "  md_handler_pending: %u\r\n", triton_stat.md_handler_pending);
-	cli_sendv(client, "  timer_count: %u\r\n", triton_stat.timer_count);
-	cli_sendv(client, "  timer_pending: %u\r\n", triton_stat.timer_pending);
+	cli_sendv(client, "  mempool_allocated: %" PRIu64 "\r\n", stat.mempool_allocated);
+	cli_sendv(client, "  mempool_available: %" PRIu64 "\r\n", stat.mempool_available);
+	cli_sendv(client, "  thread_count: %u\r\n", stat.thread_count);
+	cli_sendv(client, "  thread_active: %u\r\n", stat.thread_active);
+	cli_sendv(client, "  context_count: %u\r\n", stat.context_count);
+	cli_sendv(client, "  context_sleeping: %u\r\n", stat.context_sleeping);
+	cli_sendv(client, "  context_pending: %u\r\n", stat.context_pending);
+	cli_sendv(client, "  md_handler_count: %u\r\n", stat.md_handler_count);
+	cli_sendv(client, "  md_handler_pending: %u\r\n", stat.md_handler_pending);
+	cli_sendv(client, "  timer_count: %u\r\n", stat.timer_count);
+	cli_sendv(client, "  timer_pending: %u\r\n", stat.timer_pending);
 
 //===========
 	{

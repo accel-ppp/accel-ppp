@@ -95,7 +95,7 @@ void *timer_thread(void *arg)
 				if (!t->pending) {
 					list_add_tail(&t->entry2, &t->ctx->pending_timers);
 					t->pending = 1;
-					__sync_add_and_fetch(&triton_stat.timer_pending, 1);
+					triton_stat_timer_pending_inc();
 					r = triton_queue_ctx(t->ctx);
 				} else
 					r = 0;
@@ -167,7 +167,7 @@ int __export triton_timer_add(struct triton_context_t *ctx, struct triton_timer_
 		goto out_err;
 	}
 
-	__sync_add_and_fetch(&triton_stat.timer_count, 1);
+	triton_stat_timer_count_inc();
 
 	return 0;
 
@@ -206,7 +206,7 @@ void __export triton_timer_del(struct triton_timer_t *ud)
 	list_del(&t->entry);
 	if (t->pending) {
 		list_del(&t->entry2);
-		__sync_sub_and_fetch(&triton_stat.timer_pending, 1);
+		triton_stat_timer_pending_dec();
 	}
 	spin_unlock(&t->ctx->lock);
 
@@ -216,6 +216,6 @@ void __export triton_timer_del(struct triton_timer_t *ud)
 
 	ud->tpd = NULL;
 
-	__sync_sub_and_fetch(&triton_stat.timer_count, 1);
+	triton_stat_timer_count_dec();
 }
 
