@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <errno.h>
-#include <string.h>
+#include <strings.h>
 #include <fcntl.h>
 #include <time.h>
 #include <termios.h>
@@ -176,6 +176,7 @@ static struct hash_t conf_hash_sha256 = { .len = 0 };
 //static int conf_bypass_auth = 0;
 static const char *conf_hostname = NULL;
 static const char *conf_pathname = NULL;
+static int conf_pathname_len = 0;
 enum {
 	HTTP_ERR_ALLOW = -1,
 	HTTP_ERR_DENY = 0,
@@ -869,7 +870,7 @@ static int http_send_response(struct sstp_conn_t *conn, char *proto, char *statu
 static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
 {
 	char httpbuf[1024], linebuf[1024];
-	char *line, *method, *request, *proto, *host, *uri;
+	char *line, *method, *request, *proto, *host;
 	struct buffer_t buf;
 	int host_error, match;
 
@@ -921,14 +922,10 @@ static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
 		return -1;
 	}
 
-	if (!conf_pathname)
-		uri = _strdup(SSTP_HTTP_URI);
-	else if (_asprintf(&uri, "%c%s%s", '/', conf_pathname, SSTP_HTTP_URI) < 0)
-		uri = NULL;
-	if (!uri)
-		return -1;
-	match = strcasecmp(method, SSTP_HTTP_METHOD) == 0 && strcasecmp(request, uri) == 0;
-	_free(uri);
+	match = strcasecmp(method, SSTP_HTTP_METHOD) == 0 && strncmp(request, "/", 1) == 0;
+	if (conf_pathname)
+		match &= strncasecmp(request + 1, conf_pathname, conf_pathname_len - 1) == 0;
+	match &= strcasecmp(request + conf_pathname_len, SSTP_HTTP_URI) == 0;
 
 	if (!match) {
 		if (conf_http_mode > 0) {
@@ -2799,10 +2796,15 @@ static void load_config(void)
 		conf_verbose = atoi(opt) > 0;
 
 	opt = conf_get_opt("sstp", "host-name");
+	conf_hostname = NULL;
+	conf_pathname = NULL;
+	conf_pathname_len = 0;
 	if (opt) {
 		conf_hostname = strsep(&opt, "/");
-			if (opt)
-				conf_pathname = opt;
+		if (opt) {
+			conf_pathname = opt;
+			conf_pathname_len = strlen(conf_pathname) + 1;
+		}
 	}
 
 	opt = conf_get_opt("sstp", "http-error");
