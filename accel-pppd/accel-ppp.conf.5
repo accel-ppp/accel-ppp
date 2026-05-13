@@ -1328,6 +1328,20 @@ When the option is missing or empty, all peers are allowed. Peers
 that do not match a CIDR have their connection closed immediately
 after
 .BR accept (2).
+.TP
+.BI "read_timeout=" seconds
+Maximum time a client may take to deliver a complete HTTP request.
+Connections that have not produced a terminating
+.BR \(dq\\r\\n\\r\\n\(dq
+within this deadline are closed. Defaults to 5 seconds. Set to
+.B 0
+to disable the deadline.
+.TP
+.BI "max_clients=" n
+Maximum number of in-flight HTTP clients. Excess connections are
+accepted then immediately closed. Defaults to 64. Set to
+.B 0
+to disable the cap.
 .SH [connlimit]
 .br
 This module limits connection rate from single source.

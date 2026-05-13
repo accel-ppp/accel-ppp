@@ -45,10 +45,13 @@ enum metrics_format {
 };
 
 #define METRICS_RECV_BUF_SIZE 2048
+#define METRICS_DEFAULT_READ_TIMEOUT 5	/* seconds */
+#define METRICS_DEFAULT_MAX_CLIENTS 64
 
 struct metrics_client_t {
 	struct list_head entry;
 	struct triton_md_handler_t hnd;
+	struct triton_timer_t timer;
 	struct sockaddr_in addr;
 	char *recv_buf;
 	int recv_pos;
@@ -64,10 +67,15 @@ struct metrics_acl_t {
 static enum metrics_format conf_format = METRICS_FORMAT_PROMETHEUS;
 static char *conf_address;
 static LIST_HEAD(conf_allowed);
+static int conf_read_timeout = METRICS_DEFAULT_READ_TIMEOUT;
+static int conf_max_clients = METRICS_DEFAULT_MAX_CLIENTS;
+
+#define METRICS_ACCEPT_BATCH 16	/* max accept()s per serv_read tick */
 
 static struct triton_context_t serv_ctx;
 static struct triton_md_handler_t serv_hnd;
 static LIST_HEAD(clients);
+static unsigned int client_count;
 static int serv_running;
 
 static int parse_format(const char *opt, enum metrics_format *out)
@@ -303,6 +311,18 @@ static int load_config(void)
 
 	free_acl(&conf_allowed);
 	list_replace_init(&new_allowed, &conf_allowed);
+
+	opt = conf_get_opt("metrics", "read_timeout");
+	if (opt) {
+		int n = atoi(opt);
+		conf_read_timeout = n > 0 ? n : 0;
+	}
+
+	opt = conf_get_opt("metrics", "max_clients");
+	if (opt) {
+		int n = atoi(opt);
+		conf_max_clients = n > 0 ? n : 0;
+	}
 
 	return 0;
 }
@@ -717,13 +737,25 @@ out:
 	strbuf_free(&sb);
 }
 
+static void client_timeout(struct triton_timer_t *t);
+
 static void disconnect_client(struct metrics_client_t *cln)
 {
+	if (cln->timer.tpd)
+		triton_timer_del(&cln->timer);
 	list_del(&cln->entry);
+	client_count--;
 	triton_md_unregister_handler(&cln->hnd, 1);
 	if (cln->recv_buf)
 		_free(cln->recv_buf);
 	_free(cln);
+}
+
+static void client_timeout(struct triton_timer_t *t)
+{
+	struct metrics_client_t *cln = container_of(t, typeof(*cln), timer);
+
+	disconnect_client(cln);
 }
 
 static void handle_request(struct metrics_client_t *cln)
@@ -807,8 +839,19 @@ static int serv_read(struct triton_md_handler_t *h)
 	socklen_t size = sizeof(addr);
 	int sock;
 	struct metrics_client_t *cln;
+	int batch;
 
-	while (1) {
+	/* Cap the number of accepts handled per dispatch. Without this, an
+	 * overflow burst (peers exceeding max_clients or denied by
+	 * allowed_ips) keeps us in this loop accept()ing and immediately
+	 * closing sockets, never yielding back to the triton dispatcher.
+	 * Since the per-client read-timeout timers share serv_ctx, that
+	 * would delay client_timeout() and let stalled clients live past
+	 * read_timeout. Return after METRICS_ACCEPT_BATCH iterations; if
+	 * the listening fd is still readable triton will dispatch us again
+	 * on the next loop after timers have had a chance to fire.
+	 */
+	for (batch = 0; batch < METRICS_ACCEPT_BATCH; batch++) {
 		sock = accept(h->fd, (struct sockaddr *)&addr, &size);
 		if (sock < 0) {
 			if (errno == EAGAIN)
@@ -818,6 +861,11 @@ static int serv_read(struct triton_md_handler_t *h)
 		}
 
 		if (!ip_allowed(addr.sin_addr.s_addr)) {
+			close(sock);
+			continue;
+		}
+
+		if (conf_max_clients && client_count >= (unsigned int)conf_max_clients) {
 			close(sock);
 			continue;
 		}
@@ -845,8 +893,15 @@ static int serv_read(struct triton_md_handler_t *h)
 		}
 
 		list_add_tail(&cln->entry, &clients);
+		client_count++;
 		triton_md_register_handler(&serv_ctx, &cln->hnd);
 		triton_md_enable_handler(&cln->hnd, MD_MODE_READ);
+
+		if (conf_read_timeout > 0) {
+			cln->timer.expire = client_timeout;
+			cln->timer.expire_tv.tv_sec = conf_read_timeout;
+			triton_timer_add(&serv_ctx, &cln->timer, 0);
+		}
 	}
 
 	return 0;
