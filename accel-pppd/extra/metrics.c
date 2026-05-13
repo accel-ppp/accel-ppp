@@ -548,6 +548,104 @@ static void render_prometheus(struct strbuf *sb)
 	}
 }
 
+static void append_json_string(struct strbuf *sb, const char *s)
+{
+	strbuf_appendf(sb, "\"");
+	for (; *s; s++) {
+		switch (*s) {
+		case '"':
+			strbuf_appendf(sb, "\\\"");
+			break;
+		case '\\':
+			strbuf_appendf(sb, "\\\\");
+			break;
+		case '\b':
+			strbuf_appendf(sb, "\\b");
+			break;
+		case '\f':
+			strbuf_appendf(sb, "\\f");
+			break;
+		case '\n':
+			strbuf_appendf(sb, "\\n");
+			break;
+		case '\r':
+			strbuf_appendf(sb, "\\r");
+			break;
+		case '\t':
+			strbuf_appendf(sb, "\\t");
+			break;
+		default:
+			if ((unsigned char)*s < 0x20)
+				strbuf_appendf(sb, "\\u%04x", (unsigned)*s);
+			else
+				strbuf_appendf(sb, "%c", *s);
+			break;
+		}
+	}
+	strbuf_appendf(sb, "\"");
+}
+
+static void emit_json_proto(struct strbuf *sb, const char *name, int *first,
+			    unsigned int starting, unsigned int active)
+{
+	if (!*first)
+		strbuf_appendf(sb, ",");
+	*first = 0;
+	strbuf_appendf(sb, "\"%s\":{\"starting\":%u,\"active\":%u}",
+		       name, starting, active);
+}
+
+static void render_json(struct strbuf *sb)
+{
+	struct accel_stats s;
+	int first = 1;
+
+	gather_stats(&s);
+
+	strbuf_appendf(sb, "{");
+	strbuf_appendf(sb, "\"build\":{\"version\":");
+	append_json_string(sb, ACCEL_PPP_VERSION);
+	strbuf_appendf(sb, "},");
+
+	strbuf_appendf(sb, "\"uptime_seconds\":%llu,", (unsigned long long)s.uptime);
+	strbuf_appendf(sb, "\"cpu_percent\":%u,", s.cpu);
+	strbuf_appendf(sb, "\"memory\":{\"rss_bytes\":%lu,\"virt_bytes\":%lu},",
+		       s.rss_bytes, s.virt_bytes);
+
+	strbuf_appendf(sb, "\"core\":{");
+	strbuf_appendf(sb, "\"mempool_allocated_bytes\":%" PRIu64 ",", s.core.mempool_allocated);
+	strbuf_appendf(sb, "\"mempool_available_bytes\":%" PRIu64 ",", s.core.mempool_available);
+	strbuf_appendf(sb, "\"threads\":%u,", s.core.thread_count);
+	strbuf_appendf(sb, "\"threads_active\":%u,", s.core.thread_active);
+	strbuf_appendf(sb, "\"contexts\":%u,", s.core.context_count);
+	strbuf_appendf(sb, "\"contexts_sleeping\":%u,", s.core.context_sleeping);
+	strbuf_appendf(sb, "\"contexts_pending\":%u,", s.core.context_pending);
+	strbuf_appendf(sb, "\"md_handlers\":%u,", s.core.md_handler_count);
+	strbuf_appendf(sb, "\"md_handlers_pending\":%u,", s.core.md_handler_pending);
+	strbuf_appendf(sb, "\"timers\":%u,", s.core.timer_count);
+	strbuf_appendf(sb, "\"timers_pending\":%u", s.core.timer_pending);
+	strbuf_appendf(sb, "},");
+
+	strbuf_appendf(sb,
+		"\"sessions\":{\"starting\":%u,\"active\":%u,\"finishing\":%u},",
+		s.sessions.starting, s.sessions.active, s.sessions.finishing);
+
+	strbuf_appendf(sb, "\"protocols\":{");
+	if (triton_module_loaded("pppoe"))
+		emit_json_proto(sb, "pppoe", &first, pppoe_stat_starting(), pppoe_stat_active());
+	if (triton_module_loaded("l2tp"))
+		emit_json_proto(sb, "l2tp", &first, l2tp_stat_starting(), l2tp_stat_active());
+	if (triton_module_loaded("pptp"))
+		emit_json_proto(sb, "pptp", &first, pptp_stat_starting(), pptp_stat_active());
+	if (triton_module_loaded("sstp"))
+		emit_json_proto(sb, "sstp", &first, sstp_stat_starting(), sstp_stat_active());
+	if (triton_module_loaded("ipoe"))
+		emit_json_proto(sb, "ipoe", &first, ipoe_stat_starting(), ipoe_stat_active());
+	strbuf_appendf(sb, "}");
+
+	strbuf_appendf(sb, "}\n");
+}
+
 static int write_all(int fd, const char *buf, int len)
 {
 	int n, total = 0;
@@ -605,8 +703,7 @@ static void serve_metrics(struct metrics_client_t *cln)
 		render_prometheus(&sb);
 		break;
 	case METRICS_FORMAT_JSON:
-	default:
-		strbuf_appendf(&sb, "{}\n");
+		render_json(&sb);
 		break;
 	}
 
