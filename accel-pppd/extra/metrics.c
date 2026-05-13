@@ -55,6 +55,9 @@ struct metrics_client_t {
 	struct sockaddr_in addr;
 	char *recv_buf;
 	int recv_pos;
+	char *xmit_buf;
+	int xmit_pos;
+	int xmit_len;
 	unsigned int disconnect:1;
 };
 
@@ -669,18 +672,29 @@ static void render_json(struct strbuf *sb)
 	strbuf_appendf(sb, "}\n");
 }
 
-static int write_all(int fd, const char *buf, int len)
+/* Try to drain cln->xmit_buf to the socket. Returns 0 if the entire
+ * response was flushed, 1 if a partial write occurred and MD_MODE_WRITE
+ * was enabled to finish later, -1 if the connection is broken (caller
+ * should disconnect).
+ */
+static int xmit_flush(struct metrics_client_t *cln)
 {
-	int n, total = 0;
+	int n;
 
-	while (total < len) {
-		n = write(fd, buf + total, len - total);
+	while (cln->xmit_pos < cln->xmit_len) {
+		n = write(cln->hnd.fd,
+			  cln->xmit_buf + cln->xmit_pos,
+			  cln->xmit_len - cln->xmit_pos);
 		if (n < 0) {
 			if (errno == EINTR)
 				continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+				triton_md_enable_handler(&cln->hnd, MD_MODE_WRITE);
+				return 1;
+			}
 			return -1;
 		}
-		total += n;
+		cln->xmit_pos += n;
 	}
 	return 0;
 }
@@ -689,7 +703,11 @@ static void send_response(struct metrics_client_t *cln, int status, const char *
 			  const char *ctype, const char *body, int body_len)
 {
 	char header[256];
-	int hlen;
+	int hlen, total;
+	int rc;
+
+	if (cln->xmit_buf)
+		return;	/* response already in flight */
 
 	hlen = snprintf(header, sizeof(header),
 			"HTTP/1.1 %d %s\r\n"
@@ -699,13 +717,28 @@ static void send_response(struct metrics_client_t *cln, int status, const char *
 			"Connection: close\r\n"
 			"\r\n",
 			status, reason, ctype, body_len);
-	if (hlen <= 0 || hlen >= (int)sizeof(header))
+	if (hlen <= 0 || hlen >= (int)sizeof(header)) {
+		cln->disconnect = 1;
 		return;
+	}
 
-	if (write_all(cln->hnd.fd, header, hlen) < 0)
+	total = hlen + (body_len > 0 ? body_len : 0);
+	cln->xmit_buf = _malloc(total);
+	if (!cln->xmit_buf) {
+		cln->disconnect = 1;
 		return;
+	}
+	memcpy(cln->xmit_buf, header, hlen);
 	if (body_len > 0)
-		write_all(cln->hnd.fd, body, body_len);
+		memcpy(cln->xmit_buf + hlen, body, body_len);
+	cln->xmit_pos = 0;
+	cln->xmit_len = total;
+
+	rc = xmit_flush(cln);
+	if (rc < 0)
+		cln->disconnect = 1;
+	else if (rc == 0)
+		cln->disconnect = 1;	/* fully flushed, ready to close */
 }
 
 static void send_simple(struct metrics_client_t *cln, int status, const char *reason)
@@ -751,6 +784,8 @@ static void disconnect_client(struct metrics_client_t *cln)
 	triton_md_unregister_handler(&cln->hnd, 1);
 	if (cln->recv_buf)
 		_free(cln->recv_buf);
+	if (cln->xmit_buf)
+		_free(cln->xmit_buf);
 	_free(cln);
 }
 
@@ -802,7 +837,6 @@ static int cln_read(struct triton_md_handler_t *h)
 	while (1) {
 		if (cln->recv_pos >= METRICS_RECV_BUF_SIZE - 1) {
 			send_simple(cln, 413, "Request Entity Too Large");
-			cln->disconnect = 1;
 			break;
 		}
 
@@ -824,7 +858,6 @@ static int cln_read(struct triton_md_handler_t *h)
 
 		if (strstr(cln->recv_buf, "\r\n\r\n")) {
 			handle_request(cln);
-			cln->disconnect = 1;
 			break;
 		}
 	}
@@ -833,7 +866,26 @@ static int cln_read(struct triton_md_handler_t *h)
 		disconnect_client(cln);
 		return -1;
 	}
+	if (cln->xmit_buf)
+		triton_md_disable_handler(&cln->hnd, MD_MODE_READ);
 	return 0;
+}
+
+static int cln_write(struct triton_md_handler_t *h)
+{
+	struct metrics_client_t *cln = container_of(h, typeof(*cln), hnd);
+	int rc;
+
+	rc = xmit_flush(cln);
+	if (rc == 1)
+		return 0;	/* still partial — keep MD_MODE_WRITE enabled */
+	if (rc < 0) {
+		disconnect_client(cln);
+		return -1;
+	}
+	triton_md_disable_handler(&cln->hnd, MD_MODE_WRITE);
+	disconnect_client(cln);
+	return -1;
 }
 
 static void accept_resume(struct triton_timer_t *t)
@@ -916,6 +968,7 @@ static int serv_read(struct triton_md_handler_t *h)
 		cln->addr = addr;
 		cln->hnd.fd = sock;
 		cln->hnd.read = cln_read;
+		cln->hnd.write = cln_write;
 		cln->recv_buf = _malloc(METRICS_RECV_BUF_SIZE);
 		if (!cln->recv_buf) {
 			close(sock);
