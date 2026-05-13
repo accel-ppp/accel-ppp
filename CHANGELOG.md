@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Features
+- New `metrics` module: HTTP endpoint exposing the same numbers as `accel-cmd show stat` at `/metrics`, in either Prometheus exposition or JSON format. Configurable listen address and optional IPv4 CIDR allow-list.
+
 ## 1.14.0 - 2026-01-24
 
 ### Breaking / Compatibility
