@@ -1,9 +1,12 @@
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <inttypes.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <time.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -14,8 +17,27 @@
 #include "log.h"
 #include "list.h"
 #include "utils.h"
+#include "ap_session.h"
+#include "version.h"
 
 #include "memdebug.h"
+
+/* Per-protocol session counters live in their respective shared modules.
+ * They are referenced via RTLD_LAZY + RTLD_GLOBAL, so the symbols only need
+ * to be resolvable at call time. Each use site below first checks
+ * triton_module_loaded("<name>") so we never invoke them when the protocol
+ * module isn't loaded.
+ */
+unsigned int pppoe_stat_starting(void);
+unsigned int pppoe_stat_active(void);
+unsigned int l2tp_stat_starting(void);
+unsigned int l2tp_stat_active(void);
+unsigned int pptp_stat_starting(void);
+unsigned int pptp_stat_active(void);
+unsigned int sstp_stat_starting(void);
+unsigned int sstp_stat_active(void);
+unsigned int ipoe_stat_starting(void);
+unsigned int ipoe_stat_active(void);
 
 enum metrics_format {
 	METRICS_FORMAT_PROMETHEUS,
@@ -296,6 +318,236 @@ static const char *content_type(void)
 	}
 }
 
+struct strbuf {
+	char *data;
+	size_t len;
+	size_t cap;
+	int oom;
+};
+
+static int strbuf_reserve(struct strbuf *sb, size_t want)
+{
+	size_t need = sb->len + want + 1;
+	size_t ncap;
+	char *p;
+
+	if (sb->oom)
+		return -1;
+	if (need <= sb->cap)
+		return 0;
+
+	ncap = sb->cap ? sb->cap : 1024;
+	while (ncap < need)
+		ncap *= 2;
+
+	p = _realloc(sb->data, ncap);
+	if (!p) {
+		sb->oom = 1;
+		return -1;
+	}
+	sb->data = p;
+	sb->cap = ncap;
+	return 0;
+}
+
+static void strbuf_appendf(struct strbuf *sb, const char *fmt, ...)
+	__attribute__((format(gnu_printf, 2, 3)));
+
+static void strbuf_appendf(struct strbuf *sb, const char *fmt, ...)
+{
+	va_list ap;
+	int n;
+	char *dst;
+	size_t avail;
+
+	if (sb->oom)
+		return;
+
+	for (;;) {
+		/* On the very first append sb->data is still NULL and
+		 * sb->cap is zero. Computing sb->data + sb->len in that
+		 * state would be NULL pointer arithmetic (UB per the C
+		 * standard); pass NULL directly to vsnprintf instead,
+		 * which is well-defined when the size is zero.
+		 */
+		avail = sb->cap - sb->len;
+		dst = sb->data ? sb->data + sb->len : NULL;
+
+		va_start(ap, fmt);
+		n = vsnprintf(dst, avail, fmt, ap);
+		va_end(ap);
+
+		if (n < 0) {
+			sb->oom = 1;
+			return;
+		}
+		if ((size_t)n < avail) {
+			sb->len += n;
+			return;
+		}
+		if (strbuf_reserve(sb, n + 1) < 0)
+			return;
+	}
+}
+
+static void strbuf_free(struct strbuf *sb)
+{
+	if (sb->data)
+		_free(sb->data);
+	sb->data = NULL;
+	sb->len = sb->cap = 0;
+}
+
+struct accel_stats {
+	time_t uptime;
+	unsigned int cpu;
+	unsigned long rss_bytes;
+	unsigned long virt_bytes;
+	struct triton_stat_t core;
+	struct ap_session_stat sessions;
+};
+
+static void read_proc_mem(unsigned long *rss, unsigned long *virt)
+{
+	char path[64];
+	unsigned long vmsize = 0, vmrss = 0;
+	long page_size = sysconf(_SC_PAGESIZE);
+	FILE *f;
+
+	snprintf(path, sizeof(path), "/proc/%i/statm", getpid());
+	f = fopen(path, "r");
+	if (f) {
+		if (fscanf(f, "%lu %lu", &vmsize, &vmrss) != 2) {
+			vmsize = 0;
+			vmrss = 0;
+		}
+		fclose(f);
+	}
+
+	*rss = (unsigned long)vmrss * (page_size > 0 ? page_size : 4096);
+	*virt = (unsigned long)vmsize * (page_size > 0 ? page_size : 4096);
+}
+
+static void gather_stats(struct accel_stats *s)
+{
+	struct timespec ts;
+
+	memset(s, 0, sizeof(*s));
+	triton_stat_get(&s->core);
+	ap_session_stat_get(&s->sessions);
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	s->uptime = ts.tv_sec - s->core.start_time;
+	s->cpu = s->core.cpu;
+
+	read_proc_mem(&s->rss_bytes, &s->virt_bytes);
+}
+
+static void emit_prom_gauge(struct strbuf *sb, const char *name,
+			    const char *help, unsigned long long value)
+{
+	strbuf_appendf(sb, "# HELP %s %s\n", name, help);
+	strbuf_appendf(sb, "# TYPE %s gauge\n", name);
+	strbuf_appendf(sb, "%s %llu\n", name, value);
+}
+
+static void render_prometheus(struct strbuf *sb)
+{
+	struct accel_stats s;
+
+	gather_stats(&s);
+
+	strbuf_appendf(sb, "# HELP accel_ppp_build_info accel-ppp build information\n");
+	strbuf_appendf(sb, "# TYPE accel_ppp_build_info gauge\n");
+	strbuf_appendf(sb, "accel_ppp_build_info{version=\"%s\"} 1\n", ACCEL_PPP_VERSION);
+
+	emit_prom_gauge(sb, "accel_ppp_uptime_seconds",
+			"Daemon uptime in seconds",
+			(unsigned long long)s.uptime);
+	emit_prom_gauge(sb, "accel_ppp_cpu_percent",
+			"Daemon CPU usage in percent",
+			(unsigned long long)s.cpu);
+	emit_prom_gauge(sb, "accel_ppp_memory_rss_bytes",
+			"Resident set size of the daemon in bytes",
+			(unsigned long long)s.rss_bytes);
+	emit_prom_gauge(sb, "accel_ppp_memory_virt_bytes",
+			"Virtual memory size of the daemon in bytes",
+			(unsigned long long)s.virt_bytes);
+
+	emit_prom_gauge(sb, "accel_ppp_core_mempool_allocated_bytes",
+			"Bytes currently allocated from triton mempools",
+			(unsigned long long)s.core.mempool_allocated);
+	emit_prom_gauge(sb, "accel_ppp_core_mempool_available_bytes",
+			"Bytes currently free in triton mempools",
+			(unsigned long long)s.core.mempool_available);
+	emit_prom_gauge(sb, "accel_ppp_core_threads",
+			"Total number of triton worker threads",
+			s.core.thread_count);
+	emit_prom_gauge(sb, "accel_ppp_core_threads_active",
+			"Number of triton worker threads currently active",
+			s.core.thread_active);
+	emit_prom_gauge(sb, "accel_ppp_core_contexts",
+			"Total number of triton contexts",
+			s.core.context_count);
+	emit_prom_gauge(sb, "accel_ppp_core_contexts_sleeping",
+			"Number of triton contexts currently sleeping",
+			s.core.context_sleeping);
+	emit_prom_gauge(sb, "accel_ppp_core_contexts_pending",
+			"Number of triton contexts waiting to run",
+			s.core.context_pending);
+	emit_prom_gauge(sb, "accel_ppp_core_md_handlers",
+			"Total number of triton md handlers",
+			s.core.md_handler_count);
+	emit_prom_gauge(sb, "accel_ppp_core_md_handlers_pending",
+			"Number of triton md handlers with pending events",
+			s.core.md_handler_pending);
+	emit_prom_gauge(sb, "accel_ppp_core_timers",
+			"Total number of triton timers",
+			s.core.timer_count);
+	emit_prom_gauge(sb, "accel_ppp_core_timers_pending",
+			"Number of triton timers pending fire",
+			s.core.timer_pending);
+
+	strbuf_appendf(sb, "# HELP accel_ppp_sessions Number of sessions in each state\n");
+	strbuf_appendf(sb, "# TYPE accel_ppp_sessions gauge\n");
+	strbuf_appendf(sb, "accel_ppp_sessions{state=\"starting\"} %u\n", s.sessions.starting);
+	strbuf_appendf(sb, "accel_ppp_sessions{state=\"active\"} %u\n", s.sessions.active);
+	strbuf_appendf(sb, "accel_ppp_sessions{state=\"finishing\"} %u\n", s.sessions.finishing);
+
+	strbuf_appendf(sb, "# HELP accel_ppp_protocol_sessions Sessions per protocol and state\n");
+	strbuf_appendf(sb, "# TYPE accel_ppp_protocol_sessions gauge\n");
+	if (triton_module_loaded("pppoe")) {
+		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"pppoe\",state=\"starting\"} %u\n",
+			       pppoe_stat_starting());
+		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"pppoe\",state=\"active\"} %u\n",
+			       pppoe_stat_active());
+	}
+	if (triton_module_loaded("l2tp")) {
+		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"l2tp\",state=\"starting\"} %u\n",
+			       l2tp_stat_starting());
+		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"l2tp\",state=\"active\"} %u\n",
+			       l2tp_stat_active());
+	}
+	if (triton_module_loaded("pptp")) {
+		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"pptp\",state=\"starting\"} %u\n",
+			       pptp_stat_starting());
+		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"pptp\",state=\"active\"} %u\n",
+			       pptp_stat_active());
+	}
+	if (triton_module_loaded("sstp")) {
+		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"sstp\",state=\"starting\"} %u\n",
+			       sstp_stat_starting());
+		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"sstp\",state=\"active\"} %u\n",
+			       sstp_stat_active());
+	}
+	if (triton_module_loaded("ipoe")) {
+		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"ipoe\",state=\"starting\"} %u\n",
+			       ipoe_stat_starting());
+		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"ipoe\",state=\"active\"} %u\n",
+			       ipoe_stat_active());
+	}
+}
+
 static int write_all(int fd, const char *buf, int len)
 {
 	int n, total = 0;
@@ -346,8 +598,26 @@ static void send_simple(struct metrics_client_t *cln, int status, const char *re
 
 static void serve_metrics(struct metrics_client_t *cln)
 {
-	const char *body = "";
-	send_response(cln, 200, "OK", content_type(), body, 0);
+	struct strbuf sb = {0};
+
+	switch (conf_format) {
+	case METRICS_FORMAT_PROMETHEUS:
+		render_prometheus(&sb);
+		break;
+	case METRICS_FORMAT_JSON:
+	default:
+		strbuf_appendf(&sb, "{}\n");
+		break;
+	}
+
+	if (sb.oom || !sb.data) {
+		send_simple(cln, 500, "Internal Server Error");
+		goto out;
+	}
+
+	send_response(cln, 200, "OK", content_type(), sb.data, (int)sb.len);
+out:
+	strbuf_free(&sb);
 }
 
 static void disconnect_client(struct metrics_client_t *cln)
