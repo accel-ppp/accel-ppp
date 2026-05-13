@@ -70,13 +70,16 @@ static LIST_HEAD(conf_allowed);
 static int conf_read_timeout = METRICS_DEFAULT_READ_TIMEOUT;
 static int conf_max_clients = METRICS_DEFAULT_MAX_CLIENTS;
 
+#define METRICS_ACCEPT_BACKOFF 1	/* seconds */
 #define METRICS_ACCEPT_BATCH 16	/* max accept()s per serv_read tick */
 
 static struct triton_context_t serv_ctx;
 static struct triton_md_handler_t serv_hnd;
+static struct triton_timer_t accept_resume_timer;
 static LIST_HEAD(clients);
 static unsigned int client_count;
 static int serv_running;
+static int accept_paused;
 
 static int parse_format(const char *opt, enum metrics_format *out)
 {
@@ -833,6 +836,24 @@ static int cln_read(struct triton_md_handler_t *h)
 	return 0;
 }
 
+static void accept_resume(struct triton_timer_t *t)
+{
+	triton_timer_del(t);
+	accept_paused = 0;
+	triton_md_enable_handler(&serv_hnd, MD_MODE_READ);
+}
+
+static void accept_pause(void)
+{
+	if (accept_paused)
+		return;
+	accept_paused = 1;
+	triton_md_disable_handler(&serv_hnd, MD_MODE_READ);
+	accept_resume_timer.expire = accept_resume;
+	accept_resume_timer.expire_tv.tv_sec = METRICS_ACCEPT_BACKOFF;
+	triton_timer_add(&serv_ctx, &accept_resume_timer, 0);
+}
+
 static int serv_read(struct triton_md_handler_t *h)
 {
 	struct sockaddr_in addr;
@@ -854,10 +875,20 @@ static int serv_read(struct triton_md_handler_t *h)
 	for (batch = 0; batch < METRICS_ACCEPT_BATCH; batch++) {
 		sock = accept(h->fd, (struct sockaddr *)&addr, &size);
 		if (sock < 0) {
-			if (errno == EAGAIN)
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
 				return 0;
-			log_error("metrics: accept failed: %s\n", strerror(errno));
-			continue;
+			if (errno == EINTR || errno == ECONNABORTED)
+				continue;
+			/* For persistent resource-exhaustion errors
+			 * (EMFILE, ENFILE, ENOBUFS, ENOMEM) the kernel will
+			 * keep the listening fd readable, so a bare
+			 * `continue` spins the worker. Disable the listener
+			 * briefly and retry via a one-shot timer.
+			 */
+			log_error("metrics: accept failed: %s; backing off %ds\n",
+				  strerror(errno), METRICS_ACCEPT_BACKOFF);
+			accept_pause();
+			return 0;
 		}
 
 		if (!ip_allowed(addr.sin_addr.s_addr)) {
@@ -910,6 +941,9 @@ static int serv_read(struct triton_md_handler_t *h)
 static void serv_close(struct triton_context_t *ctx)
 {
 	struct metrics_client_t *cln;
+
+	if (accept_resume_timer.tpd)
+		triton_timer_del(&accept_resume_timer);
 
 	while (!list_empty(&clients)) {
 		cln = list_entry(clients.next, typeof(*cln), entry);
