@@ -130,6 +130,17 @@ struct ipoe_session_info {
 	uint32_t peer_addr;
 };
 
+struct ipoe_stat_t
+{
+	unsigned int starting;
+	unsigned int active;
+	unsigned int delayed_offer;
+};
+
+void ipoe_stat_get(struct ipoe_stat_t *stat);
+unsigned int ipoe_stat_starting(void);
+unsigned int ipoe_stat_active(void);
+
 int ipoe_ipv6_nd_start(struct ipoe_serv *serv);
 
 #ifdef USE_LUA

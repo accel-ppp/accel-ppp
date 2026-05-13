@@ -41,6 +41,7 @@
 #include "memdebug.h"
 
 #include "proxy_prot.h"
+#include "sstp.h"
 #include "sstp_prot.h"
 
 #ifndef min
@@ -148,14 +149,17 @@ struct sstp_conn_t {
 	struct ap_ctrl ctrl;
 };
 
-static struct sstp_serv_t {
+struct sstp_serv_t {
 	struct triton_context_t ctx;
 	struct triton_md_handler_t hnd;
 
 	struct sockaddr_t addr;
 
 	SSL_CTX *ssl_ctx;
-} serv;
+	struct sstp_stat_t stat;
+};
+
+static struct sstp_serv_t serv;
 
 static int conf_timeout = SSTP_NEGOTIOATION_TIMEOUT;
 static int conf_hello_interval = SSTP_HELLO_TIMEOUT;
@@ -186,9 +190,6 @@ static const char *conf_http_url = NULL;
 
 static mempool_t conn_pool;
 
-static unsigned int stat_starting;
-static unsigned int stat_active;
-
 static inline void sstp_queue(struct sstp_conn_t *conn, struct buffer_t *buf);
 static int sstp_send(struct sstp_conn_t *conn, struct buffer_t *buf);
 static inline void sstp_queue_deferred(struct sstp_conn_t *conn, struct buffer_t *buf);
@@ -198,6 +199,38 @@ static int sstp_abort(struct sstp_conn_t *conn, int disconnect);
 static void sstp_disconnect(struct sstp_conn_t *conn);
 static int sstp_handler(struct sstp_conn_t *conn, struct buffer_t *buf);
 static int http_handler(struct sstp_conn_t *conn, struct buffer_t *buf);
+
+void __export sstp_stat_get(struct sstp_stat_t *stat)
+{
+	stat->starting = __atomic_load_n(&serv.stat.starting, __ATOMIC_RELAXED);
+	stat->active = __atomic_load_n(&serv.stat.active, __ATOMIC_RELAXED);
+}
+
+unsigned int __export sstp_stat_starting(void)
+{
+	return __atomic_load_n(&serv.stat.starting, __ATOMIC_RELAXED);
+}
+
+unsigned int __export sstp_stat_active(void)
+{
+	return __atomic_load_n(&serv.stat.active, __ATOMIC_RELAXED);
+}
+
+static void sstp_stat_inc(unsigned int *stat)
+{
+	__atomic_add_fetch(stat, 1, __ATOMIC_RELAXED);
+}
+
+static void sstp_stat_dec(unsigned int *stat)
+{
+	__atomic_sub_fetch(stat, 1, __ATOMIC_RELAXED);
+}
+
+static void sstp_stat_move(unsigned int *from, unsigned int *to)
+{
+	sstp_stat_dec(from);
+	sstp_stat_inc(to);
+}
 
 /*
  * FCS lookup table as calculated by genfcstab.
@@ -1507,8 +1540,7 @@ static int sstp_recv_msg_call_connect_request(struct sstp_conn_t *conn, struct s
 		goto error;
 
 	conn->sstp_state = STATE_SERVER_CALL_CONNECTED_PENDING;
-	__sync_sub_and_fetch(&stat_starting, 1);
-	__sync_add_and_fetch(&stat_active, 1);
+	sstp_stat_move(&serv.stat.starting, &serv.stat.active);
 	triton_event_fire(EV_CTRL_STARTED, &conn->ppp.ses);
 
 	conn->ppp_state = STATE_STARTING;
@@ -2209,17 +2241,17 @@ static void sstp_disconnect(struct sstp_conn_t *conn)
 
 	switch (conn->ppp_state) {
 	case STATE_INIT:
-		__sync_sub_and_fetch(&stat_starting, 1);
+		sstp_stat_dec(&serv.stat.starting);
 		break;
 	case STATE_STARTING:
 	case STATE_AUTHORIZED:
 	case STATE_STARTED:
 		conn->ppp_state = STATE_FINISHED;
-		__sync_sub_and_fetch(&stat_active, 1);
+		sstp_stat_dec(&serv.stat.active);
 		ap_session_terminate(&conn->ppp.ses, TERM_LOST_CARRIER, 1);
 		break;
 	case STATE_FINISHED:
-		__sync_sub_and_fetch(&stat_active, 1);
+		sstp_stat_dec(&serv.stat.active);
 		break;
 	}
 	triton_event_fire(EV_CTRL_FINISHED, &conn->ppp.ses);
@@ -2298,12 +2330,12 @@ static int sstp_connect(struct triton_md_handler_t *h)
 			continue;
 		}
 
-		if (conf_max_starting && ap_session_stat.starting >= conf_max_starting) {
+		if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting) {
 			close(sock);
 			continue;
 		}
 
-		if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions) {
+		if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions) {
 			close(sock);
 			continue;
 		}
@@ -2424,7 +2456,7 @@ static int sstp_connect(struct triton_md_handler_t *h)
 
 		triton_event_fire(EV_CTRL_STARTING, &conn->ppp.ses);
 
-		__sync_add_and_fetch(&stat_starting, 1);
+		sstp_stat_inc(&serv.stat.starting);
 	}
 
 	return 0;
@@ -2766,17 +2798,15 @@ static void ev_ses_authorized(struct ap_session *ses)
 
 static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
 {
+	struct sstp_stat_t stat;
+
+	sstp_stat_get(&stat);
+
 	cli_send(client, "sstp:\r\n");
-	cli_sendv(client,"  starting: %u\r\n", stat_starting);
-	cli_sendv(client,"  active: %u\r\n", stat_active);
+	cli_sendv(client,"  starting: %u\r\n", stat.starting);
+	cli_sendv(client,"  active: %u\r\n", stat.active);
 
 	return CLI_CMD_OK;
-}
-
-void __export sstp_get_stat(unsigned int **starting, unsigned int **active)
-{
-	*starting = &stat_starting;
-	*active = &stat_active;
 }
 
 static void load_config(void)

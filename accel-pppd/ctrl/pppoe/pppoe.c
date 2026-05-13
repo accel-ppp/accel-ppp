@@ -43,6 +43,7 @@ struct pppoe_conn_t {
 	struct pppoe_serv_t *serv;
 	uint16_t sid;
 	uint8_t addr[ETH_ALEN];
+	unsigned int ppp_starting:1;
 	unsigned int ppp_started:1;
 
 	struct pppoe_tag *relay_sid;
@@ -109,17 +110,8 @@ static mempool_t conn_pool;
 static mempool_t pado_pool;
 static mempool_t padi_pool;
 
-unsigned int stat_starting;
-unsigned int stat_active;
-unsigned int stat_delayed_pado;
-unsigned long stat_PADI_recv;
-unsigned long stat_PADI_drop;
-unsigned long stat_PADO_sent;
-unsigned long stat_PADR_recv;
-unsigned long stat_PADR_dup_recv;
-unsigned long stat_PADS_sent;
+static struct pppoe_stat_t pppoe_stat;
 unsigned int total_padi_cnt;
-unsigned long stat_filtered;
 
 pthread_rwlock_t serv_lock = PTHREAD_RWLOCK_INITIALIZER;
 LIST_HEAD(serv_list);
@@ -130,6 +122,35 @@ static pthread_mutex_t sid_lock = PTHREAD_MUTEX_INITIALIZER;
 static unsigned long *sid_map;
 static unsigned long *sid_ptr;
 static int sid_idx;
+
+void __export pppoe_stat_get(struct pppoe_stat_t *stat)
+{
+	stat->starting = __atomic_load_n(&pppoe_stat.starting, __ATOMIC_RELAXED);
+	stat->active = __atomic_load_n(&pppoe_stat.active, __ATOMIC_RELAXED);
+	stat->delayed_PADO = __atomic_load_n(&pppoe_stat.delayed_PADO, __ATOMIC_RELAXED);
+	stat->PADI_recv = __atomic_load_n(&pppoe_stat.PADI_recv, __ATOMIC_RELAXED);
+	stat->PADI_drop = __atomic_load_n(&pppoe_stat.PADI_drop, __ATOMIC_RELAXED);
+	stat->PADO_sent = __atomic_load_n(&pppoe_stat.PADO_sent, __ATOMIC_RELAXED);
+	stat->PADR_recv = __atomic_load_n(&pppoe_stat.PADR_recv, __ATOMIC_RELAXED);
+	stat->PADR_dup_recv = __atomic_load_n(&pppoe_stat.PADR_dup_recv, __ATOMIC_RELAXED);
+	stat->PADS_sent = __atomic_load_n(&pppoe_stat.PADS_sent, __ATOMIC_RELAXED);
+	stat->filtered = __atomic_load_n(&pppoe_stat.filtered, __ATOMIC_RELAXED);
+}
+
+unsigned int __export pppoe_stat_starting(void)
+{
+	return __atomic_load_n(&pppoe_stat.starting, __ATOMIC_RELAXED);
+}
+
+unsigned int __export pppoe_stat_active(void)
+{
+	return __atomic_load_n(&pppoe_stat.active, __ATOMIC_RELAXED);
+}
+
+void __export pppoe_stat_add_filtered(void)
+{
+	__atomic_add_fetch(&pppoe_stat.filtered, 1, __ATOMIC_RELAXED);
+}
 
 static uint8_t bc_addr[ETH_ALEN] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
@@ -168,9 +189,12 @@ static void disconnect(struct pppoe_conn_t *conn)
 	struct pppoe_serv_t *serv = conn->serv;
 
 	if (conn->ppp_started) {
-		dpado_check_prev(__sync_fetch_and_sub(&stat_active, 1));
+		dpado_check_prev(__atomic_fetch_sub(&pppoe_stat.active, 1, __ATOMIC_RELAXED));
 		conn->ppp_started = 0;
 		ap_session_terminate(&conn->ppp.ses, TERM_USER_REQUEST, 1);
+	} else if (conn->ppp_starting) {
+		__atomic_sub_fetch(&pppoe_stat.starting, 1, __ATOMIC_RELAXED);
+		conn->ppp_starting = 0;
 	}
 
 	pppoe_send_PADT(conn);
@@ -227,7 +251,7 @@ static void ppp_finished(struct ap_session *ses)
 	log_ppp_debug("pppoe: ppp finished\n");
 
 	if (conn->ppp_started) {
-		dpado_check_prev(__sync_fetch_and_sub(&stat_active, 1));
+		dpado_check_prev(__atomic_fetch_sub(&pppoe_stat.active, 1, __ATOMIC_RELAXED));
 		conn->ppp_started = 0;
 		triton_context_call(&conn->ctx, (triton_event_func)disconnect, conn);
 	}
@@ -445,6 +469,9 @@ static void connect_channel(struct pppoe_conn_t *conn)
 	struct sockaddr_pppox sp;
 
 	triton_event_fire(EV_CTRL_STARTING, &conn->ppp.ses);
+	conn->ppp_starting = 1;
+	__atomic_add_fetch(&pppoe_stat.starting, 1, __ATOMIC_RELAXED);
+
 	triton_event_fire(EV_CTRL_STARTED, &conn->ppp.ses);
 
 	sock = net->socket(AF_PPPOX, SOCK_DGRAM, PX_PROTO_OE);
@@ -481,9 +508,11 @@ static void connect_channel(struct pppoe_conn_t *conn)
 	}
 #endif
 
+	conn->ppp_starting = 0;
 	conn->ppp_started = 1;
 
-	dpado_check_next(__sync_add_and_fetch(&stat_active, 1));
+	__atomic_sub_fetch(&pppoe_stat.starting, 1, __ATOMIC_RELAXED);
+	dpado_check_next(__atomic_add_fetch(&pppoe_stat.active, 1, __ATOMIC_RELAXED));
 
 	return;
 
@@ -817,7 +846,7 @@ static void pppoe_send_PADO(struct pppoe_serv_t *serv, const uint8_t *addr, cons
 	if (conf_verbose)
 		print_packet(serv->ifname, "send", pack);
 
-	__sync_add_and_fetch(&stat_PADO_sent, 1);
+	__atomic_add_fetch(&pppoe_stat.PADO_sent, 1, __ATOMIC_RELAXED);
 	pppoe_send(serv, pack);
 }
 
@@ -866,7 +895,7 @@ static void pppoe_send_PADS(struct pppoe_conn_t *conn)
 	if (conf_verbose)
 		print_packet(conn->serv->ifname, "send", pack);
 
-	__sync_add_and_fetch(&stat_PADS_sent, 1);
+	__atomic_add_fetch(&pppoe_stat.PADS_sent, 1, __ATOMIC_RELAXED);
 	pppoe_send(conn->serv, pack);
 }
 
@@ -893,7 +922,7 @@ static void free_delayed_pado(struct delayed_pado_t *pado)
 {
 	triton_timer_del(&pado->timer);
 
-	__sync_sub_and_fetch(&stat_delayed_pado, 1);
+	__atomic_sub_fetch(&pppoe_stat.delayed_PADO, 1, __ATOMIC_RELAXED);
 	list_del(&pado->entry);
 
 	if (pado->host_uniq)
@@ -979,19 +1008,19 @@ static void pppoe_recv_PADI(struct pppoe_serv_t *serv, uint8_t *pack, int size)
 	struct timespec ts;
 	uint16_t ppp_max_payload = 0;
 
-	__sync_add_and_fetch(&stat_PADI_recv, 1);
+	__atomic_add_fetch(&pppoe_stat.PADI_recv, 1, __ATOMIC_RELAXED);
 
 	if (ap_shutdown || pado_delay == -1)
 		return;
 
-	if (conf_max_starting && ap_session_stat.starting >= conf_max_starting)
+	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
 		return;
 
-	if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions)
+	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
 		return;
 
 	if (check_padi_limit(serv, ethhdr->h_source)) {
-		__sync_add_and_fetch(&stat_PADI_drop, 1);
+		__atomic_add_fetch(&pppoe_stat.PADI_drop, 1, __ATOMIC_RELAXED);
 		if (conf_verbose) {
 			clock_gettime(CLOCK_MONOTONIC, &ts);
 			if (ts.tv_sec - 60 >= serv->last_padi_limit_warn) {
@@ -1094,7 +1123,7 @@ tags_done:
 		triton_timer_add(&serv->ctx, &pado->timer, 0);
 
 		list_add_tail(&pado->entry, &serv->pado_list);
-		__sync_add_and_fetch(&stat_delayed_pado, 1);
+		__atomic_add_fetch(&pppoe_stat.delayed_PADO, 1, __ATOMIC_RELAXED);
 	} else
 		pppoe_send_PADO(serv, ethhdr->h_source, host_uniq_tag, relay_sid_tag, service_name_tag, ppp_max_payload);
 }
@@ -1114,15 +1143,15 @@ static void pppoe_recv_PADR(struct pppoe_serv_t *serv, uint8_t *pack, int size)
 	int vendor_id;
 	uint16_t ppp_max_payload = 0;
 
-	__sync_add_and_fetch(&stat_PADR_recv, 1);
+	__atomic_add_fetch(&pppoe_stat.PADR_recv, 1, __ATOMIC_RELAXED);
 
 	if (ap_shutdown)
 		return;
 
-	if (conf_max_starting && ap_session_stat.starting >= conf_max_starting)
+	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
 		return;
 
-	if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions)
+	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
 		return;
 
 	if (!memcmp(ethhdr->h_dest, bc_addr, ETH_ALEN)) {
@@ -1227,7 +1256,7 @@ padr_tags_done:
 	pthread_mutex_lock(&serv->lock);
 	conn = find_channel(serv, (uint8_t *)ac_cookie_tag->tag_data);
 	if (conn && !conn->ppp.ses.username) {
-		__sync_add_and_fetch(&stat_PADR_dup_recv, 1);
+		__atomic_add_fetch(&pppoe_stat.PADR_dup_recv, 1, __ATOMIC_RELAXED);
 		pppoe_send_PADS(conn);
 	}
 	pthread_mutex_unlock(&serv->lock);
@@ -1641,12 +1670,6 @@ void pppoe_server_stop(const char *ifname)
 		break;
 	}
 	pthread_rwlock_unlock(&serv_lock);
-}
-
-void __export pppoe_get_stat(unsigned int **starting, unsigned int **active)
-{
-	*starting = &stat_starting;
-	*active = &stat_active;
 }
 
 static int init_secret(struct pppoe_serv_t *serv)
