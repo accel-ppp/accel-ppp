@@ -13,6 +13,7 @@
 #include "events.h"
 #include "log.h"
 #include "list.h"
+#include "utils.h"
 
 #include "memdebug.h"
 
@@ -32,8 +33,15 @@ struct metrics_client_t {
 	unsigned int disconnect:1;
 };
 
+struct metrics_acl_t {
+	struct list_head entry;
+	uint32_t net;	/* host byte order */
+	uint32_t mask;	/* host byte order */
+};
+
 static enum metrics_format conf_format = METRICS_FORMAT_PROMETHEUS;
 static char *conf_address;
+static LIST_HEAD(conf_allowed);
 
 static struct triton_context_t serv_ctx;
 static struct triton_md_handler_t serv_hnd;
@@ -90,12 +98,154 @@ out:
 	return ret;
 }
 
+static void free_acl(struct list_head *head)
+{
+	struct metrics_acl_t *acl;
+
+	while (!list_empty(head)) {
+		acl = list_first_entry(head, typeof(*acl), entry);
+		list_del(&acl->entry);
+		_free(acl);
+	}
+}
+
+/* Strip surrounding whitespace, optional matching single/double quotes,
+ * and any trailing comma. Returns NULL if the token becomes empty.
+ */
+static char *clean_token(char *s)
+{
+	char *end;
+	size_t len;
+
+	while (*s == ' ' || *s == '\t')
+		s++;
+
+	len = strlen(s);
+	while (len && (s[len - 1] == ' ' || s[len - 1] == '\t' ||
+		       s[len - 1] == ',' || s[len - 1] == '\r' ||
+		       s[len - 1] == '\n'))
+		s[--len] = 0;
+
+	if (len >= 2 && ((s[0] == '"' && s[len - 1] == '"') ||
+			 (s[0] == '\'' && s[len - 1] == '\''))) {
+		s[len - 1] = 0;
+		s++;
+		len -= 2;
+	}
+
+	while (*s == ' ' || *s == '\t')
+		s++;
+	end = s + strlen(s);
+	while (end > s && (end[-1] == ' ' || end[-1] == '\t'))
+		*--end = 0;
+
+	return *s ? s : NULL;
+}
+
+/* TODO: IPv6 support. Only IPv4 CIDR or a bare IPv4 address are accepted;
+ * IPv6 entries in allowed_ips are rejected at parse time. ip_allowed() and
+ * struct metrics_acl_t store the network in a 32-bit host-order word, so
+ * adding IPv6 here will also need the matching widening downstream.
+ */
+static int parse_acl_entry(const char *str, struct metrics_acl_t **out)
+{
+	struct metrics_acl_t *acl;
+	struct in_addr addr;
+	uint8_t prefix;
+	uint32_t mask;
+
+	if (!u_parse_ip4cidr(str, &addr, &prefix)) {
+		/* Accept a bare IP as /32 */
+		if (inet_pton(AF_INET, str, &addr) != 1)
+			return -1;
+		prefix = 32;
+	}
+
+	acl = _malloc(sizeof(*acl));
+	if (!acl)
+		return -1;
+
+	mask = prefix ? (uint32_t)0xffffffffu << (32 - prefix) : 0;
+	acl->net = ntohl(addr.s_addr) & mask;
+	acl->mask = mask;
+	*out = acl;
+	return 0;
+}
+
+/* Parse `allowed_ips` value. Accepts:
+ *   "1.2.3.4/32, 5.6.7.0/24"
+ *   ["1.2.3.4/32", "5.6.7.0/24"]
+ * On success the supplied list is populated and 0 is returned. Returns -1 on
+ * any parse error; in that case the partial list is freed.
+ */
+static int parse_allowed_ips(const char *value, struct list_head *list)
+{
+	char *buf, *p, *tok;
+	int ret = -1;
+
+	if (!value || !*value)
+		return 0;
+
+	buf = strdup(value);
+	if (!buf)
+		return -1;
+
+	p = buf;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (*p == '[')
+		p++;
+	{
+		size_t len = strlen(p);
+		while (len && (p[len - 1] == ' ' || p[len - 1] == '\t' ||
+			       p[len - 1] == ']' || p[len - 1] == '\r' ||
+			       p[len - 1] == '\n'))
+			p[--len] = 0;
+	}
+
+	while ((tok = strsep(&p, ",")) != NULL) {
+		struct metrics_acl_t *acl;
+		char *clean = clean_token(tok);
+
+		if (!clean)
+			continue;
+		if (parse_acl_entry(clean, &acl) < 0) {
+			log_error("metrics: invalid entry in allowed_ips: '%s'\n", clean);
+			free_acl(list);
+			goto out;
+		}
+		list_add_tail(&acl->entry, list);
+	}
+
+	ret = 0;
+out:
+	free(buf);
+	return ret;
+}
+
+static int ip_allowed(uint32_t addr_nbo)
+{
+	struct metrics_acl_t *acl;
+	uint32_t addr;
+
+	if (list_empty(&conf_allowed))
+		return 1;
+
+	addr = ntohl(addr_nbo);
+	list_for_each_entry(acl, &conf_allowed, entry) {
+		if ((addr & acl->mask) == acl->net)
+			return 1;
+	}
+	return 0;
+}
+
 static int load_config(void)
 {
 	const char *opt;
 	enum metrics_format fmt = METRICS_FORMAT_PROMETHEUS;
 	char *address = NULL;
 	struct sockaddr_in dummy;
+	LIST_HEAD(new_allowed);
 
 	opt = conf_get_opt("metrics", "format");
 	if (opt && parse_format(opt, &fmt) < 0) {
@@ -118,10 +268,19 @@ static int load_config(void)
 		return -1;
 	}
 
+	opt = conf_get_opt("metrics", "allowed_ips");
+	if (opt && parse_allowed_ips(opt, &new_allowed) < 0) {
+		_free(address);
+		return -1;
+	}
+
 	conf_format = fmt;
 	if (conf_address)
 		_free(conf_address);
 	conf_address = address;
+
+	free_acl(&conf_allowed);
+	list_replace_init(&new_allowed, &conf_allowed);
 
 	return 0;
 }
@@ -288,6 +447,11 @@ static int serv_read(struct triton_md_handler_t *h)
 			if (errno == EAGAIN)
 				return 0;
 			log_error("metrics: accept failed: %s\n", strerror(errno));
+			continue;
+		}
+
+		if (!ip_allowed(addr.sin_addr.s_addr)) {
+			close(sock);
 			continue;
 		}
 
