@@ -11,6 +11,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <dlfcn.h>
 
 #include "triton.h"
 #include "events.h"
@@ -23,21 +24,40 @@
 #include "memdebug.h"
 
 /* Per-protocol session counters live in their respective shared modules.
- * They are referenced via RTLD_LAZY + RTLD_GLOBAL, so the symbols only need
- * to be resolvable at call time. Each use site below first checks
- * triton_module_loaded("<name>") so we never invoke them when the protocol
- * module isn't loaded.
+ * Resolve them with dlsym(RTLD_DEFAULT, ...) lazily rather than via direct
+ * (weak) references: when metrics is dlopen()ed before the protocol module
+ * the loader binds undefined refs to NULL and never updates them when a
+ * later RTLD_GLOBAL dlopen brings the symbols in. dlsym walks the live
+ * global scope at call time, so it picks them up regardless of order.
  */
-unsigned int pppoe_stat_starting(void);
-unsigned int pppoe_stat_active(void);
-unsigned int l2tp_stat_starting(void);
-unsigned int l2tp_stat_active(void);
-unsigned int pptp_stat_starting(void);
-unsigned int pptp_stat_active(void);
-unsigned int sstp_stat_starting(void);
-unsigned int sstp_stat_active(void);
-unsigned int ipoe_stat_starting(void);
-unsigned int ipoe_stat_active(void);
+typedef unsigned int (*proto_stat_fn)(void);
+
+struct proto_stat {
+	const char *module;
+	const char *starting_sym;
+	const char *active_sym;
+	proto_stat_fn starting;
+	proto_stat_fn active;
+};
+
+static struct proto_stat proto_stats[] = {
+	{ "pppoe", "pppoe_stat_starting", "pppoe_stat_active" },
+	{ "l2tp",  "l2tp_stat_starting",  "l2tp_stat_active"  },
+	{ "pptp",  "pptp_stat_starting",  "pptp_stat_active"  },
+	{ "sstp",  "sstp_stat_starting",  "sstp_stat_active"  },
+	{ "ipoe",  "ipoe_stat_starting",  "ipoe_stat_active"  },
+};
+
+static int proto_resolve(struct proto_stat *p)
+{
+	if (!triton_module_loaded(p->module))
+		return 0;
+	if (!p->starting)
+		p->starting = (proto_stat_fn)(uintptr_t)dlsym(RTLD_DEFAULT, p->starting_sym);
+	if (!p->active)
+		p->active = (proto_stat_fn)(uintptr_t)dlsym(RTLD_DEFAULT, p->active_sym);
+	return p->starting && p->active;
+}
 
 enum metrics_format {
 	METRICS_FORMAT_PROMETHEUS,
@@ -542,35 +562,15 @@ static void render_prometheus(struct strbuf *sb)
 
 	strbuf_appendf(sb, "# HELP accel_ppp_protocol_sessions Sessions per protocol and state\n");
 	strbuf_appendf(sb, "# TYPE accel_ppp_protocol_sessions gauge\n");
-	if (triton_module_loaded("pppoe")) {
-		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"pppoe\",state=\"starting\"} %u\n",
-			       pppoe_stat_starting());
-		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"pppoe\",state=\"active\"} %u\n",
-			       pppoe_stat_active());
-	}
-	if (triton_module_loaded("l2tp")) {
-		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"l2tp\",state=\"starting\"} %u\n",
-			       l2tp_stat_starting());
-		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"l2tp\",state=\"active\"} %u\n",
-			       l2tp_stat_active());
-	}
-	if (triton_module_loaded("pptp")) {
-		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"pptp\",state=\"starting\"} %u\n",
-			       pptp_stat_starting());
-		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"pptp\",state=\"active\"} %u\n",
-			       pptp_stat_active());
-	}
-	if (triton_module_loaded("sstp")) {
-		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"sstp\",state=\"starting\"} %u\n",
-			       sstp_stat_starting());
-		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"sstp\",state=\"active\"} %u\n",
-			       sstp_stat_active());
-	}
-	if (triton_module_loaded("ipoe")) {
-		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"ipoe\",state=\"starting\"} %u\n",
-			       ipoe_stat_starting());
-		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"ipoe\",state=\"active\"} %u\n",
-			       ipoe_stat_active());
+	for (size_t i = 0; i < sizeof(proto_stats) / sizeof(proto_stats[0]); i++) {
+		struct proto_stat *p = &proto_stats[i];
+
+		if (!proto_resolve(p))
+			continue;
+		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"%s\",state=\"starting\"} %u\n",
+			       p->module, p->starting());
+		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"%s\",state=\"active\"} %u\n",
+			       p->module, p->active());
 	}
 }
 
@@ -657,16 +657,13 @@ static void render_json(struct strbuf *sb)
 		s.sessions.starting, s.sessions.active, s.sessions.finishing);
 
 	strbuf_appendf(sb, "\"protocols\":{");
-	if (triton_module_loaded("pppoe"))
-		emit_json_proto(sb, "pppoe", &first, pppoe_stat_starting(), pppoe_stat_active());
-	if (triton_module_loaded("l2tp"))
-		emit_json_proto(sb, "l2tp", &first, l2tp_stat_starting(), l2tp_stat_active());
-	if (triton_module_loaded("pptp"))
-		emit_json_proto(sb, "pptp", &first, pptp_stat_starting(), pptp_stat_active());
-	if (triton_module_loaded("sstp"))
-		emit_json_proto(sb, "sstp", &first, sstp_stat_starting(), sstp_stat_active());
-	if (triton_module_loaded("ipoe"))
-		emit_json_proto(sb, "ipoe", &first, ipoe_stat_starting(), ipoe_stat_active());
+	for (size_t i = 0; i < sizeof(proto_stats) / sizeof(proto_stats[0]); i++) {
+		struct proto_stat *p = &proto_stats[i];
+
+		if (!proto_resolve(p))
+			continue;
+		emit_json_proto(sb, p->module, &first, p->starting(), p->active());
+	}
 	strbuf_appendf(sb, "}");
 
 	strbuf_appendf(sb, "}\n");
