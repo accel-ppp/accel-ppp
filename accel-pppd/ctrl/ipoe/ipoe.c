@@ -3574,19 +3574,6 @@ static void load_radius_attrs(void)
 }
 #endif
 
-static void strip(char *str)
-{
-	char *ptr = str;
-	char *endptr = strchr(str, 0);
-	while (1) {
-		ptr = strchr(ptr, ' ');
-		if (ptr)
-			memmove(ptr, ptr + 1, endptr - ptr - 1);
-		else
-			break;
-	}
-}
-
 int parse_offer_delay(const char *str)
 {
 	char *str1;
@@ -3603,7 +3590,7 @@ int parse_offer_delay(const char *str)
 		return 0;
 
 	str1 = _strdup(str);
-	strip(str1);
+	u_strstrip(str1, ' ');
 
 	ptr1 = str1;
 
@@ -3619,17 +3606,23 @@ int parse_offer_delay(const char *str)
 		memset(r, 0, sizeof(*r));
 
 		r->delay = strtol(ptr1, &endptr, 10);
-		if (*endptr)
+		if (*endptr) {
+			_free(r);
 			goto out_err;
+		}
 
 		if (list_empty(&conf_offer_delay))
 			r->conn_cnt = 0;
 		else {
-			if (!ptr3)
+			if (!ptr3) {
+				_free(r);
 				goto out_err;
+			}
 			r->conn_cnt = strtol(ptr3 + 1, &endptr, 10);
-			if (*endptr)
+			if (*endptr) {
+				_free(r);
 				goto out_err;
+			}
 		}
 
 		list_add_tail(&r->entry, &conf_offer_delay);
@@ -3644,6 +3637,11 @@ int parse_offer_delay(const char *str)
 	return 0;
 
 out_err:
+	while (!list_empty(&conf_offer_delay)) {
+		r = list_entry(conf_offer_delay.next, typeof(*r), entry);
+		list_del(&r->entry);
+		_free(r);
+	}
 	_free(str1);
 	log_error("ipoe: failed to parse offer-delay\n");
 	return -1;

@@ -11,6 +11,7 @@
 #include "triton.h"
 #include "log.h"
 #include "memdebug.h"
+#include "utils.h"
 
 #include "pppoe.h"
 
@@ -60,19 +61,6 @@ void dpado_check_prev(int conn_cnt)
 	pthread_mutex_unlock(&dpado_range_lock);
 }
 
-static void strip(char *str)
-{
-	char *ptr = str;
-	char *endptr = strchr(str, 0);
-	while (1) {
-		ptr = strchr(ptr, ' ');
-		if (ptr)
-			memmove(ptr, ptr + 1, endptr - ptr - 1);
-		else
-			break;
-	}
-}
-
 int dpado_parse(const char *str)
 {
 	char *str1 = _strdup(str);
@@ -81,7 +69,7 @@ int dpado_parse(const char *str)
 	LIST_HEAD(range_list);
 	struct dpado_range_t *r;
 
-	strip(str1);
+	u_strstrip(str1, ' ');
 
 	ptr1 = str1;
 
@@ -97,17 +85,23 @@ int dpado_parse(const char *str)
 		memset(r, 0, sizeof(*r));
 
 		r->pado_delay = strtol(ptr1, &endptr, 10);
-		if (*endptr)
+		if (*endptr) {
+			_free(r);
 			goto out_err;
+		}
 
 		if (list_empty(&range_list))
 			r->conn_cnt = INT_MAX;
 		else {
-			if (!ptr3)
+			if (!ptr3) {
+				_free(r);
 				goto out_err;
+			}
 			r->conn_cnt = strtol(ptr3 + 1, &endptr, 10);
-			if (*endptr)
+			if (*endptr) {
+				_free(r);
 				goto out_err;
+			}
 		}
 
 		list_add_tail(&r->entry, &range_list);
@@ -160,6 +154,11 @@ int dpado_parse(const char *str)
 	return 0;
 
 out_err:
+	while (!list_empty(&range_list)) {
+		r = list_entry(range_list.next, typeof(*r), entry);
+		list_del(&r->entry);
+		_free(r);
+	}
 	_free(str1);
 	log_emerg("pppoe: pado_delay: invalid format\n");
 	return -1;
