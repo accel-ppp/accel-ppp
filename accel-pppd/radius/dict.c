@@ -92,7 +92,7 @@ static int dict_load(const char *fname)
 			continue;
 		r = split(buf, ptr);
 
-		if (*ptr[r - 1] == '#')
+		if (r > 0 && *ptr[r - 1] == '#')
 			r--;
 
 		if (!strcmp(buf, "VENDOR")) {
