@@ -363,6 +363,7 @@ static int disc_read(struct triton_md_handler_t *h)
 		if (hdr->type != 1) {
 			if (conf_verbose)
 				log_warn("pppoe: discarding packet (unsupported type %i)\n", hdr->type);
+			continue;
 		}
 
 		if (forward(net, src.sll_ifindex, pack, n))
