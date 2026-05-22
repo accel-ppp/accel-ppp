@@ -110,7 +110,7 @@ static void free_net(struct disc_net *net)
 	pthread_mutex_lock(&nets_lock);
 	for (i = 0; i < MAX_NET; i++) {
 		if (nets[i] == net) {
-			memcpy(nets + i, nets + i + 1, net_cnt - i - 1);
+			memmove(nets + i, nets + i + 1, (net_cnt - i - 1) * sizeof(nets[0]));
 			net_cnt--;
 			break;
 		}
