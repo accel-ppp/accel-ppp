@@ -77,7 +77,7 @@ static struct disc_net *init_net(const struct ap_net *net)
 	fcntl(sock, F_SETFD, FD_CLOEXEC);
 	net->set_nonblocking(sock, 1);
 
-	n = _malloc(sizeof(*net) + (HASH_BITS + 1) * sizeof(struct tree));
+	n = _malloc(sizeof(*n) + (HASH_BITS + 1) * sizeof(struct tree));
 	tree = n->tree;
 
 	for (i = 0; i <= HASH_BITS; i++) {
