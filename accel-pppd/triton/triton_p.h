@@ -81,6 +81,7 @@ struct _triton_timer_t
 struct _triton_event_t
 {
 	struct list_head handlers;
+	unsigned int in_progress:1;
 };
 
 struct _triton_ctx_call_t
