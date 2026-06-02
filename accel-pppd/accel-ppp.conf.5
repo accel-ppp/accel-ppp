@@ -1293,6 +1293,55 @@ Specifies which Radius attribute contains stateful address pool name.
 .TP
 .BI "vendor=" vendor
 If attribute is vendor-specific then specify vendor name in this option.
+.SH [metrics]
+.br
+Exposes daemon statistics over HTTP. Requires the
+.B metrics
+module to be listed in the
+.B [modules]
+section. The same numbers shown by
+.B "accel-cmd show stat"
+are returned for every GET on
+.B /metrics
+\&. Any other path responds with 404, and any method other than GET
+responds with 405.
+.TP
+.BI "format=" prometheus|json
+Selects the body format. Defaults to
+.BR prometheus .
+.TP
+.BI "address=" host:port
+IPv4 listen address. Required. Use
+.BR 0.0.0.0:8080
+to listen on all interfaces.
+.TP
+.BI "allowed_ips=" cidr_list
+Optional comma-separated list of IPv4 CIDR entries permitted to fetch
+metrics. The bracketed form
+.RB "\fBallowed_ips = [\(dq" "1.2.3.4/32" "\(dq, \(dq" "5.6.7.0/24" "\(dq]\fR"
+and the bare form
+.B "1.2.3.4/32,5.6.7.0/24"
+are both accepted. A bare address without a prefix length is treated
+as
+.BR /32 .
+When the option is missing or empty, all peers are allowed. Peers
+that do not match a CIDR have their connection closed immediately
+after
+.BR accept (2).
+.TP
+.BI "read_timeout=" seconds
+Maximum time a client may take to deliver a complete HTTP request.
+Connections that have not produced a terminating
+.BR \(dq\\r\\n\\r\\n\(dq
+within this deadline are closed. Defaults to 5 seconds. Set to
+.B 0
+to disable the deadline.
+.TP
+.BI "max_clients=" n
+Maximum number of in-flight HTTP clients. Excess connections are
+accepted then immediately closed. Defaults to 64. Set to
+.B 0
+to disable the cap.
 .SH [connlimit]
 .br
 This module limits connection rate from single source.
