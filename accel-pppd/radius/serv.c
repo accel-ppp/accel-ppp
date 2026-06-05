@@ -113,6 +113,17 @@ struct rad_server_t *rad_server_put(struct rad_server_t *s, int type)
 	return (do_free || do_close) ? NULL : s;
 }
 
+char *rad_server_secret_dup(struct rad_server_t *s)
+{
+	char *secret;
+
+	pthread_mutex_lock(&s->lock);
+	secret = _strdup(s->secret);
+	pthread_mutex_unlock(&s->lock);
+
+	return secret;
+}
+
 static void req_wakeup(struct rad_req_t *req)
 {
 	struct timespec ts;
@@ -425,17 +436,26 @@ void rad_server_stat_interim_query(struct rad_server_t *s, unsigned int dt)
 	stat_accm_add(s->stat.interim_query_5m, dt);
 }
 
-static int req_set_RA(struct rad_req_t *req, const char *secret)
+static int req_set_RA(struct rad_req_t *req)
 {
+	char *secret;
 	MD5_CTX ctx;
 
-	if (rad_packet_build(req->pack, req->RA))
+	secret = rad_server_secret_dup(req->serv);
+	if (!secret)
 		return -1;
+
+	if (rad_packet_build(req->pack, req->RA)) {
+		_free(secret);
+		return -1;
+	}
 
 	MD5_Init(&ctx);
 	MD5_Update(&ctx, req->pack->buf, req->pack->len);
 	MD5_Update(&ctx, secret, strlen(secret));
 	MD5_Final(req->pack->buf + 4, &ctx);
+
+	_free(secret);
 
 	return 0;
 }
@@ -523,7 +543,7 @@ static void send_acct_on(struct rad_server_t *s)
 		if (rad_packet_add_ipaddr(req->pack, NULL, "NAS-IP-Address", conf_nas_ip_address))
 			goto out_err;
 
-	if (req_set_RA(req, s->secret))
+	if (req_set_RA(req))
 		goto out_err;
 
 	__rad_req_send(req, 0);
@@ -674,6 +694,7 @@ static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt,
 static void __add_server(struct rad_server_t *s)
 {
 	struct rad_server_t *s1;
+	char *old_secret;
 
 	list_for_each_entry(s1, &serv_list, entry) {
 		if (s1->addr == s->addr && s1->auth_port == s->auth_port && s1->acct_port == s->acct_port) {
@@ -683,6 +704,13 @@ static void __add_server(struct rad_server_t *s)
 			s1->need_free = 0;
 			s1->bind_default = s->bind_default;
 			strcpy(s1->bind_device, s->bind_device);
+			/* adopt the freshly parsed secret so changes take effect on reload */
+			pthread_mutex_lock(&s1->lock);
+			old_secret = s1->secret;
+			s1->secret = s->secret;
+			s->secret = NULL;
+			pthread_mutex_unlock(&s1->lock);
+			_free(old_secret);
 			_free(s);
 			return;
 		}
@@ -740,6 +768,7 @@ static void __free_server(struct rad_server_t *s)
 
 	triton_context_unregister(&s->ctx);
 
+	_free(s->secret);
 	_free(s);
 }
 
