@@ -1226,16 +1226,24 @@ Configuration of ippool module.
 Specifies single IP address to be used as local address of ppp interfaces.
 .TP
 .BI "shuffle=" 1|0
-Specifies whether to shuffle initial address list.
+Specifies whether to assign addresses in randomized order instead of sequentially.
+.TP
+.BI "reload-orphan=" keep|disconnect
+Controls what happens on configuration reload to sessions whose assigned address
+no longer belongs to any configured pool (a pool was shrunk or removed). With
+.B keep
+(default) such sessions keep running and their address is simply no longer tracked;
+with
+.B disconnect
+those sessions are terminated. Reload reconciles all live sessions against the new
+pools, so growing or renumbering pools no longer requires a restart.
 .TP
 .BI "gw=" range
-Specifies range of local address of ppp interfaces if form:
-.br
-.B x.x.x.x/mask[,name=pool_name][,next=next_pool_name]
-(for example 10.0.0.0/8)
-.br
-.B x.x.x.x-y[,name=pool_name][,next=next_pool_name]
-(for example 10.0.0.1-254)
+Deprecated and ignored. The per-address local gateway has long been overridden at
+allocation time by
+.B gw-ip-address
+(or 0 for IPoE), so this option no longer has any effect. It is still accepted to
+avoid breaking existing configuration files.
 .TP
 .BI "tunnel=" range
 Specifies range of remote address of ppp interfaces if form:
@@ -1293,6 +1301,16 @@ Specifies which Radius attribute contains stateful address pool name.
 .TP
 .BI "vendor=" vendor
 If attribute is vendor-specific then specify vendor name in this option.
+.TP
+.BI "reload-orphan=" keep|disconnect
+Same meaning as in the
+.B [ip-pool]
+section, applied to IPv6 address and delegated-prefix leases on configuration reload.
+.PP
+Note: each pool range is materialized as a bitmap with one bit per allocatable
+prefix, so the number of prefixes in a range (2^(prefix_len-mask)) is capped. Ranges
+that would exceed roughly 16.7 million prefixes (prefix_len-mask > 24) are rejected at
+parse time with an error rather than allocated.
 .SH [metrics]
 .br
 Exposes daemon statistics over HTTP. Requires the
