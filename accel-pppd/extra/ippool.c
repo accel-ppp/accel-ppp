@@ -79,7 +79,7 @@ struct pool_set {
 
 struct ip_lease {
 	struct ip_pool *pool;	/* NULL once orphaned by a reload */
-	struct ip_range *range; /*lease->range points to the struct ip_range that supplied this session’s allocated peer address, also NULL if orphaned */
+	struct ip_range *range;	/* Range that supplied this lease's peer address; NULL if orphaned */
 	struct ipv4db_item_t it;	/* ses->ipv4 = &it */
 };
 
