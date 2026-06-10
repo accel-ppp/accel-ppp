@@ -8,10 +8,10 @@ ADD_LIBRARY(l2tp SHARED
 	packet.c
 	#	netlink.c
 )
+TARGET_LINK_LIBRARIES(l2tp ${crypto_lib})
 #TARGET_LINK_LIBRARIES(l2tp nl nl-genl)
 
 INSTALL(TARGETS l2tp LIBRARY DESTINATION lib${LIB_SUFFIX}/accel-ppp)
 
 FILE(GLOB dict "${CMAKE_CURRENT_SOURCE_DIR}/dict/*")
 INSTALL(FILES ${dict} DESTINATION share/accel-ppp/l2tp)
-
