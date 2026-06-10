@@ -47,7 +47,7 @@ jobs:
           screen -dmS httpserver python3 -m http.server 8000
       - name: Run target OS first time (for setup actions)
         run: >
-          sudo screen -dmS qemu
+          sudo screen -dmS qemu -L -Logfile qemu-console-setup.log
           qemu-system-s390x -M s390-ccw-virtio
           -m 4096 -smp 2 -nographic
           -net nic -net user,hostfwd=tcp::2222-:22
@@ -70,6 +70,20 @@ jobs:
           sleep 5;
           done;
           cat ~/.ssh/known_hosts
+      - name: Wait for disk to be available
+        # virtio_blk is not in the netboot initramfs; it comes from the modloop
+        # image the VM downloads at boot. If that download fails, sshd still
+        # comes up but /dev/vda never appears, so retry the modloop service
+        # until the disk is visible.
+        timeout-minutes: 10
+        run: >
+          while ! ssh -i ssh-key -p2222 root@localhost "test -e /sys/block/vda/device";
+          do
+          echo "Disk not visible, retrying modloop download";
+          ssh -i ssh-key -p2222 root@localhost
+          "rc-service modloop restart; rc-service hwdrivers restart; modprobe virtio_blk 2>/dev/null; ls /lib/modules" || true;
+          sleep 10;
+          done
       - name: Setup alpine to disk
         run: >
           ssh -i ssh-key -p2222 root@localhost "setup-alpine -c setup_alpine_conf &&
@@ -91,7 +105,7 @@ jobs:
           done;
       - name: Run target OS
         run: >
-          sudo screen -dmS qemu
+          sudo screen -dmS qemu -L -Logfile qemu-console.log
           qemu-system-s390x -M s390-ccw-virtio
           -m 4096 -smp 2 -nographic
           -net nic -net user,hostfwd=tcp::2222-:22
@@ -176,3 +190,10 @@ jobs:
             echo "::error::Kernel issues detected in dmesg"
             exit 1
           fi
+      - name: Display QEMU console logs
+        if: ${{ always() }}
+        run: |
+          for f in qemu-console-setup.log qemu-console.log; do
+            echo "===== $f ====="
+            sudo cat "$f" || true
+          done
