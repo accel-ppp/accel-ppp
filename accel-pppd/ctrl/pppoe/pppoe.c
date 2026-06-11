@@ -1234,6 +1234,12 @@ padr_tags_done:
 		return;
 	}
 
+	if (!service_name_tag) {
+		if (conf_verbose)
+			log_warn("pppoe: discard PADR packet (no Service-Name tag present)\n");
+		return;
+	}
+
 	if (ntohs(ac_cookie_tag->tag_len) != COOKIE_LENGTH) {
 		if (conf_verbose)
 			log_warn("pppoe: discard PADR packet (incorrect AC-Cookie tag length)\n");

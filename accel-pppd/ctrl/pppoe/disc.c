@@ -77,7 +77,7 @@ static struct disc_net *init_net(const struct ap_net *net)
 	fcntl(sock, F_SETFD, FD_CLOEXEC);
 	net->set_nonblocking(sock, 1);
 
-	n = _malloc(sizeof(*net) + (HASH_BITS + 1) * sizeof(struct tree));
+	n = _malloc(sizeof(*n) + (HASH_BITS + 1) * sizeof(struct tree));
 	tree = n->tree;
 
 	for (i = 0; i <= HASH_BITS; i++) {
@@ -110,7 +110,7 @@ static void free_net(struct disc_net *net)
 	pthread_mutex_lock(&nets_lock);
 	for (i = 0; i < MAX_NET; i++) {
 		if (nets[i] == net) {
-			memcpy(nets + i, nets + i + 1, net_cnt - i - 1);
+			memmove(nets + i, nets + i + 1, (net_cnt - i - 1) * sizeof(nets[0]));
 			net_cnt--;
 			break;
 		}
@@ -363,6 +363,7 @@ static int disc_read(struct triton_md_handler_t *h)
 		if (hdr->type != 1) {
 			if (conf_verbose)
 				log_warn("pppoe: discarding packet (unsupported type %i)\n", hdr->type);
+			continue;
 		}
 
 		if (forward(net, src.sll_ifindex, pack, n))

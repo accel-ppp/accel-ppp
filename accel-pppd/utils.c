@@ -347,3 +347,14 @@ int __export u_randbuf(void *buf, size_t buf_len, int *err)
 
 	return 0;
 }
+
+void __export u_strstrip(char *str, char c)
+{
+	char *src = str, *dst = str;
+	while (*src) {
+		if (*src != c)
+			*dst++ = *src;
+		src++;
+	}
+	*dst = '\0';
+}
