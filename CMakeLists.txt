@@ -39,14 +39,12 @@ ENDIF (CMAKE_SYSTEM_NAME STREQUAL Linux AND CMAKE_C_COMPILER_ID STREQUAL GNU)
 string(ASCII 27 Esc)
 
 #Check libpcre2
-find_library(PCRE2_LIBRARY pcre2-8
-	HINTS ${CMAKE_SOURCE_DIR}/lib/linux/gcc/${BIT}/lib
-	PATHS ${CMAKE_SOURCE_DIR}/lib/linux/gcc/${BIT}/lib
-)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(PCRE2 REQUIRED libpcre2-8)
 
-IF(NOT PCRE2_LIBRARY)
-	message(FATAL_ERROR "${Esc}[31mRequired libpcre not found.\n Install libpcre2-dev and run cmake again${Esc}[m")
-ENDIF(NOT PCRE2_LIBRARY)
+IF(NOT PCRE2_FOUND)
+    message(FATAL_ERROR "${Esc}[31mRequired libpcre2-8 not found.\\n Install libpcre2-dev and run cmake again${Esc}[m")
+ENDIF(NOT PCRE2_FOUND)
 
 
 IF (EXISTS ${CMAKE_HOME_DIRECTORY}/.git AND NOT IGNORE_GIT)
@@ -72,13 +70,13 @@ if (NOT BUILD_DRIVER_ONLY)
 		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector -fstack-protector-all")
 	endif (MEMDEBUG)
 
-	find_library(CRYPTO_LIBRARY ssl
-		HINTS ${CMAKE_SOURCE_DIR}/lib/linux/gcc/${BIT}/lib
-		PATHS ${CMAKE_SOURCE_DIR}/lib/linux/gcc/${BIT}/lib
-	)
-	IF(NOT CRYPTO_LIBRARY)
-		message(FATAL_ERROR "${Esc}[31mRequired libcrypto-0.9.8 or probably later (openssl-0.9.8)  not found.\n Install libssl-dev and run cmake again${Esc}[m")
-	ENDIF(NOT CRYPTO_LIBRARY)
+	# required libcrypto (openssl) via pkg-config
+    find_package(PkgConfig REQUIRED)
+        pkg_check_modules(CRYPTO REQUIRED libcrypto)
+
+    IF(NOT CRYPTO_FOUND)
+        message(FATAL_ERROR "${Esc}[31mRequired libcrypto not found.\\n Install libssl-dev and run cmake again${Esc}[m")
+    ENDIF(NOT CRYPTO_FOUND)
 	set(crypto_lib crypto ssl)
 
 	add_subdirectory(accel-pppd)
