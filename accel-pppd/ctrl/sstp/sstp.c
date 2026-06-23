@@ -1240,7 +1240,7 @@ static int ppp_write(struct triton_md_handler_t *h)
 	ssize_t n;
 	int i;
 
-	if (!list_empty(&conn->ppp_queue)) {
+	while (!list_empty(&conn->ppp_queue)) {
 		i = n = 0;
 		list_for_each_entry(buf, &conn->ppp_queue, entry) {
 			if (i < PPP_BUF_IOVEC && n < PPP_BUF_SIZE) {
@@ -1272,9 +1272,6 @@ static int ppp_write(struct triton_md_handler_t *h)
 			list_del(&buf->entry);
 			free_buf(buf);
 		} while (n > 0);
-
-		if (!list_empty(&conn->ppp_queue))
-			goto defer;
 	}
 	triton_md_disable_handler(h, MD_MODE_WRITE);
 	return 0;
