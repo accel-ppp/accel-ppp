@@ -25,17 +25,26 @@
 
 #define INTERIM_SAFE_TIME 10
 
-static int req_set_RA(struct rad_req_t *req, const char *secret)
+static int req_set_RA(struct rad_req_t *req)
 {
+	char *secret;
 	MD5_CTX ctx;
 
-	if (rad_packet_build(req->pack, req->RA))
+	secret = rad_server_secret_dup(req->serv);
+	if (!secret)
 		return -1;
+
+	if (rad_packet_build(req->pack, req->RA)) {
+		_free(secret);
+		return -1;
+	}
 
 	MD5_Init(&ctx);
 	MD5_Update(&ctx, req->pack->buf, req->pack->len);
 	MD5_Update(&ctx, secret, strlen(secret));
 	MD5_Final(req->pack->buf + 4, &ctx);
+
+	_free(secret);
 
 	return 0;
 }
@@ -180,7 +189,7 @@ static void rad_acct_interim_update(struct triton_timer_t *t)
 	rpd->acct_req->pack->id++;
 
 	if (!rpd->acct_req->before_send)
-		req_set_RA(rpd->acct_req, rpd->acct_req->serv->secret);
+		req_set_RA(rpd->acct_req);
 
 	rpd->acct_req->timeout.expire_tv.tv_sec = conf_timeout;
 	rpd->acct_req->try = 0;
@@ -212,7 +221,7 @@ static int rad_acct_before_send(struct rad_req_t *req)
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 
 	rad_packet_change_int(req->pack, NULL, "Acct-Delay-Time", ts.tv_sec - req->ts + conf_acct_delay_start);
-	req_set_RA(req, req->serv->secret);
+	req_set_RA(req);
 
 	return 0;
 }
@@ -308,7 +317,7 @@ static int __rad_acct_start(struct radius_pd_t *rpd)
 
 	if (conf_acct_delay_time)
 		req->before_send = rad_acct_before_send;
-	else if (req_set_RA(req, req->serv->secret))
+	else if (req_set_RA(req))
 		goto out_err;
 
 	req->recv = rad_acct_start_recv;
@@ -524,7 +533,7 @@ int rad_acct_stop(struct radius_pd_t *rpd)
 
 	rad_packet_change_val(req->pack, NULL, "Acct-Status-Type", "Stop");
 	req_set_stat(req, rpd->ses);
-	req_set_RA(req, req->serv->secret);
+	req_set_RA(req);
 
 	req->recv = rad_acct_stop_recv;
 	req->timeout.expire = rad_acct_stop_timeout;
