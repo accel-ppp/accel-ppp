@@ -385,7 +385,12 @@ static void general_reopen(void)
 {
 	const char *fname = conf_get_opt("log", "log-file");
 	int old_fd = -1;
- 	int fd = open(fname, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, S_IRUSR | S_IWUSR);
+	int fd;
+
+	if (!fname)
+		return;
+
+	fd = open(fname, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, S_IRUSR | S_IWUSR);
 	if (fd < 0) {
 		log_emerg("log_file: open '%s': %s\n", fname, strerror(errno));
 		return;
@@ -710,7 +715,8 @@ static void init(void)
 	if (opt && atoi(opt) > 0)
 		conf_copy = 1;
 
-	log_register_target(&general_target);
+	if (log_file)
+		log_register_target(&general_target);
 
 	if (conf_per_user_dir) {
 		log_register_target(&per_user_target);
