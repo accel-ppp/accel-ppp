@@ -551,21 +551,40 @@ static void print_dnssl(struct dhcpv6_option *opt, void (*print)(const char *fmt
 
 }
 
-static void print_aftr_gw(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...)) {
+static void print_aftr_gw(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))
+{
 	int len = ntohs(opt->hdr->len);
 	int offset = 0;
-	char domain[255];
+	int pos = 0;
+	int done = 0;
+	char domain[256];
 	uint8_t label_len;
 
-	memset(domain, 0, 255);
+	memset(domain, 0, sizeof(domain));
 	while (offset < len) {
-		label_len = opt->hdr->data[offset];
-		if (label_len == 0)
+		label_len = opt->hdr->data[offset++];
+		if (label_len == 0) {
+			done = 1;
 			break;
-		memcpy(&domain[offset], &opt->hdr->data[offset + 1], label_len);
+		}
+
+		if (label_len > 63 || offset + label_len > len ||
+		    pos + label_len + 1 >= sizeof(domain)) {
+			print(" <invalid>");
+			return;
+		}
+
+		memcpy(&domain[pos], &opt->hdr->data[offset], label_len);
 		offset += label_len;
-		domain[offset++] = '.';
+		pos += label_len;
+		domain[pos++] = '.';
 	}
+
+	if (!done || offset != len) {
+		print(" <invalid>");
+		return;
+	}
+
 	print(" %s", domain);
 }
 
@@ -577,4 +596,3 @@ static void print_ia_prefix(struct dhcpv6_option *opt, void (*print)(const char 
 	inet_ntop(AF_INET6, &o->prefix, str, sizeof(str));
 	print(" %s/%i pref_lifetime=%i valid_lifetime=%i", str, o->prefix_len, ntohl(o->pref_lifetime), ntohl(o->valid_lifetime));
 }
-
