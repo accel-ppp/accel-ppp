@@ -298,8 +298,14 @@ static void pppoe_conn_ctx_switch(struct triton_context_t *ctx, void *arg)
 
 static struct pppoe_conn_t *allocate_channel(struct pppoe_serv_t *serv, const uint8_t *addr, const struct pppoe_tag *host_uniq, const struct pppoe_tag *relay_sid, const struct pppoe_tag *service_name, const struct pppoe_tag *tr101, const uint8_t *cookie, uint16_t ppp_max_payload)
 {
+	struct pppoe_tag empty_service_name = {
+		.tag_type = htons(TAG_SERVICE_NAME),
+	};
 	struct pppoe_conn_t *conn;
 	unsigned long *old_sid_ptr;
+
+	if (!service_name)
+		service_name = &empty_service_name;
 
 	conn = mempool_alloc(conn_pool);
 	if (!conn) {
