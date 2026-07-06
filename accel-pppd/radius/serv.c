@@ -152,7 +152,20 @@ static void req_wakeup(struct rad_req_t *req)
 	}
 	pthread_mutex_unlock(&req->serv->lock);
 
-	req->send(req, 1);
+	if (req->send(req, 1) == -2) {
+		/* socket setup failed: release the slot taken in
+		 * rad_server_req_exit() and drive the failover path,
+		 * otherwise the server's req_cnt leaks and the request
+		 * is orphaned */
+		req->active = 0;
+		pthread_mutex_lock(&req->serv->lock);
+		req->serv->req_cnt--;
+		pthread_mutex_unlock(&req->serv->lock);
+
+		rad_server_fail(req->serv);
+
+		req->send(req, -1);
+	}
 }
 
 static void req_wakeup_failed(struct rad_req_t *req)
