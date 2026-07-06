@@ -92,15 +92,17 @@ static int mac_filter_load(const char *opt)
 			log_warn("pppoe: mac-filter:%s:%i: address is invalid\n", name, line);
 			continue;
 		}
-		mac = _malloc(sizeof(*mac));
 		for (i = 0; i < ETH_ALEN; i++) {
-			if (n[i] > 255) {
-				log_warn("pppoe: mac-filter:%s:%i: address is invalid\n", name, line);
-				_free(mac);
-				continue;
-			}
-			mac->addr[i] = n[i];
+			if (n[i] > 255)
+				break;
 		}
+		if (i < ETH_ALEN) {
+			log_warn("pppoe: mac-filter:%s:%i: address is invalid\n", name, line);
+			continue;
+		}
+		mac = _malloc(sizeof(*mac));
+		for (i = 0; i < ETH_ALEN; i++)
+			mac->addr[i] = n[i];
 		list_add_tail(&mac->entry, &mac_list);
 	}
 	pthread_rwlock_unlock(&lock);
