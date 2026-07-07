@@ -32,8 +32,10 @@ static LIST_HEAD(init_list);
 static int terminate;
 static int need_terminate;
 
+/* 0 - idle, 1 - reload requested, 2 - reload running */
 static int need_config_reload;
-static void (*config_reload_notify)(int);
+static void (*config_reload_notify)(int, void *);
+static void *config_reload_arg;
 
 static mempool_t *ctx_pool;
 static mempool_t *call_pool;
@@ -210,14 +212,14 @@ void triton_thread_wakeup(struct _triton_thread_t *thread)
 	pthread_kill(thread->thread, SIGUSR1);
 }
 
-static void __config_reload(void (*notify)(int))
+static void __config_reload(void)
 {
 	struct _triton_thread_t *t;
 	int r;
 
 	log_debug2("config_reload: enter\n");
 	r = conf_reload(NULL);
-	notify(r);
+	config_reload_notify(r, config_reload_arg);
 
 	spin_lock(&threads_lock);
 	need_config_reload = 0;
@@ -301,9 +303,10 @@ static void* triton_thread(struct _triton_thread_t *thread)
 			if (!terminate)
 				list_add(&thread->entry2, &sleep_threads);
 
-			if (triton_stat_thread_active_dec() == 0 && need_config_reload) {
+			if (triton_stat_thread_active_dec() == 0 && need_config_reload == 1) {
+				need_config_reload = 2;
 				spin_unlock(&threads_lock);
-				__config_reload(config_reload_notify);
+				__config_reload();
 			} else
 				spin_unlock(&threads_lock);
 
@@ -856,16 +859,25 @@ int __export triton_load_modules(const char *mod_sect)
 	return 0;
 }
 
-void __export triton_conf_reload(void (*notify)(int))
+int __export triton_conf_reload(void (*notify)(int, void *), void *arg)
 {
 	spin_lock(&threads_lock);
-	need_config_reload = 1;
+	if (need_config_reload) {
+		spin_unlock(&threads_lock);
+		return -1;
+	}
 	config_reload_notify = notify;
+	config_reload_arg = arg;
 	if (triton_stat_thread_active() == 0) {
+		need_config_reload = 2;
 		spin_unlock(&threads_lock);
-		__config_reload(notify);
-	} else
+		__config_reload();
+	} else {
+		need_config_reload = 1;
 		spin_unlock(&threads_lock);
+	}
+
+	return 0;
 }
 
 void __export triton_run()
