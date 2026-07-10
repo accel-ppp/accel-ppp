@@ -1,182 +1,254 @@
-Overview
---------
-The ACCEL-PPP v1.0 is completly new implementation of PPTP/PPPoE/L2TP/SSTP which was written from scratch.
-Userspace daemon has its own PPP implementation, so it does not uses pppd and one process (multi-threaded) manages all connections.
-ACCEL-PPP uses kernel-mode implementations of pptp/l2tp/pppoe and user-mode of sstp.
+ACCEL-PPP
+=========
+
+ACCEL-PPP is a high-performance, multi-threaded VPN and broadband access
+concentrator for Linux. It has its own userspace PPP implementation, so one
+daemon can manage all connections without relying on pppd. The implementation
+was developed from scratch rather than as a wrapper around pppd. It uses Linux
+kernel interfaces for PPTP, L2TP, and PPPoE data paths, while SSTP is handled in
+userspace.
 
 
 Features
---------
-1.  Modular architecture
-2.  High-performance multi-threaded I/O core
-3.  Supported PPTP
-4.  Supported PPPoE (including TR-101 extension)
-5.  Supported L2TPv2 (without IPsec)
-5.  Radius authentication/accounting
-6.  Radius DM/CoA extention
-7.  Supported authentication types: PAP, CHAP (md5), Microsoft CHAP Extentions (including version 2), not supported - EAP
-8.  Supported MPPE
-9.  Compression is not supported
-10. Extensible logging engine with per session logging support, implemented log to file, log to remote host and log to PostgreSQL targets
-11. Extensible user/password database, implemented Radius, pppd compatible chap-secrets sources
-12. Extensible IP pool, implemented Radius, chap-secrets and static pools
-13. Supported pppd compatible ip-up/ip-down scripts
-14. Builtin tbf/htb shaper and clsact policer manager
-15. Command line interface via telnet
-16. SNMP support (master or subagent via AgentX)
-17. Supported SSTP
+========
+
+* Modular architecture and a multi-threaded I/O core
+* PPTP, PPPoE (including TR-101), L2TPv2, SSTP, and IPoE. ACCEL-PPP does not
+  provide integrated IPsec for L2TPv2; deploy IPsec separately when required.
+* RADIUS authentication and accounting, including Disconnect Messages and
+  Change of Authorization (DM/CoA)
+* PAP, CHAP-MD5, MS-CHAPv1, and MS-CHAPv2 authentication
+* Microsoft Point-to-Point Encryption (MPPE)
+* File, syslog, TCP, and optional PostgreSQL logging, including per-session logs
+* Extensible authentication sources, including RADIUS and pppd-compatible
+  chap-secrets files
+* Extensible IP address pools populated by RADIUS, chap-secrets, or static
+  configuration
+* pppd-compatible ip-up and ip-down scripts
+* TBF/HTB shaping and clsact policing
+* Telnet and TCP command-line interfaces
+* Optional SNMP support as a master agent or AgentX subagent
+
+EAP authentication and PPP compression are not supported.
 
 
-Requirment
-----------
-1. modern linux distribution
-2. kernel-2.6.25 or later
-4. cmake-3.5 or later
-5. libnl-2.0 or probably later (required for builtin shaper)
-6. libcrypto-0.9.8 or probably later (openssl-0.9.8)
-7. libpcre2
-8. net-snmp-5.x 
-9. libssl-0.9.8 or probably later (openssl-0.9.8)
+Requirements
+============
+
+Building the daemon requires:
+
+* Linux
+* A C compiler and standard build tools
+* CMake 3.10 or newer
+* OpenSSL development files
+* PCRE2 development files
+
+Kernel headers are also required when building the optional PPTP, IPoE, or VLAN
+monitoring kernel modules. Optional features require their corresponding
+development libraries:
+
+* Net-SNMP for NETSNMP=TRUE
+* PostgreSQL client libraries for LOG_PGSQL=TRUE
+* Lua for LUA=TRUE or a specific Lua version such as LUA=5.3
 
 
-Compilation and instalation
------------
-Make sure you have configured kernel headers in /usr/src/linux,
-or specify other location via KDIR.
-1. cd /path/to/accel-ppp-1.3.5
-2. mkdir build
-3. cd build
-4. cmake [-DBUILD_DRIVER=FALSE] [-DKDIR=/usr/src/linux] [-DCMAKE_INSTALL_PREFIX=/usr/local] [-DCMAKE_BUILD_TYPE=Release] [-DLOG_PGSQL=FALSE] [-DSHAPER=FALSE] [-DRADIUS=TRUE] [-DNETSNMP=FALSE] ..
-   Please note that the double dot record in the end of the command is essential. You'll probably get error or misconfigured sources if you miss it.
-   BUILD_DRIVER, KDIR, CMAKE_INSTALL_PREFIX, CMAKE_BUILD_TYPE, LOG_PGSQL, SHAPER, RADIUS  are optional,
-   But while pptp is not present in mainline kernel you probably need BUILD_DRIVER.
-   For example:
-   cmake -DBUILD_DRIVER=TRUE ..
-   will configure sources to build pptp driver, search kernel headers at /usr/src/linux, install to /usr/local,
-   build with no debug, pgsql and shaper support, build with radius support.
-5. If you want to use chap-secrets for authentication purpose then you need to disable radius support, configure as following:
-   cmake -DBUILD_DRIVER=TRUE -DRADIUS=FALSE ..
-   of course you can include additional options if needed.
-6. make
-7. make install
+Building and installing
+=======================
+
+Use an out-of-tree build directory:
+
+    cmake -S . -B build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/usr/local
+    cmake --build build
+    sudo cmake --install build
+
+Useful build options:
+
+* BUILD_PPTP_DRIVER=TRUE builds the PPTP kernel module.
+* BUILD_IPOE_DRIVER=TRUE builds the IPoE kernel module.
+* BUILD_VLAN_MON_DRIVER=TRUE builds the VLAN monitoring kernel module.
+* BUILD_DRIVER_ONLY=TRUE builds only the selected kernel modules.
+* KDIR=/path/to/kernel/build sets the kernel build directory.
+* RADIUS=FALSE omits RADIUS support.
+* SHAPER=FALSE omits the traffic-shaping module.
+* NETSNMP=TRUE builds SNMP support.
+* LOG_PGSQL=TRUE builds PostgreSQL logging support.
+
+For example, to build the IPoE and VLAN monitoring modules for the running
+kernel:
+
+    cmake -S . -B build \
+      -DBUILD_IPOE_DRIVER=TRUE \
+      -DBUILD_VLAN_MON_DRIVER=TRUE \
+      -DKDIR="/usr/src/linux-headers-$(uname -r)"
+    cmake --build build
 
 
 Configuration
--------------
-read man accel-ppp.conf
-For DM/CoA deployments, use the `dae-allowed` option to restrict source IPs.
+=============
+
+The sample configuration is installed as accel-ppp.conf.dist. See
+"man 5 accel-ppp.conf" for the complete configuration reference.
+
+Enable or disable functionality in the [modules] section. To authenticate from
+a pppd-compatible secrets file, enable chap-secrets instead of radius. RADIUS
+may remain compiled in; RADIUS=FALSE is only needed when it should be omitted
+from the build. Loading both providers does not provide dependable automatic
+fallback from RADIUS to chap-secrets because authentication providers are
+consulted in module registration order.
+
+For DM/CoA deployments, configure dae-allowed in the [radius] section to
+restrict permitted source addresses.
 
 
 Built-in shaper
---------------
-accel-ppp supports tbf and htb based shaper manager. It also supports clsact policer manager.
-To enable it uncomment shaper in [modules] section.
-It accepts radius attributes in various formats: rate, down-rate/up-rate and cisco-like. Values have to be in kilobits except cisco-like.
-For example:
-Filter-Id=1000 (means 1000Kbit both up-stream and down-stream rate)
-Filter-Id=2000/3000 (means 2000Kbit down-stream rate and 3000Kbit up-stream rate)
-To change radius attribute which containes rate information use 'attr' option, for example:
-[shaper]
-attr=My-Custom-Rate-Attribute
-of course this attribute have to be in radius dictionary.
-To specify different attributes for down-stream and up-stream rates use 'attr-down' and 'attr-up' options, for example:
-[shaper]
-attr-down=PPPD-Downstream-Speed
-attr-up=PPPD-Upstream-Speed
+===============
 
-If you want to use cisco-like format configure accel-ppp as following:
-[shaper]
-vendor=Cisco
-attr=Cisco-AVPair
-and send two attributes:
-Cisco-AVPair=lcp:interface-config#1=rate-limit input 2000000 8000 8000 conform-action transmit exceed-action drop (which means 2000Kbit up-stream rate and 8Kb burst)
-Cisco-AVPair=lcp:interface-config#1=rate-limit output 2000000 8000 8000 conform-action transmit exceed-action drop (which means 2000Kbit down-stream rate and 8Kb burst)
+The shaper supports TBF and HTB queueing disciplines and a clsact policer.
+Build it with SHAPER=TRUE (the default), then enable shaper in the
+configuration's [modules] section.
+
+RADIUS rate attributes accept a single rate or separate downstream/upstream
+rates. The default attribute is Filter-Id. Values are in Kbit/s unless
+Cisco-style attributes are used:
+
+    Filter-Id=1000
+    Filter-Id=2000/3000
+
+The first example sets both directions to 1000 Kbit/s. The second sets the
+downstream rate to 2000 Kbit/s and the upstream rate to 3000 Kbit/s.
+
+Set a custom rate attribute with attr. The named attribute must exist in the
+RADIUS dictionary:
+
+    [shaper]
+    attr=My-Custom-Rate-Attribute
+
+Alternatively, use separate attributes for each direction:
+
+    [shaper]
+    attr-down=PPPD-Downstream-Speed
+    attr-up=PPPD-Upstream-Speed
+
+For Cisco-style attributes:
+
+    [shaper]
+    vendor=Cisco
+    attr=Cisco-AVPair
+
+Send input and output attributes to set both directions. In Cisco-style
+attributes, input controls upstream traffic and output controls downstream
+traffic:
+
+    Cisco-AVPair=lcp:interface-config#1=rate-limit input 2000000 8000 8000 conform-action transmit exceed-action drop
+    Cisco-AVPair=lcp:interface-config#1=rate-limit output 2000000 8000 8000 conform-action transmit exceed-action drop
+
+These examples set a 2000 Kbit/s rate and an 8 KB burst in each direction.
 
 
-Advanced shaper using
----------------------
-1. Burst configuration.
-If you not using cisco-like format then burst calculates from rate and specified burst factors.
-To specify burst factors use 'down-burst-factor' and 'up-burst-factor' options, for example:
-[shaper]
-down-burst-factor=1.0
-up-burst-factor=10.0
-which means that burst for tbf/htb qdisc will be calculated as down-stream rate multiply to 1.0 and burst for policer/htb will be calculated as up-stream rate multiply to 10.0.
+Burst configuration
+-------------------
 
-2. Time ranges.
-You can specify time ranges to authomatic rate reconfiguration.
-To specify time ranges use following sample configuration:
-[shaper]
-time-range=1,1:00-3:00
-time-range=2,3:00-5:00
-time-range=3,5:00-7:00
-first number is time range identifier.
-To specify time range specific rates use following format of radius attributes: range-id,rate, range-id,down-rate/up-rate or cisco-like, for example:
-Filter-Id=1000
-Filter-Id=1,2000
-Filter-Id=2,3000
-Filter-Id=3,4000
-which means: set 1000Kbit by default, set 2000Kbit in time range 1, set 3000Kbit in time range 2, set 4000Kbit in time range 3.
-You have to pass multiple Filter-Id attributes to utilize this functionality.
-Or cisco-like:
-Cisco-AVPair=lcp:interface-config#1=rate-limit output access-group 1 1000000 8000 8000 conform-action transmit exceed-action drop
-Cisco-AVPair=lcp:interface-config#1=rate-limit input access-group 1 1000000 8000 8000 conform-action transmit exceed-action drop
-and so on...
+For non-Cisco attributes, configure the factors used to calculate bursts from
+the rate. down-burst-factor applies to downstream TBF/HTB shaping;
+up-burst-factor applies to upstream policing/HTB shaping:
 
-3. chap-secrets.
-If you use chap-secrets instead of radius then there is way to utilize built-in shaper too.
-The optional fifth column in chap-secrets file is used to pass rate information to shaper.
-Its format is same as for radius attributes, except you cann't utilize time ranges functionality.
+    [shaper]
+    down-burst-factor=1.0
+    up-burst-factor=10.0
+
+
+Time ranges
+-----------
+
+Time ranges can change rates automatically:
+
+    [shaper]
+    time-range=1,1:00-3:00
+    time-range=2,3:00-5:00
+    time-range=3,5:00-7:00
+
+Prefix a rate with its range ID and supply multiple RADIUS attributes:
+
+    Filter-Id=1000
+    Filter-Id=1,2000
+    Filter-Id=2,3000
+    Filter-Id=3,4000
+
+This sets a default of 1000 Kbit/s and rates of 2000, 3000, and 4000 Kbit/s in
+ranges 1, 2, and 3 respectively.
+
+For Cisco-style time ranges, the access-group value is the range ID:
+
+    Cisco-AVPair=lcp:interface-config#1=rate-limit output access-group 1 1000000 8000 8000 conform-action transmit exceed-action drop
+    Cisco-AVPair=lcp:interface-config#1=rate-limit input access-group 1 1000000 8000 8000 conform-action transmit exceed-action drop
+
+When using chap-secrets, an optional fifth column can provide rate information
+in the same format. Time ranges are not supported in chap-secrets.
 
 
 SNMP
-----
-SNMP is implemented using net-snmp libraries. By default accel-ppp starts in subagent mode,
-so make sure that net-snmp configured with subagent control turned on (read net-snmp's README.agentx for more details).
-Also you can start accel-ppp as master agent using following configuration:
-[snmp]
-master=1
+====
 
-Usage:
-Place accel-pppd/extra/net-snmp/ACCEL-PPP-MIB.txt to your mibs directory.
-Also you can find used numerical oids in this file.
-1. Requesting statistics:
-snmpwalk -m +ACCEL-PPP-MIB -v 2c -c local 127.0.0.1 ACCEL-PPP-MIB::accelPPPStat
-2. Requesting sessions:
-snmptable -m +ACCEL-PPP-MIB -v 2c -c local 127.0.0.1 ACCEL-PPP-MIB::sessionsTable
-3. Terminate session by session identifier (Acct-Session-ID):
-snmpset -m +ACCEL-PPP-MIB -v 2c -c local 127.0.0.1 ACCEL-PPP-MIB::termBySID.0 = 0000000000000001
-4. Terminate session by interface name:
-snmpset -m +ACCEL-PPP-MIB -v 2c -c local 127.0.0.1 ACCEL-PPP-MIB::termByIfName.0 = ppp2
-5. Terminaten session by IP address (Framed-IP-Address):
-snmpset -m +ACCEL-PPP-MIB -v 2c -c local 127.0.0.1 ACCEL-PPP-MIB::termByIP.0 = 192.168.10.10
-6. Terminate session by username:
-snmpset -m +ACCEL-PPP-MIB -v 2c -c local 127.0.0.1 ACCEL-PPP-MIB::termByUsername.0 = user1
-7. Execute cli command:
-snmpset -m +ACCEL-PPP-MIB -v 2c -c local 127.0.0.1 ACCEL-PPP-MIB::cli.0 = "shaper change all 1024 temp"
+Build SNMP support with NETSNMP=TRUE and enable net-snmp in [modules]. ACCEL-PPP
+starts as an AgentX subagent by default, so the Net-SNMP master agent must have
+AgentX enabled. Consult the Net-SNMP AgentX documentation when configuring the
+master agent. To run ACCEL-PPP as the master agent instead:
 
+    [snmp]
+    master=1
 
-chap-secrets encryption
------------------------
-To enable chap-secrets encryption ablity accel-ppp must be compiled with -DCRYPTO=OPENSSL (which is default).
-Username field may be kept as cleartext or hashed through some hash chain. To specify hash chain use username-hash option.
-For example, username-hash=md5,sha1 means hash username through md5 and then binary result hash through sha1.
-Username have to be specified as hexadecimal dump of digest result.
-Password field have to be encrypted using smbencrypt (NT Hash part).
-Encryption is incompatible with auth_chap_md5 module.
+Install accel-pppd/extra/net-snmp/ACCEL-PPP-MIB.txt in the local MIB directory.
+The file also contains the numerical OIDs used by ACCEL-PPP. Examples:
+
+    # Read statistics and sessions.
+    snmpwalk -m +ACCEL-PPP-MIB -v 2c -c local 127.0.0.1 ACCEL-PPP-MIB::accelPPPStat
+    snmptable -m +ACCEL-PPP-MIB -v 2c -c local 127.0.0.1 ACCEL-PPP-MIB::sessionsTable
+
+    # Terminate sessions by accounting ID, interface, address, or username.
+    snmpset -m +ACCEL-PPP-MIB -v 2c -c local 127.0.0.1 ACCEL-PPP-MIB::termBySID.0 = 0000000000000001
+    snmpset -m +ACCEL-PPP-MIB -v 2c -c local 127.0.0.1 ACCEL-PPP-MIB::termByIfName.0 = ppp2
+    snmpset -m +ACCEL-PPP-MIB -v 2c -c local 127.0.0.1 ACCEL-PPP-MIB::termByIP.0 = 192.0.2.1
+    snmpset -m +ACCEL-PPP-MIB -v 2c -c local 127.0.0.1 ACCEL-PPP-MIB::termByUsername.0 = user1
+
+    # Run a CLI command.
+    snmpset -m +ACCEL-PPP-MIB -v 2c -c local 127.0.0.1 ACCEL-PPP-MIB::cli.0 = "shaper change all 1024 temp"
 
 
-Warning !!!
------------
-1. The pptp driver conflicts with ip_gre driver (in kernel), so make sure that ip_gre is not built-in or loaded at run time
-   (don't matter if you have 2.6.37 or later kernel).
-2. Don't mix connections of accel-ppp and poptop's pptpd, before starting accel-ppp make sure that no connections
-   of pptpd exists.
+Encrypted chap-secrets
+======================
+
+The chap-secrets module supports encrypted passwords through OpenSSL. Set
+encrypted=1 in the [chap-secrets] section. Usernames may remain in cleartext or
+be transformed through a hash chain configured with username-hash, for example:
+
+    [chap-secrets]
+    encrypted=1
+    username-hash=md5,sha1
+
+Hashed usernames must be hexadecimal digest values. Passwords must contain the
+NT hash produced by smbencrypt. Encrypted secrets are incompatible with the
+auth_chap_md5 module. Hash chains are applied from left to right; for
+username-hash=md5,sha1, the binary MD5 result is passed to SHA-1 and the final
+digest is stored as hexadecimal.
 
 
-Contacts
---------
-http://accel-ppp.org/
-mail: contact@accel-ppp.org
-ICQ: 337258064
-Jabber: dima@accel-ppp.org
+Kernel module warning
+=====================
+
+The out-of-tree PPTP module conflicts with the kernel's ip_gre module. Do not
+build ip_gre into the kernel or load it at runtime when using that PPTP module.
+Do not mix ACCEL-PPP PPTP connections with poptop's pptpd; stop existing pptpd
+sessions before starting ACCEL-PPP.
+
+
+More information
+================
+
+* Project website: https://accel-ppp.org/
+* Source and issue tracker: https://github.com/accel-ppp/accel-ppp
+* Additional RADIUS notes: docs/
+* Email: contact@accel-ppp.org
+* ICQ: 337258064
+* Jabber: dima@accel-ppp.org
