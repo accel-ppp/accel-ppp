@@ -2052,4 +2052,5 @@ static void __exit ipoe_fini(void)
 
 module_init(ipoe_init);
 module_exit(ipoe_fini);
+MODULE_DESCRIPTION("ACCEL-PPP IPoE virtual interface driver");
 MODULE_LICENSE("GPL");

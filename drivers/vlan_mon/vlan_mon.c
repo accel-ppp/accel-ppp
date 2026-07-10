@@ -824,6 +824,7 @@ static void __exit vlan_mon_fini(void)
 
 module_init(vlan_mon_init);
 module_exit(vlan_mon_fini);
+MODULE_DESCRIPTION("ACCEL-PPP VLAN monitor driver");
 MODULE_LICENSE("GPL");
 module_param(autoclean, int, 0);
 //MODULE_PARAM_DESC(autoclean, "automaticaly remove created vlan interfaces on restart");
