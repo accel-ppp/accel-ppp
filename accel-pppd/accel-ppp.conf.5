@@ -49,6 +49,14 @@ PPPoE discovery stage handling module.
 .br
 SSTP controlling connection handling module.
 .TP
+.BI l2tp
+.br
+L2TPv2 connection handling module.
+.TP
+.BI ipoe
+.br
+IPoE connection handling module.
+.TP
 .BI auth_pap
 PAP authentication module.
 .TP
@@ -65,6 +73,10 @@ Microsoft CHAP (version 2) authentication module.
 .br
 RADIUS interaction module.
 .TP
+.BI chap-secrets
+.br
+Authentication and address assignment from a pppd-compatible chap-secrets file.
+.TP
 .BI ippool
 .br
 IPv4 address assigning module.
@@ -76,6 +88,26 @@ IPv6 address assigning module.
 .BI ipv6_dhcp
 .br
 IPv6 DHCP module.
+.TP
+.BI ipv6_nd
+.br
+IPv6 Neighbor Discovery and Router Advertisement module.
+.TP
+.BI shaper
+.br
+Traffic shaping and policing module.
+.TP
+.BI net-snmp
+.br
+SNMP agent module. It must be built with NETSNMP enabled.
+.TP
+.BI logwtmp
+.br
+Module that writes session records to wtmp.
+.TP
+.BI metrics
+.br
+HTTP statistics endpoint module.
 .TP
 .BI sigchld
 Helper module to manage child processes, required by pppd_compat
@@ -90,6 +122,9 @@ Configuration of core module
 .TP
 .BI "log-error=" path
 Path to file for core module error logging.
+.TP
+.BI "log-debug=" path
+Path to file for core module debug logging.
 .TP
 .BI "thread-count=" n
 number of working threads, optimal - number of processors/cores
@@ -116,7 +151,7 @@ Specifies whether accel-ppp should ignore the case when comparing username withi
 Specifies in which case generate session identifier (default lower).
 .TP
 .BI "sid-source=" urandom|seq
-Specifies method assign session id (default urandom).
+Specifies method used to assign session IDs (default seq).
 .br
 .B urandom
 Assign session id by random method
@@ -142,6 +177,9 @@ Specifies netlink maximum send buffer size (SO_SNDBUF option) (default 32768).
 .TP
 .BI "nl-rcv-buffer=" n
 Specifies netlink maximum receive buffer size (SO_RCVBUF option) (default 1048576).
+.TP
+.BI "netns-run-dir=" path
+Directory containing named network namespace handles (default /var/run/netns).
 .TP
 .BI "session-timeout=" n
 Specifies max sessions time in seconds, after this time session will be terminated.
@@ -185,7 +223,10 @@ Protocol field compression negotiation.
 Disable CCP negotiation if this parameter is zero.
 .TP
 .BI "ccp-max-configure=" n
-Specifies the maximum number of CCP Configure-Request packets sent without receiving a valid Configure-Ack, Configure-Nak or Configure-Reject before assuming the peer is unable to respond (default 10).
+Specifies the maximum number of CCP Configure-Request packets sent without receiving a valid Configure-Ack, Configure-Nak or Configure-Reject before assuming the peer is unable to respond (default 3).
+.TP
+.BI "timeout=" n
+Specifies the timeout, in seconds, used by PPP finite-state machines (default 3).
 .TP
 .BI "mppe=" require|prefer|deny
 Specifies mppe negotiation preference.
@@ -540,6 +581,81 @@ If enabled accel-ppp will terminate session when detects change of mac address o
 .TP
 .BI "calling-sid=" mac|ip
 Specifies value of Calling-Station-Id attribute.
+.TP
+.BI "netmask=" n
+Specifies the IPv4 prefix length assigned to IPoE sessions (1 through 32).
+.TP
+.BI "nat=" 0|1
+Marks IPoE sessions as requiring NAT.
+.TP
+.BI "noauth=" 0|1
+Authorizes IPoE sessions without consulting a password database. The default is 0.
+.TP
+.BI "check-ip=" 0|1
+Overrides the common duplicate-address check for IPoE sessions.
+.TP
+.BI "ipv6=" 0|1
+Enables IPv6 on IPoE interfaces by default.
+.TP
+.BI "src=" x.x.x.x
+Specifies the source address used by the IPoE service.
+.TP
+.BI "relay-timeout=" n
+Specifies the DHCP relay reply timeout in seconds (default 3).
+.TP
+.BI "relay-retransmit=" n
+Specifies the maximum number of DHCP relay retransmissions (default 3).
+.TP
+.BI "ip-pool=" pool_name
+Specifies the default IPv4 address pool.
+.TP
+.BI "ipv6-pool=" pool_name
+Specifies the default IPv6 address pool.
+.TP
+.BI "ipv6-pool-delegate=" pool_name
+Specifies the default delegated IPv6 prefix pool.
+.TP
+.BI "lua-file=" path
+Loads the Lua file that supplies IPoE Lua hooks. Lua support must be built in.
+.TP
+.BI "vendor=" vendor
+Specifies the RADIUS vendor used when resolving the IPoE attribute options below.
+.TP
+.BI "attr-dhcp-client-ip=" attribute
+Specifies the RADIUS attribute containing the DHCP client address.
+.TP
+.BI "attr-dhcp-router-ip=" attribute
+Specifies the RADIUS attribute containing the DHCP router address.
+.TP
+.BI "attr-dhcp-mask=" attribute
+Specifies the RADIUS attribute containing the DHCP subnet mask.
+.TP
+.BI "attr-dhcp-lease-time=" attribute
+Specifies the RADIUS attribute containing the DHCP lease time.
+.TP
+.BI "attr-dhcp-renew-time=" attribute
+Specifies the RADIUS attribute containing the DHCP renewal time.
+.TP
+.BI "attr-dhcp-rebind-time=" attribute
+Specifies the RADIUS attribute containing the DHCP rebinding time.
+.TP
+.BI "attr-dhcp-opt82=" attribute
+Specifies the RADIUS attribute used for the complete DHCP Option 82 value.
+.TP
+.BI "attr-dhcp-opt82-remote-id=" attribute
+Specifies the RADIUS attribute used for the Option 82 remote ID.
+.TP
+.BI "attr-dhcp-opt82-circuit-id=" attribute
+Specifies the RADIUS attribute used for the Option 82 circuit ID.
+.TP
+.BI "attr-l4-redirect=" attribute
+Specifies the RADIUS attribute that enables Layer-4 redirection.
+.TP
+.BI "attr-l4-redirect-table=" attribute
+Specifies the RADIUS attribute containing the redirection routing-table ID.
+.TP
+.BI "attr-l4-redirect-ipset=" attribute
+Specifies the RADIUS attribute containing the redirection ipset name.
 .SH [dns]
 .TP
 .BI "dns1=" x.x.x.x
@@ -561,6 +677,9 @@ Specifies IPv6 DNS to be sent to peer. You may specify up to 3 dns options.
 .TP
 .BI "dnssl=" name
 Specify DNS Search List. You may specify multiple dns and dnssl options.
+.TP
+.BI "lifetime=" n
+Specifies the RDNSS and DNSSL lifetime advertised by the ipv6_nd module.
 .SH [client-ip-range]
 You have to explicitly specify range of ip address from which clients can connect to server in form:
 .br
@@ -610,6 +729,15 @@ sessions. Default value is 1436.
 Specifies max sessions time in seconds, after this time session will be terminated.
 .br
 This timeout can be redefined with radius attribute Session-Timeout. 0 value means infinite timeout.
+.TP
+.BI "ip-pool=" pool_name
+Specifies the name of the IPv4 pool used by PPTP sessions.
+.TP
+.BI "ipv6-pool=" pool_name
+Specifies the name of the IPv6 pool used by PPTP sessions.
+.TP
+.BI "ipv6-pool-delegate=" pool_name
+Specifies the name of the delegated IPv6 prefix pool used by PPTP sessions.
 .SH [pppoe]
 .br
 Configuration of PPPoE module.
@@ -653,9 +781,11 @@ By default vlan-name=%I.%N.
 .TP
 .BI "ac-name=" ac-name
 Specifies AC-Name tag value. If absent tag will not be sent.
+The compatibility alias AC-Name=ac-name is also accepted.
 .TP
 .BI "service-name=" service-name
 Specifies Service-Name to respond. If absent any Service-Name is acceptable and client's Service-Name will be sent back.
+The compatibility alias Service-Name=service-name is also accepted.
 .TP
 .BI "accept-any-service=" n
 If service-name specified still will answer with service names, but accepts any service name in PADR request. Useful 
@@ -667,6 +797,7 @@ Useful when needs to allow only Service-Names described in the config and also b
 .TP
 .BI "pado-delay=" delay[,delay1:count1[,delay2:count2[,...]]]
 Specifies delays (also in condition of connection count) to send PADO (ms).
+The compatibility alias PADO-Delay=delay is also accepted.
 Last delay in list may be -1 which means don't accept new connections.
 List have to be sorted by count key.
 .TP
@@ -731,6 +862,9 @@ Specifies the timeout in seconds for the PPPoE cookie (PADO/PADR stage).
 .SH [l2tp]
 .br
 Configuration of L2TP module.
+.TP
+.BI "dictionary=" path
+Specifies an alternate L2TP attribute dictionary.
 .TP
 .BI "bind=" x.x.x.x
 Specifies IP address to bind.
@@ -882,6 +1016,9 @@ This is useful when accel-ppp is running behind a load balancer (like HAProxy or
 - \fBCalling-Station-Id\fR attribute in RADIUS and logs.
 .br
 .TP
+.BI "ssl=" 0|1
+Deprecated compatibility option that enables legacy SSL mode. Use accept=ssl instead.
+.TP
 .BI "ssl-protocol=" ssl2|ssl3|tls1|tls1.1|tls1.2|tls1.3
 Specifies the enabled SSL/TLS protocols supported by OpenSSL library.
 .TP
@@ -914,6 +1051,9 @@ Specifies a file with the secret key in the PEM format for sstp server.
 If not set, secret key will be loaded from the
 .BI pemfile
 parameter.
+.TP
+.BI "ssl-ca-file=" file
+Specifies a CA bundle loaded into the SSTP TLS context.
 .TP
 .BI "cert-hash-proto=" sha1,sha256
 Specifies hashing methods that can be used to compute the Compound MAC in the Crypto Binding attribute.
@@ -980,6 +1120,9 @@ This timeout can be redefined with radius attribute Session-Timeout. 0 value mea
 .SH [radius]
 .br
 Configuration of RADIUS module.
+.TP
+.BI "dictionary=" path
+Specifies an alternate RADIUS dictionary.
 .TP
 .BI "nas-identifier=" identifier
 Specifies value to send to RADIUS server in NAS-Identifier attribute and to be matched in DM/CoA requests.
@@ -1059,6 +1202,18 @@ Timeout to wait response from server (sec)
 .BI "max-try=" n
 Specifies number of tries to send Access-Request/Accounting-Request queries.
 .TP
+.BI "req-limit=" n
+Specifies the global limit of simultaneous requests per RADIUS server. Zero means unlimited.
+.TP
+.BI "fail-timeout=" n
+Specifies how long, in seconds, an unresponsive RADIUS server remains unavailable.
+.TP
+.BI "max-fail=" n
+Specifies the number of consecutive unanswered requests before a RADIUS server is marked unavailable.
+.TP
+.BI "fail-time=" n
+Deprecated alias for fail-timeout.
+.TP
 .BI "acct-timeout=" n
 Specifies timeout of accounting interim update.
 .TP
@@ -1117,6 +1272,12 @@ Path to file to write emergency messages.
 .BI "log-fail-file=" file
 Path to file to write authentication failed session log.
 .TP
+.BI "log-debug=" file
+Path to file to write debug messages.
+.TP
+.BI "color=" 0|1
+Enables ANSI color sequences in file log output.
+.TP
 .BI "log-tcp=" x.x.x.x:port
 Send logs to specified host.
 .TP
@@ -1165,6 +1326,14 @@ Configuration of log_pgsql module.
 .BI "conninfo=" conninfo
 Conninfo to connect to PostgreSQL server.
 .TP
+.BI "connect-inteval=" n
+Specifies the PostgreSQL reconnect interval in seconds (default 5).
+The option name intentionally preserves its historical spelling.
+.TP
+.BI "log-query=" query
+Specifies a custom parameterized INSERT query. Parameters $1 through $4 are
+timestamp, username, session ID, and message respectively.
+.TP
 .BI "log-table=" table
 Table to send log messages. Table must contain following field:
 .br
@@ -1179,7 +1348,7 @@ text
 .br
 .B msg
 text
-.SH [pppd_compat]
+.SH [pppd-compat]
 .br
 Configuration of pppd_compat module.
 .TP
@@ -1200,6 +1369,10 @@ Prefix of radattr files (for example /var/run/radattr, resulting files will be /
 .TP
 .BI "verbose=" n
 If specified and greater than zero pppd_module will produce verbose logging.
+.TP
+.BI "fork-limit=" n
+Limits the number of concurrently running compatibility scripts. The default is
+twice the number of online processors.
 .SH [chap-secrets]
 .br
 Configuration of chap-secrets module.
@@ -1268,8 +1441,71 @@ If attribute is vendor-specific then specify vendor name in this option.
 Note: overlapping ranges in different pools are not de-duplicated. If two pools cover the same address, that IP can be allocated from each pool independently. Use non-overlapping ranges (or a single pool with next= chaining) to avoid duplicate assignments.
 .SH [ipv6-dhcp]
 .TP
+.BI "verbose=" 0|1
+Enables verbose DHCPv6 logging.
+.TP
+.BI "pref-lifetime=" n
+Specifies the preferred address and prefix lifetime in seconds (default 604800).
+.TP
+.BI "valid-lifetime=" n
+Specifies the valid address and prefix lifetime in seconds (default 2592000).
+.TP
+.BI "route-via-gw=" 0|1
+Controls whether delegated IPv6 routes are installed through the session gateway (default 1).
+.TP
+.BI "server-id=" x:x:x:x
+Specifies the four 16-bit hexadecimal components used as the DHCPv6 server identifier.
+.TP
 .BI "aftr-gw=" name
 Specifies the AFTR-Name option value to be returned on DHCPv6 replies upon request from the client.
+.SH [ipv6-nd]
+.br
+Configuration of IPv6 Neighbor Discovery and Router Advertisements.
+.TP
+.BI "MaxRtrAdvInterval=" n
+Maximum unsolicited Router Advertisement interval in seconds (default 600).
+.TP
+.BI "MinRtrAdvInterval=" n
+Minimum unsolicited Router Advertisement interval in seconds (default one third of MaxRtrAdvInterval).
+.TP
+.BI "MaxInitialRtrAdvCount=" n
+Maximum number of initial Router Advertisements (default 5).
+.TP
+.BI "MaxInitialRtrAdvInterval=" n
+Maximum interval between initial Router Advertisements in seconds (default 3).
+.TP
+.BI "AdvManagedFlag=" 0|1
+Sets the Managed Address Configuration flag. By default it follows whether ipv6_dhcp is loaded.
+.TP
+.BI "AdvOtherConfigFlag=" 0|1
+Sets the Other Configuration flag. By default it follows whether ipv6_dhcp is loaded.
+.TP
+.BI "AdvLinkMTU=" n
+Specifies the MTU advertised in Router Advertisements. Zero omits the MTU option.
+.TP
+.BI "AdvReachableTime=" n
+Specifies the advertised reachable time in milliseconds.
+.TP
+.BI "AdvRetransTimer=" n
+Specifies the advertised retransmission timer in milliseconds.
+.TP
+.BI "AdvCurHopLimit=" n
+Specifies the advertised current hop limit (default 64).
+.TP
+.BI "AdvDefaultLifetime=" n
+Specifies the router lifetime in seconds (default three times MaxRtrAdvInterval).
+.TP
+.BI "AdvValidLifetime=" n
+Specifies the advertised prefix valid lifetime in seconds (default 2592000).
+.TP
+.BI "AdvPreferredLifetime=" n
+Specifies the advertised prefix preferred lifetime in seconds (default 604800).
+.TP
+.BI "AdvOnLinkFlag=" 0|1
+Sets the advertised prefix on-link flag (default 1).
+.TP
+.BI "AdvAutonomousFlag=" 0|1
+Sets the autonomous address-configuration flag. By default it is disabled when ipv6_dhcp is loaded and enabled otherwise.
 .SH [ipv6-pool]
 .br
 Configuration of ipv6pool module.
@@ -1350,7 +1586,7 @@ after
 .BI "read_timeout=" seconds
 Maximum time a client may take to deliver a complete HTTP request.
 Connections that have not produced a terminating
-.BR \(dq\\r\\n\\r\\n\(dq
+.B \(dq\er\en\er\en\(dq
 within this deadline are closed. Defaults to 5 seconds. Set to
 .B 0
 to disable the deadline.
@@ -1378,6 +1614,9 @@ This module controls shaper.
 .BI "attr=" name
 Specifies which radius attribute contains rate information. Default - Filter-ID.
 .TP
+.BI "vendor=" vendor
+Specifies the RADIUS vendor for vendor-specific rate attributes.
+.TP
 .BI "attr-up=" name
 .TP
 .BI "attr-down=" name
@@ -1397,6 +1636,9 @@ Specifies latency (in milliseconds) parameter of tbf qdisc.
 .BI "mpu=" n
 Specifies mpu parameter of tbf qdisc and policer.
 .TP
+.BI "mtu=" n
+Specifies the MTU used in shaper calculations.
+.TP
 .BI "r2q=" n
 Specifies r2q parameter of root htb qdisc.
 .TP
@@ -1405,6 +1647,12 @@ Specifies quantum parameter of htb classes.
 .TP
 .BI "moderate-quantum=" 1|0
 If fixed quantum is not specified and this option is specified then shaper module will check for quantum value is valid (in range 1000-200000).
+.TP
+.BI "cburst=" n
+Specifies the HTB class ceil burst in bytes (default 1534).
+.TP
+.BI "ifb=" ifname
+Specifies the IFB interface used for upstream HTB shaping. Without it, upstream HTB falls back to policing.
 .TP
 .BI "fwmark=" n
 Specifies the fwmark for traffic that won't be passed through shaper.
@@ -1428,6 +1676,9 @@ Due to accel-ppp operates with rates in kilobit basis if you send rates in diffe
 .TP
 .BI "rate-limit=" download_speed/upload_speed
 Specifies, should accel-ppp set default rate-limit for clients. Clients rate-limit will be overwritten by RADIUS filter attributes or chap-secrets rate-limit params.
+.TP
+.BI "verbose=" 0|1
+Enables verbose shaper logging.
 .SH [cli]
 .br
 Configuration of the command line interface.
@@ -1537,3 +1788,12 @@ command (defaults to
 - virtual routing and forwarding
 .br
 Invalid column names are silently discarded.
+.SH [snmp]
+.br
+Configuration of the optional net-snmp module.
+.TP
+.BI "master=" 0|1
+Runs as an AgentX subagent when set to 0 (the default), or as the SNMP master agent when set to 1.
+.TP
+.BI "agent-name=" name
+Specifies the AgentX subagent name (default accel-ppp).
