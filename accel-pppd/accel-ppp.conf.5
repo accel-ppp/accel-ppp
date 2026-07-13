@@ -1439,13 +1439,19 @@ If \fIn\fR = 2 then cli module will also log passed commands.
 .TP
 .BI "tcp=" host:port
 Defines on which IP address and port the TCP module will listen for incoming
-connections. When \fIhost\fR is empty, the TCP module listens on all local
-interfaces. It isn't loaded if this option isn't defined.
+connections. \fIhost\fR may be an IPv4 or an IPv6 address; IPv6 addresses may
+be enclosed in square brackets (e.g. \fI[::1]:2001\fR). When \fIhost\fR is
+empty, the TCP module listens on all local interfaces (use \fI[::]:port\fR to
+listen on all interfaces over IPv6). It isn't loaded if this option isn't
+defined.
 .TP
 .BI "telnet=" host:port
 Defines on which IP address and port the Telnet module will listen for incoming
-connections. When \fIhost\fR is empty, the Telnet module listens on all local
-interfaces. It isn't loaded if this option isn't defined.
+connections. \fIhost\fR may be an IPv4 or an IPv6 address; IPv6 addresses may
+be enclosed in square brackets (e.g. \fI[::1]:2000\fR). When \fIhost\fR is
+empty, the Telnet module listens on all local interfaces (use \fI[::]:port\fR
+to listen on all interfaces over IPv6). It isn't loaded if this option isn't
+defined.
 .TP
 .BI "password=" passwd
 Defines the password to be used by the TCP and Telnet modules for
