@@ -340,26 +340,41 @@ static int shutdown_exec(const char *cmd, char * const *f, int f_cnt, void *cli)
 }
 
 //==========================
-static int conf_reload_res;
-static struct triton_context_t *conf_reload_ctx;
-static void conf_reload_notify(int r)
+struct conf_reload_req {
+	struct triton_context_t *ctx;
+	int res;
+};
+static void conf_reload_notify(int r, void *arg)
 {
+	struct conf_reload_req *req = arg;
+
 	if (!r)
 		triton_event_fire(EV_CONFIG_RELOAD, NULL);
-	conf_reload_res = r;
-	triton_context_wakeup(conf_reload_ctx);
+	req->res = r;
+	triton_context_wakeup(req->ctx);
 }
 static int reload_exec(const char *cmd, char * const *f, int f_cnt, void *cli)
 {
-	if (f_cnt == 1) {
-		conf_reload_ctx = triton_context_self();
-		triton_conf_reload(conf_reload_notify);
-		triton_context_schedule();
-		if (conf_reload_res)
-			cli_send(cli, "failed\r\n");
-		return CLI_CMD_OK;
-	} else
+	struct conf_reload_req *req;
+
+	if (f_cnt != 1)
 		return CLI_CMD_SYNTAX;
+
+	/* heap-allocated: triton_context_schedule() can migrate this
+	 * context to another worker thread's stack before notify runs */
+	req = _malloc(sizeof(*req));
+	req->ctx = triton_context_self();
+
+	if (triton_conf_reload(conf_reload_notify, req)) {
+		_free(req);
+		cli_send(cli, "reload is already in progress\r\n");
+		return CLI_CMD_OK;
+	}
+	triton_context_schedule();
+	if (req->res)
+		cli_send(cli, "failed\r\n");
+	_free(req);
+	return CLI_CMD_OK;
 }
 
 static void reload_help(char * const *fields, int fields_cnt, void *client)
