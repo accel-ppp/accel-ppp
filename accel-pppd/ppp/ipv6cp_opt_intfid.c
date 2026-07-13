@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <endian.h>
 #include <fcntl.h>
 #include <string.h>
 #include <errno.h>
@@ -25,9 +26,16 @@
 
 static int conf_check_exists;
 static int conf_intf_id = INTF_ID_FIXED;
-static uint64_t conf_intf_id_val = 1;
+/* Fixed intf-id values are stored in network byte order: the rest of
+ * the code (build_ip6_addr(), ifcfg.c, nd.c, ...) copies them into the
+ * low 8 bytes of the IPv6 address as-is, and parse_intfid() already
+ * produces network byte order. The old host-order defaults (1 and 2)
+ * therefore yielded ::100:0:0:0 / ::200:0:0:0 instead of ::1 / ::2 on
+ * little-endian hosts. Defaults are assigned in init() because
+ * htobe64() is not a constant expression on all libcs (e.g. musl). */
+static uint64_t conf_intf_id_val;
 static int conf_peer_intf_id = INTF_ID_FIXED;
-static uint64_t conf_peer_intf_id_val = 2;
+static uint64_t conf_peer_intf_id_val;
 static int conf_accept_peer_intf_id;
 
 static struct ipv6cp_option_t *ipaddr_init(struct ppp_ipv6cp_t *ipv6cp);
@@ -354,6 +362,11 @@ static void load_config(void)
 
 static void init()
 {
+	/* network byte order, so the resulting addresses are ::1 and ::2
+	 * regardless of host endianness */
+	conf_intf_id_val = htobe64(1);
+	conf_peer_intf_id_val = htobe64(2);
+
 	if (sock6_fd < 0)
 		return;
 
