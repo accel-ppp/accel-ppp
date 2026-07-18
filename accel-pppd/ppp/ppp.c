@@ -273,7 +273,7 @@ static void destablish_ppp(struct ppp_t *ppp)
 		if (ppp->ses.net != def_net) {
 			if (net->move_link(def_net, ppp->ses.ifindex)) {
 				log_ppp_warn("failed to attach to default namespace\n");
-				triton_md_unregister_handler(&ppp->unit_hnd, 1);
+				triton_md_unregister_handler(&ppp->unit_hnd, 0);
 				goto skip;
 			}
 			ppp->ses.net = def_net;
@@ -286,7 +286,7 @@ static void destablish_ppp(struct ppp_t *ppp)
 			strncpy(ifr.ifr_name, ppp->ses.ifname, IFNAMSIZ);
 			if (net->sock_ioctl(SIOCSIFNAME, &ifr)) {
 				log_ppp_warn("failed to rename ppp to default name\n");
-				triton_md_unregister_handler(&ppp->unit_hnd, 1);
+				triton_md_unregister_handler(&ppp->unit_hnd, 0);
 				goto skip;
 			}
 		}
@@ -299,10 +299,17 @@ static void destablish_ppp(struct ppp_t *ppp)
 		uc->fd = ppp->unit_fd;
 		uc->unit_idx = ppp->ses.unit_idx;
 	} else
-		triton_md_unregister_handler(&ppp->unit_hnd, 1);
+		triton_md_unregister_handler(&ppp->unit_hnd, 0);
 
 skip:
 	ap_session_finished(&ppp->ses);
+
+	/* The unit fd is closed only after session cleanup (ip-down scripts,
+	 * radattr removal) has finished, so the kernel cannot give the same
+	 * unit index (and thus ifname) to a new session while cleanup still
+	 * references the ifname. */
+	if (!uc)
+		close(ppp->unit_fd);
 
 	ppp->unit_fd = -1;
 
