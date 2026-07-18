@@ -205,8 +205,12 @@ static void ipv6cp_layer_finished(struct ppp_fsm_t *fsm)
 			ap_session_terminate(&ipv6cp->ppp->ses, TERM_USER_ERROR, 0);
 		else
 			ppp_layer_passive(ipv6cp->ppp, &ipv6cp->ld);
-	} else if (!ipv6cp->ppp->ses.terminating)
-		ap_session_terminate(&ipv6cp->ppp->ses, TERM_USER_ERROR, 0);
+	} else if (!ipv6cp->ppp->ses.terminating) {
+		if (conf_ipv6 == IPV6_REQUIRE)
+			ap_session_terminate(&ipv6cp->ppp->ses, TERM_USER_ERROR, 0);
+		else
+			log_ppp_info1("ipv6cp: closed, session continues without IPv6\n");
+	}
 
 	fsm->fsm_state = FSM_Closed;
 }
@@ -738,7 +742,12 @@ static void ipv6cp_recv(struct ppp_handler_t*h)
 			if (conf_ppp_verbose)
 				log_ppp_info2("recv [IPV6CP TermReq id=%x]\n", hdr->id);
 			ppp_fsm_recv_term_req(&ipv6cp->fsm);
-			ap_session_terminate(&ipv6cp->ppp->ses, TERM_USER_REQUEST, 0);
+			/* RFC 1661 sec 3.7: closing one NCP is not sufficient reason
+			 * to terminate the PPP link */
+			if (conf_ipv6 == IPV6_REQUIRE)
+				ap_session_terminate(&ipv6cp->ppp->ses, TERM_USER_REQUEST, 0);
+			else
+				ppp_layer_passive(ipv6cp->ppp, &ipv6cp->ld);
 			break;
 		case TERMACK:
 			if (conf_ppp_verbose)
