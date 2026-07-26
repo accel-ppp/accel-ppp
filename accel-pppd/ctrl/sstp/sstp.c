@@ -2124,6 +2124,30 @@ static int sstp_send(struct sstp_conn_t *conn, struct buffer_t *buf)
 	return 0;
 }
 
+static void sstp_flush(struct sstp_conn_t *conn)
+{
+	struct buffer_t *buf;
+	int n;
+
+	while (!list_empty(&conn->out_queue)) {
+		buf = list_first_entry(&conn->out_queue, typeof(*buf), entry);
+		while (buf->len) {
+			n = conn->stream->write(conn->stream, buf->head, buf->len);
+			if (n < 0) {
+				if (errno == EINTR)
+					continue;
+				if (conf_verbose && errno != EPIPE)
+					log_ppp_info2("sstp: flush: %s\n", strerror(errno));
+				break;
+			} else if (n == 0)
+				break;
+			buf_pull(buf, n);
+		}
+		list_del(&buf->entry);
+		free_buf(buf);
+	}
+}
+
 static void sstp_msg_echo(struct triton_timer_t *t)
 {
 	struct sstp_conn_t *conn = container_of(t, typeof(*conn), hello_timer);
@@ -2225,6 +2249,7 @@ static void sstp_disconnect(struct sstp_conn_t *conn)
 		triton_timer_del(&conn->hello_timer);
 
 	if (conn->hnd.tpd) {
+		sstp_flush(conn);
 		triton_md_unregister_handler(&conn->hnd, 0);
 		conn->stream->close(conn->stream);
 	}
