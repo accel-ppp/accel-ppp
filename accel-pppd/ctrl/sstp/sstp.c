@@ -193,7 +193,6 @@ static mempool_t conn_pool;
 static inline void sstp_queue(struct sstp_conn_t *conn, struct buffer_t *buf);
 static int sstp_send(struct sstp_conn_t *conn, struct buffer_t *buf);
 static inline void sstp_queue_deferred(struct sstp_conn_t *conn, struct buffer_t *buf);
-static int sstp_write(struct triton_md_handler_t *h);
 static int sstp_read_deferred(struct sstp_conn_t *conn);
 static int sstp_abort(struct sstp_conn_t *conn, int disconnect);
 static void sstp_disconnect(struct sstp_conn_t *conn);
@@ -895,7 +894,7 @@ static int http_send_response(struct sstp_conn_t *conn, char *proto, char *statu
 		}
 	}
 
-	return sstp_send(conn, buf) || sstp_write(&conn->hnd);
+	return sstp_send(conn, buf);
 }
 
 static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
@@ -974,7 +973,7 @@ static int http_handler(struct sstp_conn_t *conn, struct buffer_t *buf)
 	static const char *table[] = { "\n\r\n", "\r\r\n", NULL };
 	const char **pptr;
 	uint8_t *ptr, *end = NULL;
-	int n, r;
+	int n;
 
 	if (conn->sstp_state != STATE_SERVER_CALL_DISCONNECTED)
 		return -1;
@@ -1000,11 +999,8 @@ static int http_handler(struct sstp_conn_t *conn, struct buffer_t *buf)
 	} else
 		n = end - buf->head;
 
-	r = http_recv_request(conn, buf->head, n);
-	if (r < 0)
+	if (http_recv_request(conn, buf->head, n) < 0)
 		return -1;
-	else if (r > 0)
-		return 1;
 	buf_pull(buf, n);
 
 	conn->sstp_state = STATE_SERVER_CONNECT_REQUEST_PENDING;
@@ -1979,8 +1975,6 @@ static int sstp_read(struct triton_md_handler_t *h)
 		n = conn->handler(conn, buf);
 		if (n < 0)
 			goto drop;
-		else if (n > 0)
-			return 1;
 
 		buf_expand_tail(buf, SSTP_MAX_PACKET_SIZE);
 	}
