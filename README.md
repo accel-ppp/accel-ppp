@@ -68,6 +68,7 @@ Useful build options:
 * BUILD_PPTP_DRIVER=TRUE builds the PPTP kernel module.
 * BUILD_IPOE_DRIVER=TRUE builds the IPoE kernel module.
 * BUILD_VLAN_MON_DRIVER=TRUE builds the VLAN monitoring kernel module.
+* BUILD_PPPOSEQ_DRIVER=TRUE builds the PPPoSEQ kernel module.
 * BUILD_DRIVER_ONLY=TRUE builds only the selected kernel modules.
 * KDIR=/path/to/kernel/build sets the kernel build directory.
 * RADIUS=FALSE omits RADIUS support.

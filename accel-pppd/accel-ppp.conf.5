@@ -995,10 +995,25 @@ Timeout waiting reply from client in seconds.
 Default is 60.
 .TP
 .BI "hello-interval=" n
-If this option is given and greater than zero then sstp will send echo-request every 
+If this option is given and greater than zero then sstp will send echo-request every
 .B n
 seconds and drop connection without a reply.
 Default is 60.
+.TP
+.BI "ppp-mode=" auto|seqpacket|async
+Specifies transport between sstp and the kernel ppp layer.
+.br
+.B seqpacket
+- use the ppposeq module. One datagram carries one ppp frame, so no
+HDLC framing is done in userspace.
+.br
+.B async
+- use a pty with ppp_async and frame in userspace. Works on any kernel.
+.br
+.B auto
+- use seqpacket if the module is available, otherwise async.
+.br
+Default is auto.
 .TP
 .BI "accept=" ssl,proxy
 Specifies incoming connection acceptance mode.
