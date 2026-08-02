@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <errno.h>
 #include <string.h>
+#include <inttypes.h>
 #include <fcntl.h>
 #include <time.h>
 #include <termios.h>
@@ -193,7 +194,6 @@ static mempool_t conn_pool;
 static inline void sstp_queue(struct sstp_conn_t *conn, struct buffer_t *buf);
 static int sstp_send(struct sstp_conn_t *conn, struct buffer_t *buf);
 static inline void sstp_queue_deferred(struct sstp_conn_t *conn, struct buffer_t *buf);
-static int sstp_write(struct triton_md_handler_t *h);
 static int sstp_read_deferred(struct sstp_conn_t *conn);
 static int sstp_abort(struct sstp_conn_t *conn, int disconnect);
 static void sstp_disconnect(struct sstp_conn_t *conn);
@@ -867,7 +867,7 @@ static char *http_getvalue(char *line, const char *name, int len)
 	return sep ? line : NULL;
 }
 
-static int http_send_response(struct sstp_conn_t *conn, char *proto, char *status, char *headers)
+static int http_send_response(struct sstp_conn_t *conn, char *proto, char *status, char *headers, u_int64_t length)
 {
 	char datetime[sizeof("aaa, dd bbb yyyy HH:MM:SS GMT")];
 	char linebuf[1024], *line;
@@ -880,7 +880,12 @@ static int http_send_response(struct sstp_conn_t *conn, char *proto, char *statu
 		/* "Server: %s\r\n" */
 		"Date: %s\r\n"
 		"%s"
-		"\r\n", proto, status, /* "accel-ppp",*/ datetime, headers ? : "");
+		"Content-Length: %" PRIu64 "\r\n"
+		"Connection: %s\r\n"
+		"\r\n",
+		proto, status, /* "accel-ppp",*/ datetime,
+		headers ? : "",
+		length, length ? "keep-alive" : "close");
 	if (!buf) {
 		log_error("sstp: no memory\n");
 		return -1;
@@ -895,7 +900,7 @@ static int http_send_response(struct sstp_conn_t *conn, char *proto, char *statu
 		}
 	}
 
-	return sstp_send(conn, buf) || sstp_write(&conn->hnd);
+	return sstp_send(conn, buf);
 }
 
 static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
@@ -917,17 +922,17 @@ static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
 
 	if (vstrsep(line, " ", &method, &request, &proto) < 3) {
 		if (conf_http_mode != HTTP_ERR_DENY)
-			http_send_response(conn, "HTTP/1.1", "400 Bad Request", NULL);
+			http_send_response(conn, "HTTP/1.1", "400 Bad Request", NULL, 0);
 		return -1;
 	}
 	if (strncasecmp(proto, "HTTP/1", sizeof("HTTP/1") - 1) != 0) {
 		if (conf_http_mode != HTTP_ERR_DENY)
-			http_send_response(conn, "HTTP/1.1", "400 Bad Request", NULL);
+			http_send_response(conn, "HTTP/1.1", "400 Bad Request", NULL, 0);
 		return -1;
 	}
 	if (strcasecmp(method, SSTP_HTTP_METHOD) != 0 && strcasecmp(method, "GET") != 0) {
 		if (conf_http_mode != HTTP_ERR_DENY)
-			http_send_response(conn, proto, "501 Not Implemented", NULL);
+			http_send_response(conn, proto, "501 Not Implemented", NULL, 0);
 		return -1;
 	}
 
@@ -949,7 +954,7 @@ static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
 
 	if (host_error) {
 		if (conf_http_mode != HTTP_ERR_DENY)
-			http_send_response(conn, proto, "404 Not Found", NULL);
+			http_send_response(conn, proto, "404 Not Found", NULL, 0);
 		return -1;
 	}
 
@@ -958,15 +963,14 @@ static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
 			if (_asprintf(&line, "Location: %s%s\r\n",
 			    conf_http_url, (conf_http_mode == HTTP_ERR_REDIRECT_APPEND) ? request : "") < 0)
 				return -1;
-			http_send_response(conn, proto, "301 Moved Permanently", line);
+			http_send_response(conn, proto, "301 Moved Permanently", line, 0);
 			_free(line);
 		} else if (conf_http_mode == HTTP_ERR_ALLOW)
-			http_send_response(conn, proto, "404 Not Found", NULL);
+			http_send_response(conn, proto, "404 Not Found", NULL, 0);
 		return -1;
 	}
 
-	return http_send_response(conn, proto, "200 OK",
-			"Content-Length: 18446744073709551615\r\n");
+	return http_send_response(conn, proto, "200 OK", NULL, -1);
 }
 
 static int http_handler(struct sstp_conn_t *conn, struct buffer_t *buf)
@@ -974,7 +978,7 @@ static int http_handler(struct sstp_conn_t *conn, struct buffer_t *buf)
 	static const char *table[] = { "\n\r\n", "\r\r\n", NULL };
 	const char **pptr;
 	uint8_t *ptr, *end = NULL;
-	int n, r;
+	int n;
 
 	if (conn->sstp_state != STATE_SERVER_CALL_DISCONNECTED)
 		return -1;
@@ -1000,11 +1004,8 @@ static int http_handler(struct sstp_conn_t *conn, struct buffer_t *buf)
 	} else
 		n = end - buf->head;
 
-	r = http_recv_request(conn, buf->head, n);
-	if (r < 0)
+	if (http_recv_request(conn, buf->head, n) < 0)
 		return -1;
-	else if (r > 0)
-		return 1;
 	buf_pull(buf, n);
 
 	conn->sstp_state = STATE_SERVER_CONNECT_REQUEST_PENDING;
@@ -1979,8 +1980,6 @@ static int sstp_read(struct triton_md_handler_t *h)
 		n = conn->handler(conn, buf);
 		if (n < 0)
 			goto drop;
-		else if (n > 0)
-			return 1;
 
 		buf_expand_tail(buf, SSTP_MAX_PACKET_SIZE);
 	}
@@ -2130,6 +2129,30 @@ static int sstp_send(struct sstp_conn_t *conn, struct buffer_t *buf)
 	return 0;
 }
 
+static void sstp_flush(struct sstp_conn_t *conn)
+{
+	struct buffer_t *buf;
+	int n;
+
+	while (!list_empty(&conn->out_queue)) {
+		buf = list_first_entry(&conn->out_queue, typeof(*buf), entry);
+		while (buf->len) {
+			n = conn->stream->write(conn->stream, buf->head, buf->len);
+			if (n < 0) {
+				if (errno == EINTR)
+					continue;
+				if (conf_verbose && errno != EPIPE)
+					log_ppp_info2("sstp: flush: %s\n", strerror(errno));
+				break;
+			} else if (n == 0)
+				break;
+			buf_pull(buf, n);
+		}
+		list_del(&buf->entry);
+		free_buf(buf);
+	}
+}
+
 static void sstp_msg_echo(struct triton_timer_t *t)
 {
 	struct sstp_conn_t *conn = container_of(t, typeof(*conn), hello_timer);
@@ -2231,6 +2254,7 @@ static void sstp_disconnect(struct sstp_conn_t *conn)
 		triton_timer_del(&conn->hello_timer);
 
 	if (conn->hnd.tpd) {
+		sstp_flush(conn);
 		triton_md_unregister_handler(&conn->hnd, 0);
 		conn->stream->close(conn->stream);
 	}
