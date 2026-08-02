@@ -1846,7 +1846,8 @@ static int sstp_recv_data_packet(struct sstp_conn_t *conn, struct sstp_hdr *hdr)
 
 	buf_put_data(buf, hdr->data, size);
 #else
-	buf = alloc_buf(size*2 + 2 + PPP_FCSLEN*2);
+	/* payload and FCS octets may both double when escaped, plus 2 flags */
+	buf = alloc_buf((size + PPP_FCSLEN) * 2 + 2);
 	if (!buf) {
 		log_error("sstp: no memory\n");
 		return -1;
