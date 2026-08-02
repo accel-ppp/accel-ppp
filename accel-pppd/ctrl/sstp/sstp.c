@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <errno.h>
 #include <string.h>
+#include <inttypes.h>
 #include <fcntl.h>
 #include <time.h>
 #include <termios.h>
@@ -866,7 +867,7 @@ static char *http_getvalue(char *line, const char *name, int len)
 	return sep ? line : NULL;
 }
 
-static int http_send_response(struct sstp_conn_t *conn, char *proto, char *status, char *headers)
+static int http_send_response(struct sstp_conn_t *conn, char *proto, char *status, char *headers, u_int64_t length)
 {
 	char datetime[sizeof("aaa, dd bbb yyyy HH:MM:SS GMT")];
 	char linebuf[1024], *line;
@@ -879,7 +880,12 @@ static int http_send_response(struct sstp_conn_t *conn, char *proto, char *statu
 		/* "Server: %s\r\n" */
 		"Date: %s\r\n"
 		"%s"
-		"\r\n", proto, status, /* "accel-ppp",*/ datetime, headers ? : "");
+		"Content-Length: %" PRIu64 "\r\n"
+		"Connection: %s\r\n"
+		"\r\n",
+		proto, status, /* "accel-ppp",*/ datetime,
+		headers ? : "",
+		length, length ? "keep-alive" : "close");
 	if (!buf) {
 		log_error("sstp: no memory\n");
 		return -1;
@@ -916,17 +922,17 @@ static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
 
 	if (vstrsep(line, " ", &method, &request, &proto) < 3) {
 		if (conf_http_mode != HTTP_ERR_DENY)
-			http_send_response(conn, "HTTP/1.1", "400 Bad Request", NULL);
+			http_send_response(conn, "HTTP/1.1", "400 Bad Request", NULL, 0);
 		return -1;
 	}
 	if (strncasecmp(proto, "HTTP/1", sizeof("HTTP/1") - 1) != 0) {
 		if (conf_http_mode != HTTP_ERR_DENY)
-			http_send_response(conn, "HTTP/1.1", "400 Bad Request", NULL);
+			http_send_response(conn, "HTTP/1.1", "400 Bad Request", NULL, 0);
 		return -1;
 	}
 	if (strcasecmp(method, SSTP_HTTP_METHOD) != 0 && strcasecmp(method, "GET") != 0) {
 		if (conf_http_mode != HTTP_ERR_DENY)
-			http_send_response(conn, proto, "501 Not Implemented", NULL);
+			http_send_response(conn, proto, "501 Not Implemented", NULL, 0);
 		return -1;
 	}
 
@@ -948,7 +954,7 @@ static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
 
 	if (host_error) {
 		if (conf_http_mode != HTTP_ERR_DENY)
-			http_send_response(conn, proto, "404 Not Found", NULL);
+			http_send_response(conn, proto, "404 Not Found", NULL, 0);
 		return -1;
 	}
 
@@ -957,15 +963,14 @@ static int http_recv_request(struct sstp_conn_t *conn, uint8_t *data, int len)
 			if (_asprintf(&line, "Location: %s%s\r\n",
 			    conf_http_url, (conf_http_mode == HTTP_ERR_REDIRECT_APPEND) ? request : "") < 0)
 				return -1;
-			http_send_response(conn, proto, "301 Moved Permanently", line);
+			http_send_response(conn, proto, "301 Moved Permanently", line, 0);
 			_free(line);
 		} else if (conf_http_mode == HTTP_ERR_ALLOW)
-			http_send_response(conn, proto, "404 Not Found", NULL);
+			http_send_response(conn, proto, "404 Not Found", NULL, 0);
 		return -1;
 	}
 
-	return http_send_response(conn, proto, "200 OK",
-			"Content-Length: 18446744073709551615\r\n");
+	return http_send_response(conn, proto, "200 OK", NULL, -1);
 }
 
 static int http_handler(struct sstp_conn_t *conn, struct buffer_t *buf)
