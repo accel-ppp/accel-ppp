@@ -42,3 +42,19 @@ INSTALL(TARGETS internal-crypto LIBRARY DESTINATION lib${LIB_SUFFIX}/accel-ppp)
 
 ENDIF (CRYPTO STREQUAL INTERNAL OR CRYPTO STREQUAL TOMCRYPT)
 
+#
+# Known-answer test, built for every backend so CI can prove they agree.
+# Not installed.
+#
+IF (CRYPTO STREQUAL OPENSSL)
+	# No shim library to link against; ap_crypto_init() lives in crypto.c.
+	ADD_EXECUTABLE(accel-crypto-test EXCLUDE_FROM_ALL crypto_test.c crypto.c)
+ELSE (CRYPTO STREQUAL OPENSSL)
+	ADD_EXECUTABLE(accel-crypto-test EXCLUDE_FROM_ALL crypto_test.c)
+ENDIF (CRYPTO STREQUAL OPENSSL)
+TARGET_INCLUDE_DIRECTORIES(accel-crypto-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+IF (CRYPTO STREQUAL INTERNAL)
+	TARGET_INCLUDE_DIRECTORIES(accel-crypto-test PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/libtomcrypt/headers)
+ENDIF (CRYPTO STREQUAL INTERNAL)
+TARGET_LINK_LIBRARIES(accel-crypto-test ${crypto_lib})
