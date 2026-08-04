@@ -16,9 +16,7 @@
 #include <sys/wait.h>
 #include <sys/resource.h>
 
-#ifdef CRYPTO_OPENSSL
-#include <openssl/ssl.h>
-#endif /* CRYPTO_OPENSSL */
+#include "crypto.h"
 
 #include "triton/triton.h"
 
@@ -44,49 +42,6 @@ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 
 static volatile sig_atomic_t need_reload;
-
-#ifdef CRYPTO_OPENSSL
-#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
-static pthread_mutex_t *ssl_lock_cs;
-
-static unsigned long ssl_thread_id(void)
-{
-	return (unsigned long)pthread_self();
-}
-
-static void ssl_lock(int mode, int type, const char *file, int line)
-{
-	if (mode & CRYPTO_LOCK)
-		pthread_mutex_lock(&ssl_lock_cs[type]);
-	else
-		pthread_mutex_unlock(&ssl_lock_cs[type]);
-}
-
-static void ssl_lock_init(void)
-{
-	int i;
-
-	ssl_lock_cs = OPENSSL_malloc(CRYPTO_num_locks() * sizeof(pthread_mutex_t));
-
-	for (i = 0; i < CRYPTO_num_locks(); i++)
-		pthread_mutex_init(&ssl_lock_cs[i], NULL);
-
-	CRYPTO_set_id_callback(ssl_thread_id);
-	CRYPTO_set_locking_callback(ssl_lock);
-}
-#endif
-
-static void openssl_init(void)
-{
-#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
-	SSL_library_init();
-	SSL_load_error_strings();
-	OpenSSL_add_all_algorithms();
-	OpenSSL_add_all_digests();
-	ssl_lock_init();
-#endif
-}
-#endif /* CRYPTO_OPENSSL */
 
 static void change_limits(void)
 {
@@ -394,9 +349,7 @@ int main(int _argc, char **_argv)
 
 	change_limits();
 
-#ifdef CRYPTO_OPENSSL
-	openssl_init();
-#endif /* CRYPTO_OPENSSL */
+	ap_crypto_init();
 
 	triton_register_init(0, log_version);
 

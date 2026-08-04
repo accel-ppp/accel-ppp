@@ -8,7 +8,67 @@
 
 #include "crypto.h"
 
-#ifndef CRYPTO_OPENSSL
+#ifdef CRYPTO_OPENSSL
+
+#include <openssl/ssl.h>
+
+#if (OPENSSL_VERSION_NUMBER >= 0x30000000L) && !defined(LIBRESSL_VERSION_NUMBER)
+#include <openssl/provider.h>
+#endif
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
+/*
+ * Pre-1.1.0 OpenSSL leaves locking to the application: without these
+ * callbacks libcrypto is not thread-safe, and accel-pppd is threaded.
+ */
+static pthread_mutex_t *ssl_lock_cs;
+
+static unsigned long ssl_thread_id(void)
+{
+	return (unsigned long)pthread_self();
+}
+
+static void ssl_lock(int mode, int type, const char *file, int line)
+{
+	if (mode & CRYPTO_LOCK)
+		pthread_mutex_lock(&ssl_lock_cs[type]);
+	else
+		pthread_mutex_unlock(&ssl_lock_cs[type]);
+}
+
+static void ssl_lock_init(void)
+{
+	int i;
+
+	ssl_lock_cs = OPENSSL_malloc(CRYPTO_num_locks() * sizeof(pthread_mutex_t));
+
+	for (i = 0; i < CRYPTO_num_locks(); i++)
+		pthread_mutex_init(&ssl_lock_cs[i], NULL);
+
+	CRYPTO_set_id_callback(ssl_thread_id);
+	CRYPTO_set_locking_callback(ssl_lock);
+}
+#endif
+
+void ap_crypto_init(void)
+{
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
+	SSL_library_init();
+	SSL_load_error_strings();
+	OpenSSL_add_all_algorithms();
+	OpenSSL_add_all_digests();
+	ssl_lock_init();
+#endif
+
+#if (OPENSSL_VERSION_NUMBER >= 0x30000000L) && !defined(LIBRESSL_VERSION_NUMBER)
+	/* Handles are intentionally not released: they live for the life of
+	 * the process, and unloading would break every later digest. */
+	OSSL_PROVIDER_load(NULL, "default");
+	OSSL_PROVIDER_load(NULL, "legacy");
+#endif
+}
+
+#else /* !CRYPTO_OPENSSL */
 
 #if !defined(LTC_MD4) || !defined(LTC_MD5) || !defined(LTC_SHA1) || \
     !defined(LTC_SHA256) || !defined(LTC_DES) || !defined(LTC_HMAC)
@@ -32,6 +92,11 @@ static void crypto_init(void)
 	register_hash(&sha256_desc);
 
 	urandom_fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+}
+
+void ap_crypto_init(void)
+{
+	pthread_once(&crypto_once, crypto_init);
 }
 
 /* ----------------------------------------------------------------------

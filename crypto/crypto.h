@@ -128,4 +128,23 @@ int HMAC_Final(HMAC_CTX *ctx, unsigned char *md, unsigned int *len);
 
 #endif /* CRYPTO_OPENSSL */
 
+/*
+ * Must be called once at startup, before any other function here and before
+ * any thread is started.  Whatever the backend needs to be usable happens
+ * here, so that no caller has to reach past this header to a crypto library
+ * of its own.
+ *
+ * OpenSSL: on 3.x, MD4 was moved into the legacy provider.  The low-level
+ * MD4_Init()/MD4_Update() API still works (MSCHAP is fine), but fetching it
+ * through EVP does not unless legacy is activated -- which is what
+ * chap-secrets' "username-hash" option does, so username-hash=md4 silently
+ * stops hashing on any modern distro.  Before 1.1.0 (and on LibreSSL) it also
+ * does the library initialisation and installs the threading callbacks
+ * libcrypto needs.
+ *
+ * LibTomCrypt: registers the digests, since HMAC resolves them by name
+ * through a process-global registry.
+ */
+void ap_crypto_init(void);
+
 #endif

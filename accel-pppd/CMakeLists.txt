@@ -137,6 +137,16 @@ ADD_EXECUTABLE(accel-pppd
 	main.c
 )
 
+#
+# With the libtomcrypt backends ap_crypto_init() comes from the shared shim
+# accel-pppd already links.  OpenSSL needs no shim library -- only that one
+# initialiser -- so compile it straight into the daemon rather than growing a
+# libinternal-crypto.so for the default build.
+#
+IF (CRYPTO STREQUAL OPENSSL)
+	TARGET_SOURCES(accel-pppd PRIVATE ${CMAKE_SOURCE_DIR}/crypto/crypto.c)
+ENDIF (CRYPTO STREQUAL OPENSSL)
+
 # check if we have getcontext/setcontext
 INCLUDE(CheckFunctionExists)
 CHECK_FUNCTION_EXISTS(getcontext HAVE_GETCONTEXT)
