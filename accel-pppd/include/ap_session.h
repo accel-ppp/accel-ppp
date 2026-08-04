@@ -85,6 +85,12 @@ struct ap_session
 	struct ipv4db_item_t *ipv4;
 	struct ipv6db_item_t *ipv6;
 	struct ipv6db_prefix_t *ipv6_dp;
+	/* Per session IPv6 DNS servers, NULL when none were assigned and the
+	   globally configured ones ([ipv6-dns]) should be advertised instead.
+	   Only addr_list, and only the addr member of its entries, is
+	   meaningful here. Owned by whoever sets it, currently the radius
+	   module from the DNS-Server-IPv6-Address attribute (RFC 6911) */
+	struct ipv6db_item_t *ipv6_dns;
 	char *ipv4_pool_name;
 	char *ipv6_pool_name;
 	char *dpv6_pool_name;

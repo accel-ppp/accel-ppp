@@ -17,6 +17,7 @@
 #include "events.h"
 #include "mempool.h"
 #include "ipdb.h"
+#include "ipv6_dns.h"
 #include "iputils.h"
 
 #include "memdebug.h"
@@ -107,7 +108,8 @@ static void ipv6_nd_send_ra(struct ipv6_nd_handler_t *h, struct sockaddr_in6 *ds
 	//struct nd_opt_mtu *mtu;
 	struct ipv6db_addr_t *a;
 	struct in6_addr addr, peer_addr;
-	int i, prefix_len;
+	struct in6_addr dns[MAX_DNS_COUNT];
+	int i, prefix_len, dns_count;
 
 	if (!buf) {
 		log_emerg("out of memory\n");
@@ -174,15 +176,17 @@ static void ipv6_nd_send_ra(struct ipv6_nd_handler_t *h, struct sockaddr_in6 *ds
 		rinfo++;
 	}*/
 
-	if (conf_dns_count) {
+	dns_count = ipv6_dns_get(ses, conf_dns, conf_dns_count, dns, MAX_DNS_COUNT);
+
+	if (dns_count) {
 		rdnssinfo = (struct nd_opt_rdnss_info_local *)pinfo;
 		memset(rdnssinfo, 0, sizeof(*rdnssinfo));
 		rdnssinfo->nd_opt_rdnssi_type = ND_OPT_RDNSS_INFORMATION;
-		rdnssinfo->nd_opt_rdnssi_len = 1 + 2 * conf_dns_count;
+		rdnssinfo->nd_opt_rdnssi_len = 1 + 2 * dns_count;
 		rdnssinfo->nd_opt_rdnssi_lifetime = htonl(conf_rdnss_lifetime);
 		rdnss_addr = (struct in6_addr *)rdnssinfo->nd_opt_rdnssi;
-		for (i = 0; i < conf_dns_count; i++) {
-			memcpy(rdnss_addr, &conf_dns[i], sizeof(*rdnss_addr));
+		for (i = 0; i < dns_count; i++) {
+			memcpy(rdnss_addr, &dns[i], sizeof(*rdnss_addr));
 			rdnss_addr++;
 		}
 	} else
