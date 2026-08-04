@@ -174,9 +174,17 @@ static void memxor(uint8_t *dst, const uint8_t *src, size_t sz)
 /*
  * Decipher hidden AVPs, keeping the Hidden AVP Subformat (i.e. the attribute
  * value is prefixed by 2 bytes indicating its length in network byte order).
+ *
+ * On success the deciphered original attribute length is stored into
+ * *orig_attr_len, already validated against the size of the received AVP.
+ * Callers must never re-read that length from the AVP body themselves: it is
+ * the output of the cipher, so a peer using a mismatching secret (or an
+ * attacker blindly injecting hidden AVPs) makes it an essentially random
+ * 16 bits value.
  */
 static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
-		      const char *secret, size_t secret_len)
+		      const char *secret, size_t secret_len,
+		      uint16_t *orig_attr_len_out)
 {
 	MD5_CTX md5_ctx;
 	uint8_t md5[MD5_DIGEST_LENGTH];
@@ -190,7 +198,7 @@ static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
 	uint16_t last_block_len;
 
 	avp_len = avp->flags & L2TP_AVP_LEN_MASK;
-	if (avp_len < sizeof(struct l2tp_avp_t) + 2) {
+	if (avp_len < sizeof(struct l2tp_avp_t) + sizeof(uint16_t)) {
 		/* Hidden AVPs must contain at least two bytes
 		   for storing original attribute length */
 		log_warn("l2tp: incorrect hidden avp received (type %hu):"
@@ -208,20 +216,22 @@ static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
 	MD5_Final(p1, &md5_ctx);
 
 	if (attr_len <= MD5_DIGEST_LENGTH) {
+		/* The whole attribute fits in the first block: it is fully
+		   deciphered, nothing more to do but to check its length */
 		memxor(avp->val, p1, attr_len);
-		return 0;
+		goto out;
 	}
 
 	memxor(p1, avp->val, MD5_DIGEST_LENGTH);
 	orig_attr_len = unaligned_ntohs(p1);
 
-	if (orig_attr_len <= MD5_DIGEST_LENGTH - 2) {
+	if (orig_attr_len <= MD5_DIGEST_LENGTH - sizeof(uint16_t)) {
 		/* Enough bytes decoded already, no need to decode padding */
 		memcpy(avp->val, p1, MD5_DIGEST_LENGTH);
-		return 0;
+		goto out;
 	}
 
-	if (orig_attr_len > attr_len - 2) {
+	if (orig_attr_len > attr_len - sizeof(uint16_t)) {
 		log_warn("l2tp: incorrect hidden avp received (type %hu):"
 			 " original attribute length too big (ciphered"
 			 " attribute length: %hu bytes, advertised original"
@@ -232,7 +242,7 @@ static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
 
 	/* Decode remaining blocks. Start from the last block as
 	   preceding blocks must be kept hidden for computing MD5s */
-	bytes_left = orig_attr_len + 2 - MD5_DIGEST_LENGTH;
+	bytes_left = orig_attr_len + sizeof(uint16_t) - MD5_DIGEST_LENGTH;
 	last_block_len = bytes_left % MD5_DIGEST_LENGTH;
 	blocks_left = bytes_left / MD5_DIGEST_LENGTH;
 	if (last_block_len) {
@@ -256,6 +266,23 @@ static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
 	}
 	memcpy(avp->val, p1, MD5_DIGEST_LENGTH);
 
+out:
+	/* The length prefix comes out of the cipher, so it is only as
+	   trustworthy as the peer's knowledge of the shared secret. Bound it
+	   against the room actually available in the received AVP before
+	   letting it drive any read of the attribute value */
+	orig_attr_len = unaligned_ntohs(avp->val);
+	if (orig_attr_len > attr_len - sizeof(uint16_t)) {
+		log_warn("l2tp: incorrect hidden avp received (type %hu):"
+			 " deciphered attribute length too big (ciphered"
+			 " attribute length: %hu bytes, deciphered original"
+			 " attribute length: %hu bytes), wrong secret?\n",
+			 ntohs(avp->type), attr_len, orig_attr_len);
+		return -1;
+	}
+
+	*orig_attr_len_out = orig_attr_len;
+
 	return 0;
 }
 
@@ -269,6 +296,7 @@ int l2tp_recv(int fd, struct l2tp_packet_t **p, struct in_pktinfo *pkt_info,
 	struct sockaddr_in addr;
 	socklen_t addr_len;
 	uint16_t orig_avp_len;
+	uint16_t orig_attr_len;
 	void *orig_avp_val;
 	uint8_t *buf, *ptr;
 	int n, length;
@@ -448,10 +476,11 @@ int l2tp_recv(int fd, struct l2tp_packet_t **p, struct in_pktinfo *pkt_info,
 						  ntohs(avp->type));
 					goto out_err;
 				}
-				if (decode_avp(avp, RV, secret, secret_len) < 0)
+				if (decode_avp(avp, RV, secret, secret_len,
+					       &orig_attr_len) < 0)
 					goto out_err;
 
-				orig_avp_len = unaligned_ntohs(avp->val) + sizeof(*avp);
+				orig_avp_len = orig_attr_len + sizeof(*avp);
 				orig_avp_val = avp->val + sizeof(uint16_t);
 			} else {
 				orig_avp_len = avp_len;
