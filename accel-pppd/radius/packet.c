@@ -10,8 +10,11 @@
 #include <arpa/inet.h>
 
 /*
- * Suppress OpenSSL 3.0 deprecation warnings for HMAC API.
- * See crypto.h for detailed explanation.
+ * Suppress OpenSSL 3.0 deprecation warnings for the HMAC API: it is
+ * deprecated but still functional, and still required for protocol
+ * compatibility. The project sets this for every target (see the top level
+ * CMakeLists.txt); it is repeated here because it only takes effect if it is
+ * defined before the first OpenSSL header is pulled in.
  */
 #define OPENSSL_API_COMPAT 0x10100000L
 #include <openssl/hmac.h>
