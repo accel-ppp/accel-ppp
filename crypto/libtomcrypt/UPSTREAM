@@ -1,0 +1,77 @@
+LibTomCrypt vendored subset
+===========================
+
+Upstream:  https://github.com/libtom/libtomcrypt
+Branch:    develop
+Commit:    223ecd23b8e8be3f56590d79b259479a9d1c9e52
+Date:      2026-08-04
+Version:   1.18.2-develop (SCRYPT in headers/tomcrypt.h)
+
+This directory contains an unmodified subset of the upstream tree.  Do not
+patch files here -- the whole point of keeping them pristine is that the
+subset can be refreshed with a plain file copy.  Configuration lives in
+crypto/accel_ltc_config.h, which crypto/CMakeLists.txt force-includes into
+every vendored file, never in headers/tomcrypt_custom.h.
+
+The previous vendored copy (removed in c912d090, Sep 2025) was LibTomCrypt
+1.17 from 2011 and had been hand-edited, which is why it was never updated.
+
+Layout
+------
+  headers/   verbatim copy of upstream src/headers/
+  src/       flattened copy of the algorithm files listed below
+
+File set
+--------
+  hashes:        md4.c md5.c sha1.c sha1_desc.c sha256.c sha256_desc.c
+  hash helper:   hash_memory.c            (needed by hmac_init for long keys)
+  ciphers:       des.c
+  mac:           hmac_init.c hmac_process.c hmac_done.c hmac_memory.c
+  misc:          zeromem.c burn_stack.c mem_neq.c copy_or_zeromem.c
+  registry:      crypt_hash_descriptor.c crypt_register_hash.c
+                 crypt_find_hash.c crypt_hash_is_valid.c
+
+SHA-256 is not used by any PPP/RADIUS primitive; it is required by the SSTP
+Compound MAC (MS-SSTP 3.3.5.2.3) when the certificate hash protocol is
+SHA-256.
+
+Deliberately not vendored, though the algorithms above reference them
+upstream -- our configuration compiles all three to nothing:
+
+  sha1_x86.c, sha256_x86.c   SHA-NI/AVX2 paths, excluded by LTC_NO_ASM
+  crypt_argchk.c             crypt_argchk(), unreferenced at ARGTYPE 4
+
+That makes the file set depend on crypto/accel_ltc_config.h: dropping
+LTC_NO_ASM or lowering ARGTYPE means copying those files back in, otherwise
+the build fails on an undefined symbol rather than silently misbehaving.
+
+Refreshing
+----------
+  git clone --depth 1 https://github.com/libtom/libtomcrypt ltc
+  cp ltc/src/headers/*.h crypto/libtomcrypt/headers/
+  cp ltc/src/hashes/{md4,md5,sha1,sha1_desc}.c \
+     ltc/src/hashes/sha2/{sha256,sha256_desc}.c \
+     ltc/src/hashes/helper/hash_memory.c \
+     ltc/src/ciphers/des.c \
+     ltc/src/mac/hmac/{hmac_init,hmac_process,hmac_done,hmac_memory}.c \
+     ltc/src/misc/{zeromem,burn_stack,mem_neq,copy_or_zeromem}.c \
+     ltc/src/misc/crypt/{crypt_hash_descriptor,crypt_register_hash,crypt_find_hash,crypt_hash_is_valid}.c \
+     crypto/libtomcrypt/src/
+  then update the commit id above and run the known-answer tests:
+
+     cmake -S . -B build -DCRYPTO=INTERNAL
+     make -C build accel-crypto-test && ./build/crypto/accel-crypto-test
+
+Known upstream issue
+--------------------
+headers/tomcrypt_custom.h lines 764 and 768 have a stray ')' terminating the
+#if expressions inside the "#if !defined(LTC_ECB_MODE)" guard:
+
+    #if defined(LTC_CFB_MODE) || ... || defined(LTC_XTS_MODE) )
+
+This is a preprocessor syntax error that only becomes reachable in a minimal
+build that leaves LTC_ECB_MODE undefined, which is why upstream has not hit
+it.  We define LTC_ECB_MODE, which skips the whole guarded block; that flag
+is also required for the symmetric_ECB declarations in tomcrypt_private.h.
+Reported upstream -- once fixed, LTC_ECB_MODE can stay anyway (it costs
+nothing, as none of the mode .c files are compiled in).

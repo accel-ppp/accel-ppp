@@ -1,0 +1,450 @@
+/* LibTomCrypt, modular cryptographic library -- Tom St Denis */
+/* SPDX-License-Identifier: Unlicense */
+
+/* This is the build config file.
+ *
+ * With this you can setup what to include/exclude automatically during any build.  Just comment
+ * out the line that #define's the word for the thing you want to remove.  phew!
+ */
+
+#ifndef TOMCRYPT_CFG_H
+#define TOMCRYPT_CFG_H
+
+#if defined(_WIN32) || defined(_MSC_VER)
+   #define LTC_CALL __cdecl
+#elif !defined(LTC_CALL)
+   #define LTC_CALL
+#endif
+
+#ifndef LTC_EXPORT
+   #define LTC_EXPORT
+#endif
+
+/* certain platforms use macros for these, making the prototypes broken */
+#ifndef LTC_NO_PROTOTYPES
+
+/* you can change how memory allocation works ... */
+LTC_EXPORT void * LTC_CALL XMALLOC(size_t n);
+LTC_EXPORT void * LTC_CALL XREALLOC(void *p, size_t n);
+LTC_EXPORT void * LTC_CALL XCALLOC(size_t n, size_t s);
+LTC_EXPORT void LTC_CALL XFREE(void *p);
+
+LTC_EXPORT void LTC_CALL XQSORT(void *base, size_t nmemb, size_t size, int(*compar)(const void *, const void *));
+
+/* change the clock function too */
+LTC_EXPORT clock_t LTC_CALL XCLOCK(void);
+
+/* various other functions */
+LTC_EXPORT void * LTC_CALL XMEMCPY(void *dest, const void *src, size_t n);
+LTC_EXPORT int   LTC_CALL XMEMCMP(const void *s1, const void *s2, size_t n);
+LTC_EXPORT void * LTC_CALL XMEMSET(void *s, int c, size_t n);
+
+LTC_EXPORT int   LTC_CALL XSTRCMP(const char *s1, const char *s2);
+
+#endif
+
+/* some compilers do not like "inline" (or maybe "static inline"), namely: HP cc, IBM xlc */
+#if !defined(LTC_NO_INLINE)
+#if defined(__GNUC__) || defined(__xlc__)
+   #define LTC_INLINE __inline__
+#elif defined(_MSC_VER) || defined(__HP_cc)
+   #define LTC_INLINE __inline
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
+   #define LTC_INLINE inline
+#endif
+#endif
+#if !defined(LTC_INLINE)
+   #if !defined(LTC_NO_INLINE)
+      #define LTC_NO_INLINE
+   #endif
+   #define LTC_INLINE
+#endif
+
+#if defined(__clang__) || defined(__GNUC_MINOR__)
+#define LTC_NORETURN __attribute__ ((noreturn))
+#elif defined(_MSC_VER)
+#define LTC_NORETURN __declspec(noreturn)
+#else
+#define LTC_NORETURN
+#endif
+
+/* type of argument checking, 0=default, 1=fatal and 2=error+continue, 3=nothing */
+#ifndef ARGTYPE
+   #define ARGTYPE  0
+#endif
+
+#undef LTC_ENCRYPT
+#define LTC_ENCRYPT 0
+#undef LTC_DECRYPT
+#define LTC_DECRYPT 1
+
+/* Controls endianess and size of registers.  Leave uncommented to get platform neutral [slower] code
+ *
+ * Note: in order to use the optimized macros your platform must support unaligned 32 and 64 bit read/writes.
+ * The x86 platforms allow this but some others [ARM for instance] do not.  On those platforms you **MUST**
+ * use the portable [slower] macros.
+ */
+/* detect x86/i386/ARM 32bit */
+#if defined(__i386__) || defined(__i386) || defined(_M_IX86) || defined(_M_ARM)
+   #define ENDIAN_LITTLE
+   #define ENDIAN_32BITWORD
+   #define LTC_FAST
+#endif
+
+/* detect amd64/x64/arm64 */
+#if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64) || defined(_M_ARM64)
+   #define ENDIAN_LITTLE
+   #define ENDIAN_64BITWORD
+   #define LTC_FAST
+#endif
+
+/* detect PPC32 */
+#if defined(LTC_PPC32)
+   #define ENDIAN_BIG
+   #define ENDIAN_32BITWORD
+   #define LTC_FAST
+#endif
+
+/* detects MIPS R5900 processors (PS2) */
+#if (defined(__R5900) || defined(R5900) || defined(__R5900__)) && (defined(_mips) || defined(__mips__) || defined(mips))
+   #define ENDIAN_64BITWORD
+   #if defined(_MIPSEB) || defined(__MIPSEB) || defined(__MIPSEB__)
+     #define ENDIAN_BIG
+   #else
+     #define ENDIAN_LITTLE
+   #endif
+#endif
+
+/* detect AIX */
+#if defined(_AIX) && defined(_BIG_ENDIAN)
+  #define ENDIAN_BIG
+  #if defined(__LP64__) || defined(_ARCH_PPC64)
+    #define ENDIAN_64BITWORD
+  #else
+    #define ENDIAN_32BITWORD
+  #endif
+#endif
+
+/* detect HP-UX */
+#if defined(__hpux) || defined(__hpux__)
+  #define ENDIAN_BIG
+  #if defined(__ia64) || defined(__ia64__) || defined(__LP64__)
+    #define ENDIAN_64BITWORD
+  #else
+    #define ENDIAN_32BITWORD
+  #endif
+#endif
+
+/* detect Apple OS X */
+#if defined(__APPLE__) && defined(__MACH__)
+  #if defined(__LITTLE_ENDIAN__) || defined(__x86_64__)
+    #define ENDIAN_LITTLE
+  #else
+    #define ENDIAN_BIG
+  #endif
+  #if defined(__LP64__) || defined(__x86_64__)
+    #define ENDIAN_64BITWORD
+  #else
+    #define ENDIAN_32BITWORD
+  #endif
+#endif
+
+/* detect SPARC and SPARC64 */
+#if defined(__sparc__) || defined(__sparc)
+  #define ENDIAN_BIG
+  #if defined(__arch64__) || defined(__sparcv9) || defined(__sparc_v9__)
+    #define ENDIAN_64BITWORD
+  #else
+    #define ENDIAN_32BITWORD
+  #endif
+#endif
+
+/* detect IBM S390(x) */
+#if defined(__s390x__) || defined(__s390__)
+  #define ENDIAN_BIG
+  #if defined(__s390x__)
+    #define ENDIAN_64BITWORD
+  #else
+    #define ENDIAN_32BITWORD
+  #endif
+#endif
+
+/* detect PPC64 */
+#if defined(__powerpc64__) || defined(__ppc64__) || defined(__PPC64__)
+   #define ENDIAN_64BITWORD
+   #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      #define ENDIAN_BIG
+   #elif  __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+      #define ENDIAN_LITTLE
+   #endif
+   #define LTC_FAST
+#endif
+
+/* Detect ILP32, commonly known as x32 on Linux and also possible on AIX */
+#if defined(_ILP32) || defined(__ILP32__)
+   #define ENDIAN_64BITWORD_ILP32
+#endif
+
+/* endianness fallback */
+#if !defined(ENDIAN_BIG) && !defined(ENDIAN_LITTLE)
+  #if defined(_BYTE_ORDER) && _BYTE_ORDER == _BIG_ENDIAN || \
+      defined(__BYTE_ORDER) && __BYTE_ORDER == __BIG_ENDIAN || \
+      defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__ || \
+      defined(__BIG_ENDIAN__) || \
+      defined(__ARMEB__) || defined(__THUMBEB__) || defined(__AARCH64EB__) || \
+      defined(_MIPSEB) || defined(__MIPSEB) || defined(__MIPSEB__) || \
+      defined(__m68k__)
+    #define ENDIAN_BIG
+  #elif defined(_BYTE_ORDER) && _BYTE_ORDER == _LITTLE_ENDIAN || \
+      defined(__BYTE_ORDER) && __BYTE_ORDER == __LITTLE_ENDIAN || \
+      defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ || \
+      defined(__LITTLE_ENDIAN__) || \
+      defined(__ARMEL__) || defined(__THUMBEL__) || defined(__AARCH64EL__) || \
+      defined(_MIPSEL) || defined(__MIPSEL) || defined(__MIPSEL__) || \
+      defined(_M_ARM) || defined(_M_ARM64)
+    #define ENDIAN_LITTLE
+  #else
+    #error Cannot detect endianness
+  #endif
+#endif
+
+/* ulong64: 64-bit data type */
+#ifdef _MSC_VER
+   #define CONST64(n) n ## ui64
+   typedef unsigned __int64 ulong64;
+   typedef __int64 long64;
+#else
+   #define CONST64(n) n ## uLL
+   typedef unsigned long long ulong64;
+   typedef long long long64;
+#endif
+
+/* ulong32: "32-bit at least" data type */
+#if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64) || \
+    defined(__powerpc64__) || defined(__ppc64__) || defined(__PPC64__) || \
+    defined(__s390x__) || defined(__arch64__) || defined(__aarch64__) || \
+    defined(__sparcv9) || defined(__sparc_v9__) || defined(__sparc64__) || \
+    defined(__ia64) || defined(__ia64__) || defined(__itanium__) || defined(_M_IA64) || \
+    defined(__LP64__) || defined(_LP64) || defined(__64BIT__) || defined(_M_ARM64)
+   typedef unsigned ulong32;
+   #if !defined(ENDIAN_64BITWORD) && !defined(ENDIAN_32BITWORD)
+     #define ENDIAN_64BITWORD
+   #endif
+#else
+   typedef unsigned long ulong32;
+   #if !defined(ENDIAN_64BITWORD) && !defined(ENDIAN_32BITWORD)
+     #define ENDIAN_32BITWORD
+   #endif
+#endif
+
+#if defined(ENDIAN_64BITWORD) && !defined(_MSC_VER)
+typedef unsigned long long ltc_mp_digit;
+#else
+typedef unsigned long ltc_mp_digit;
+#endif
+
+/* No asm is a quick way to disable anything "not portable" */
+#ifdef LTC_NO_ASM
+   #define ENDIAN_NEUTRAL
+   #undef ENDIAN_32BITWORD
+   #undef ENDIAN_64BITWORD
+   #undef LTC_FAST
+   #define LTC_NO_ACCEL
+   #define LTC_NO_BSWAP
+   #define LTC_NO_CLZL
+   #define LTC_NO_CTZL
+   #define LTC_NO_ROLC
+   #define LTC_NO_ROTATE
+#endif
+
+/* Just portable C implementations */
+#ifdef LTC_NO_ACCEL
+   #define LTC_NO_AES_NI
+   #define LTC_NO_GCM_PCLMUL
+   #define LTC_NO_GCM_PMULL
+   #define LTC_NO_SHA1_X86
+   #define LTC_NO_SHA224_X86
+   #define LTC_NO_SHA256_X86
+#endif
+
+/* No LTC_FAST if explicitly disabled */
+#if defined(LTC_NO_FAST)
+   #undef LTC_FAST
+#endif
+
+#ifdef LTC_FAST
+   #ifdef ENDIAN_64BITWORD
+   typedef ulong64 LTC_FAST_TYPE;
+   #else
+   typedef ulong32 LTC_FAST_TYPE;
+   #endif
+#endif
+
+#if !defined(ENDIAN_NEUTRAL) && (defined(ENDIAN_BIG) || defined(ENDIAN_LITTLE)) && !(defined(ENDIAN_32BITWORD) || defined(ENDIAN_64BITWORD))
+   #error You must specify a word size as well as endianess in tomcrypt_cfg.h
+#endif
+
+#if !(defined(ENDIAN_BIG) || defined(ENDIAN_LITTLE))
+   #define ENDIAN_NEUTRAL
+#endif
+
+#if (defined(ENDIAN_32BITWORD) && defined(ENDIAN_64BITWORD))
+   #error Cannot be 32 and 64 bit words...
+#endif
+
+/* gcc 4.3 and up has a bswap builtin; detect it by gcc version.
+ * clang also supports the bswap builtin, and although clang pretends
+ * to be gcc (macro-wise, anyway), clang pretends to be a version
+ * prior to gcc 4.3, so we can't detect bswap that way.  Instead,
+ * clang has a __has_builtin mechanism that can be used to check
+ * for builtins:
+ * http://clang.llvm.org/docs/LanguageExtensions.html#feature_check */
+#ifndef __has_builtin
+   #define __has_builtin(x) 0
+#endif
+#if !defined(LTC_NO_BSWAP) && defined(__GNUC__) &&                      \
+   ((__GNUC__ * 100 + __GNUC_MINOR__ >= 403) ||                         \
+    (__has_builtin(__builtin_bswap32) && __has_builtin(__builtin_bswap64)))
+   #define LTC_HAVE_BSWAP_BUILTIN
+#endif
+
+#if !defined(LTC_NO_ROTATE) && (__has_builtin(__builtin_rotateleft32) && __has_builtin(__builtin_rotateright32))
+   #define LTC_HAVE_ROTATE_BUILTIN
+#endif
+
+#if !defined(LTC_NO_CLZL) && __has_builtin(__builtin_clzl)
+   #define LTC_HAVE_CLZL_BUILTIN
+#endif
+
+#if !defined(LTC_NO_CTZL) && __has_builtin(__builtin_ctzl)
+   #define LTC_HAVE_CTZL_BUILTIN
+#endif
+
+#if (defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86))
+   #define LTC_ARCH_X86
+   #if !defined(LTC_NO_AES_NI)
+      #define LTC_AES_NI
+   #endif
+   #if !defined(LTC_NO_GCM_PCLMUL)
+      #define LTC_GCM_PCLMUL
+      #undef LTC_GCM_TABLES
+   #endif
+   #if (defined __GNUC__ && (__GNUC__ * 100 + __GNUC_MINOR__ >= 409)) || \
+       (defined __clang__ && (__clang_major__ * 100 + __clang_minor__ >= 308)) || \
+       (defined _MSC_VER && defined _MSC_FULL_VER && (_MSC_VER) >= 1900)
+      #if !defined(LTC_NO_SHA1_X86)
+         #define LTC_SHA1_X86
+      #endif
+      #if !defined(LTC_NO_SHA224_X86)
+         #define LTC_SHA224_X86
+      #endif
+      #if !defined(LTC_NO_SHA256_X86)
+         #define LTC_SHA256_X86
+      #endif
+   #endif
+   /* the SHA512 extension intrinsics require GCC 14 resp. clang 17 */
+   #if (defined __GNUC__ && !defined __clang__ && (__GNUC__ >= 14)) || \
+       (defined __clang__ && (__clang_major__ >= 17)) || \
+       (defined _MSC_FULL_VER && (_MSC_FULL_VER) >=  194033813l) /* MSVC 2022 17.10 */
+      #if !defined(LTC_NO_SHA384_X86)
+         #define LTC_SHA384_X86
+      #endif
+      #if !defined(LTC_NO_SHA512_X86)
+         #define LTC_SHA512_X86
+      #endif
+      #if !defined(LTC_NO_SHA512_224_X86)
+         #define LTC_SHA512_224_X86
+      #endif
+      #if !defined(LTC_NO_SHA512_256_X86)
+         #define LTC_SHA512_256_X86
+      #endif
+   #endif
+#endif
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+   #define LTC_ARCH_AARCH64
+   #if !defined(LTC_NO_GCM_PMULL)
+      #define LTC_GCM_PMULL
+      #undef LTC_GCM_TABLES
+   #endif
+#endif
+
+#if defined(__GNUC__)
+   #define LTC_ALIGN_MSVC(n)
+   #define LTC_ALIGN(n) __attribute__((aligned(n)))
+#elif defined(_MSC_VER)
+   #define LTC_ALIGN_MSVC(n) __declspec(align(n))
+   #define LTC_ALIGN(n)
+#else
+   #define LTC_ALIGN_MSVC(n)
+   #define LTC_ALIGN(n)
+#endif
+
+/* Choose Windows Vista as minimum Version if we're compiling with at least VS2019
+ * This is done in order to test the bcrypt RNG and can still be overridden by the user. */
+#if defined(_MSC_VER) && _MSC_VER >= 1920
+#   ifndef _WIN32_WINNT
+#      define _WIN32_WINNT 0x0600
+#   endif
+#   ifndef WINVER
+#      define WINVER 0x0600
+#   endif
+#endif
+
+/* Define `LTC_NO_NULL_TERMINATION_CHECK` in the user code
+ * before including `tomcrypt.h` to disable this functionality.
+ */
+#if defined(__GNUC__) && __GNUC__ >= 4 && !defined(LTC_NO_NULL_TERMINATION_CHECK)
+#   define LTC_NULL_TERMINATED __attribute__((sentinel))
+#else
+#   define LTC_NULL_TERMINATED
+#endif
+
+#ifndef LTC_DEPRECATED
+#if defined(__GNUC__) && (__GNUC__ * 100 + __GNUC_MINOR__ >= 405)
+#  define LTC_DEPRECATED(s) __attribute__((deprecated("replaced by " #s)))
+#elif defined(__GNUC__) && (__GNUC__ * 100 + __GNUC_MINOR__ >= 301)
+#  define LTC_DEPRECATED(s) __attribute__((deprecated))
+#elif defined(_MSC_VER) && _MSC_VER >= 1500
+   /* supported since Visual Studio 2008 */
+#  define LTC_DEPRECATED(s) __declspec(deprecated("replaced by " #s))
+#else
+#  define LTC_DEPRECATED(s)
+#endif
+#endif
+
+#ifndef LTC_DEPRECATED_PRAGMA
+#if defined(__GNUC__) && (__GNUC__ * 100 + __GNUC_MINOR__ >= 405)
+#  define PRIVATE_LTC_DEPRECATED_PRAGMA(s) _Pragma(#s)
+#  define LTC_DEPRECATED_PRAGMA(s) PRIVATE_LTC_DEPRECATED_PRAGMA(GCC warning s)
+#elif defined(_MSC_VER) && _MSC_VER >= 1500
+   /* supported since Visual Studio 2008 */
+#  define LTC_DEPRECATED_PRAGMA(s) __pragma(message(s))
+#else
+#  define LTC_DEPRECATED_PRAGMA(s)
+#endif
+#endif
+
+#ifndef __has_attribute
+#  define __has_attribute(x) 0
+#endif
+#if defined(__GNUC__) || defined(__clang__)
+#  define LTC_ATTRIBUTE(x) __attribute__(x)
+#else
+#  define LTC_ATTRIBUTE(x)
+#endif
+
+#if __has_attribute(fallthrough)
+#  define LTC_FALLTHROUGH LTC_ATTRIBUTE((fallthrough))
+#endif
+#ifndef LTC_FALLTHROUGH
+#  define LTC_FALLTHROUGH
+#endif
+#if __has_attribute(target)
+#  define LTC_TARGET(x) LTC_ATTRIBUTE((target(x)))
+#endif
+#ifndef LTC_TARGET
+#  define LTC_TARGET(x)
+#endif
+
+#endif /* TOMCRYPT_CFG_H */
