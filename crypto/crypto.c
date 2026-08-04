@@ -77,10 +77,13 @@ static const DES_cblock weak_keys[] = {
 
 int DES_is_weak_key(const_DES_cblock *key)
 {
-	int i;
+	/* NB: the element count, not sizeof(weak_keys).  The original shim
+	 * looped to sizeof(weak_keys) == 128 and read 112 entries past the
+	 * end of the array. */
+	unsigned int i;
 
-	for (i = 0; i < sizeof(weak_keys); i++)
-		if (!memcmp(weak_keys[i], key, sizeof(DES_cblock)))
+	for (i = 0; i < sizeof(weak_keys) / sizeof(weak_keys[0]); i++)
+		if (!memcmp(weak_keys[i], *key, sizeof(DES_cblock)))
 			return 1;
 
 	return 0;
