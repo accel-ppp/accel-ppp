@@ -116,12 +116,15 @@ int DES_random_key(DES_cblock *ret)
 
 void DES_ecb_encrypt(const_DES_cblock *input, DES_cblock *output, DES_key_schedule *ks, int enc)
 {
+	/* No des_done() here.  The original shim tore the schedule down after
+	 * every single block, which breaks any caller that reuses a schedule
+	 * across calls -- pppoe.c encrypts three blocks with one long-lived
+	 * serv->des_ks.  It only ever worked because des_done() happens to be
+	 * a no-op in libtomcrypt; that is not part of its contract. */
 	if (enc == DES_ENCRYPT)
-		des_ecb_encrypt((const unsigned char *) input, (unsigned char *) output, ks);
-	else
-	if (enc == DES_DECRYPT)
-		des_ecb_decrypt((const unsigned char *) input, (unsigned char *) output, ks);
-	des_done(ks);
+		des_ecb_encrypt((const unsigned char *)input, (unsigned char *)output, ks);
+	else if (enc == DES_DECRYPT)
+		des_ecb_decrypt((const unsigned char *)input, (unsigned char *)output, ks);
 }
 
 static void __attribute__((constructor)) init(void)
