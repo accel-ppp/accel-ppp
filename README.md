@@ -40,7 +40,8 @@ Building the daemon requires:
 * Linux
 * A C compiler and standard build tools
 * CMake 3.10 or newer
-* OpenSSL development files
+* OpenSSL development files, for the default CRYPTO=OPENSSL backend
+* libtomcrypt development files, for CRYPTO=TOMCRYPT
 * PCRE2 development files
 
 Kernel headers are also required when building the optional PPTP, IPoE, or VLAN
@@ -75,6 +76,7 @@ Useful build options:
 * SHAPER=FALSE omits the traffic-shaping module.
 * NETSNMP=TRUE builds SNMP support.
 * LOG_PGSQL=TRUE builds PostgreSQL logging support.
+* CRYPTO=OPENSSL|TOMCRYPT|INTERNAL selects the crypto backend.
 
 For example, to build the IPoE and VLAN monitoring modules for the running
 kernel:
@@ -84,6 +86,31 @@ kernel:
       -DBUILD_VLAN_MON_DRIVER=TRUE \
       -DKDIR="/usr/src/linux-headers-$(uname -r)"
     cmake --build build
+
+
+Crypto backend
+==============
+
+ACCEL-PPP needs MD4, MD5, SHA1, DES, and HMAC for CHAP/MSCHAP, RADIUS, L2TP,
+and the PPPoE AC-Cookie. Which library provides them is selected with CRYPTO:
+
+* CRYPTO=OPENSSL uses libssl and libcrypto. This is the default.
+* CRYPTO=TOMCRYPT uses the system libtomcrypt.
+* CRYPTO=INTERNAL uses the libtomcrypt subset bundled in crypto/libtomcrypt,
+  leaving no external crypto dependency at all.
+
+SSTP is the one module that needs more than those primitives: its accept=ssl
+mode terminates TLS itself and therefore requires OPENSSL. With TOMCRYPT or
+INTERNAL the sstp module is still built and still speaks SSTP, but only over
+plain TCP or a unix socket. That is the accept=proxy deployment, where TLS is
+terminated by nginx, haproxy, or stunnel in front and the connection is handed
+over using the PROXY protocol. Everything else, including Compound MAC
+validation, works identically on all three backends.
+
+To verify a backend, build and run the known-answer tests:
+
+    cmake --build build --target accel-crypto-test
+    ./build/crypto/accel-crypto-test
 
 
 Configuration
@@ -220,7 +247,7 @@ The file also contains the numerical OIDs used by ACCEL-PPP. Examples:
 Encrypted chap-secrets
 ======================
 
-The chap-secrets module supports encrypted passwords through OpenSSL. Set
+The chap-secrets module supports encrypted passwords with any CRYPTO backend. Set
 encrypted=1 in the [chap-secrets] section. Usernames may remain in cleartext or
 be transformed through a hash chain configured with username-hash, for example:
 
