@@ -21,6 +21,14 @@
 #include "linux_ppp.h"
 
 /*
+ * TLS is OpenSSL-only.  Without it sstp still serves SSTP over plain TCP or a
+ * unix socket, which is the accept=proxy deployment: TLS is terminated by
+ * nginx/haproxy/stunnel in front and the connection reaches us over the
+ * PROXY protocol.  Everything else in this module -- including the Compound
+ * MAC -- works on either crypto backend.
+ */
+#ifdef CRYPTO_OPENSSL
+/*
  * Suppress OpenSSL 3.0 deprecation warnings for DH API.
  * See crypto.h for detailed explanation.
  */
@@ -28,6 +36,9 @@
 #include <openssl/ssl.h>
 #include <openssl/dh.h>
 #include <openssl/err.h>
+#endif /* CRYPTO_OPENSSL */
+
+#include "crypto.h"
 
 #include "triton.h"
 #include "events.h"
@@ -122,7 +133,9 @@ struct buffer_t {
 struct sstp_stream_t {
 	union {
 		int fd;
+#ifdef CRYPTO_OPENSSL
 		SSL *ssl;
+#endif /* CRYPTO_OPENSSL */
 	};
 	ssize_t (*read)(struct sstp_stream_t *stream, void *buf, size_t count);
 	ssize_t (*recv)(struct sstp_stream_t *stream, void *buf, size_t count, int flags);
@@ -172,7 +185,9 @@ struct sstp_serv_t {
 
 	struct sockaddr_t addr;
 
+#ifdef CRYPTO_OPENSSL
 	SSL_CTX *ssl_ctx;
+#endif /* CRYPTO_OPENSSL */
 	struct sstp_stat_t stat;
 };
 
@@ -539,6 +554,8 @@ static struct sstp_stream_t *stream_init(int fd)
 
 /* ssl stream */
 
+#ifdef CRYPTO_OPENSSL
+
 static ssize_t ssl_stream_read(struct sstp_stream_t *stream, void *buf, size_t count)
 {
 	int ret, err;
@@ -634,6 +651,8 @@ error:
 	ssl_stream_free(stream);
 	return NULL;
 }
+
+#endif /* CRYPTO_OPENSSL */
 
 /* proxy */
 
@@ -2452,9 +2471,11 @@ static void sstp_start(struct sstp_conn_t *conn)
 {
 	log_debug("sstp: starting\n");
 
+#ifdef CRYPTO_OPENSSL
 	if (serv.ssl_ctx)
 		conn->stream = ssl_stream_init(conn->hnd.fd, serv.ssl_ctx);
 	else
+#endif /* CRYPTO_OPENSSL */
 		conn->stream = stream_init(conn->hnd.fd);
 	if (!conn->stream) {
 		log_error("sstp: stream open error: %s\n", strerror(errno));
@@ -2635,14 +2656,17 @@ static void sstp_serv_close(struct triton_context_t *ctx)
 	triton_md_unregister_handler(&serv->hnd, 1);
 	triton_context_unregister(ctx);
 
+#ifdef CRYPTO_OPENSSL
 	if (serv->ssl_ctx)
 		SSL_CTX_free(serv->ssl_ctx);
 	serv->ssl_ctx = NULL;
+#endif /* CRYPTO_OPENSSL */
 
 	if (serv->addr.u.sa.sa_family == AF_UNIX && serv->addr.u.sun.sun_path[0])
 		unlink(serv->addr.u.sun.sun_path);
 }
 
+#ifdef CRYPTO_OPENSSL
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
 static int ssl_servername(SSL *ssl, int *al, void *arg)
 {
@@ -2932,6 +2956,8 @@ error:
 		abort();
 }
 
+#endif /* CRYPTO_OPENSSL */
+
 static void ev_mppe_keys(struct ev_mppe_keys_t *ev)
 {
 	struct ppp_t *ppp = ev->ppp;
@@ -3013,11 +3039,17 @@ static void load_config(void)
 	opt = conf_get_opt("sstp", "accept");
 	conf_proxyproto = opt && strhas(opt, "proxy", ',');
 
+#ifdef CRYPTO_OPENSSL
 	ssl_load_config(&serv, conf_hostname);
+#endif /* CRYPTO_OPENSSL */
 
 	if (conf_verbose) {
 		log_info2("sstp: SSL/TLS %s, PROXY %s, PPP mode %s\n",
+#ifdef CRYPTO_OPENSSL
 				serv.ssl_ctx ? "enabled" : "disabled",
+#else
+				"not available (built without OpenSSL)",
+#endif /* CRYPTO_OPENSSL */
 				conf_proxyproto ? "enabled" : "disabled",
 				conf_ppp_mode == PPP_MODE_AUTO ? "AUTO" :
 				conf_ppp_mode == PPP_MODE_ASYNC ? "ASYNC" :

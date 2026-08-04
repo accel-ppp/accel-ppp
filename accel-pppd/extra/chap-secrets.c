@@ -6,10 +6,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include <openssl/md4.h>
-#include <openssl/sha.h>
-#include <openssl/des.h>
-#include <openssl/evp.h>
+#include "crypto.h"
 
 #include "pwdb.h"
 #include "ipdb.h"
@@ -137,7 +134,12 @@ static struct cs_pd_t *create_pd(struct ap_session *ses, const char *username)
 		unsigned int size = 0;
 		list_for_each_entry(hc, &hash_chain, entry) {
 			md_ctx = EVP_MD_CTX_new();
-			EVP_MD_CTX_init(md_ctx);
+			if (!md_ctx) {
+				log_emerg("chap-secrets: out of memory\n");
+				return NULL;
+			}
+			/* no EVP_MD_CTX_init(): EVP_MD_CTX_new() already
+			 * returns an initialised context */
 			EVP_DigestInit_ex(md_ctx, hc->md, NULL);
 			EVP_DigestUpdate(md_ctx, size == 0 ? (void *)username : (void *)hash, size == 0 ? strlen(username) : size);
 			EVP_DigestFinal_ex(md_ctx, hash, &size);

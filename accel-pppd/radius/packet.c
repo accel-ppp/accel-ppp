@@ -9,13 +9,7 @@
 #include <linux/mman.h>
 #include <arpa/inet.h>
 
-/*
- * Suppress OpenSSL 3.0 deprecation warnings for HMAC API.
- * See crypto.h for detailed explanation.
- */
-#define OPENSSL_API_COMPAT 0x10100000L
-#include <openssl/hmac.h>
-#include <openssl/evp.h>
+#include "crypto.h"
 
 #include "log.h"
 #include "mempool.h"

@@ -16,7 +16,7 @@
 #include <linux/if_ether.h>
 #include <linux/if_pppox.h>
 
-#include <openssl/md5.h>
+#include "crypto.h"
 
 #include "triton.h"
 #include "mempool.h"

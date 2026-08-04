@@ -11,7 +11,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include <openssl/md5.h>
+#include "crypto.h"
 
 #include "log.h"
 #include "triton.h"

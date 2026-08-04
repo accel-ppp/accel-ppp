@@ -73,15 +73,58 @@ if (NOT BUILD_DRIVER_ONLY)
 		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector -fstack-protector-all")
 	endif (MEMDEBUG)
 
-	find_library(CRYPTO_LIBRARY ssl
-		HINTS ${CMAKE_SOURCE_DIR}/lib/linux/gcc/${BIT}/lib
-		PATHS ${CMAKE_SOURCE_DIR}/lib/linux/gcc/${BIT}/lib
-	)
-	IF(NOT CRYPTO_LIBRARY)
-		message(FATAL_ERROR "${Esc}[31mRequired libcrypto-0.9.8 or probably later (openssl-0.9.8)  not found.\n Install libssl-dev and run cmake again${Esc}[m")
-	ENDIF(NOT CRYPTO_LIBRARY)
-	set(crypto_lib crypto ssl)
+	#
+	# Crypto backend selection.
+	#
+	#   OPENSSL  (default) libssl/libcrypto.  The only backend that can also
+	#                      provide TLS, so it is required for sstp accept=ssl.
+	#   TOMCRYPT           system libtomcrypt via crypto/crypto.h.
+	#   INTERNAL           vendored libtomcrypt subset, no external crypto
+	#                      dependency at all.
+	#
+	# TOMCRYPT and INTERNAL build sstp without TLS: it still serves SSTP over
+	# plain TCP/unix sockets behind an external terminator (accept=proxy),
+	# which is what the proxy-protocol support exists for.
+	#
+	if (NOT DEFINED CRYPTO)
+		set(CRYPTO OPENSSL)
+	endif (NOT DEFINED CRYPTO)
 
+	if (CRYPTO STREQUAL OPENSSL)
+		find_library(CRYPTO_LIBRARY ssl
+			HINTS ${CMAKE_SOURCE_DIR}/lib/linux/gcc/${BIT}/lib
+			PATHS ${CMAKE_SOURCE_DIR}/lib/linux/gcc/${BIT}/lib
+		)
+		IF(NOT CRYPTO_LIBRARY)
+			message(FATAL_ERROR "${Esc}[31mRequired libcrypto-0.9.8 or probably later (openssl-0.9.8)  not found.\n Install libssl-dev and run cmake again${Esc}[m")
+		ENDIF(NOT CRYPTO_LIBRARY)
+		add_definitions(-DCRYPTO_OPENSSL)
+		set(crypto_lib crypto ssl)
+	elseif (CRYPTO STREQUAL TOMCRYPT)
+		find_library(TOMCRYPT_LIBRARY tomcrypt)
+		IF(NOT TOMCRYPT_LIBRARY)
+			message(FATAL_ERROR "${Esc}[31mCRYPTO=TOMCRYPT requires libtomcrypt.\n Install libtomcrypt-dev and run cmake again, or use -DCRYPTO=INTERNAL${Esc}[m")
+		ENDIF(NOT TOMCRYPT_LIBRARY)
+		add_definitions(-DCRYPTO_TOMCRYPT)
+		set(crypto_lib internal-crypto)
+	elseif (CRYPTO STREQUAL INTERNAL)
+		set(crypto_lib internal-crypto)
+	else (CRYPTO STREQUAL OPENSSL)
+		message(FATAL_ERROR "unknown CRYPTO type '${CRYPTO}', expected OPENSSL, TOMCRYPT or INTERNAL")
+	endif (CRYPTO STREQUAL OPENSSL)
+
+	message(STATUS "crypto backend: ${CRYPTO}")
+
+	# crypto.h is included by accel-pppd and by dlopen'd modules that do not
+	# link internal-crypto themselves, so the search path has to be global.
+	if (NOT CRYPTO STREQUAL OPENSSL)
+		INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+		if (CRYPTO STREQUAL INTERNAL)
+			INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR}/crypto/libtomcrypt/headers)
+		endif (CRYPTO STREQUAL INTERNAL)
+	endif (NOT CRYPTO STREQUAL OPENSSL)
+
+	add_subdirectory(crypto)
 	add_subdirectory(accel-pppd)
 	add_subdirectory(accel-cmd)
 

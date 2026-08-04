@@ -6,7 +6,7 @@
 #include <sys/ioctl.h>
 #include <netinet/in.h>
 
-#include <openssl/md5.h>
+#include "crypto.h"
 
 #include "linux_ppp.h"
 

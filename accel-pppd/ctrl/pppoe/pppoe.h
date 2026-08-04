@@ -6,8 +6,7 @@
 #include <linux/if.h>
 #include <linux/if_pppox.h>
 
-#include <openssl/md5.h>
-#include <openssl/des.h>
+#include "crypto.h"
 
 #include "rbtree.h"
 
