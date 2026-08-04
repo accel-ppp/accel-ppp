@@ -1,8 +1,10 @@
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 #include "crypto.h"
 
@@ -13,7 +15,28 @@
 #error "libtomcrypt is missing an algorithm accel-ppp requires (MD4, MD5, SHA1, SHA256, DES, HMAC)"
 #endif
 
-static int urandom_fd;
+/* ----------------------------------------------------------------------
+ * one-time setup
+ * ---------------------------------------------------------------------- */
+
+static pthread_once_t crypto_once = PTHREAD_ONCE_INIT;
+static int urandom_fd = -1;
+
+static void crypto_init(void)
+{
+	/* HMAC takes a registry index rather than a descriptor, so the hashes
+	 * we expose have to be registered before find_hash() can see them. */
+	register_hash(&md4_desc);
+	register_hash(&md5_desc);
+	register_hash(&sha1_desc);
+	register_hash(&sha256_desc);
+
+	urandom_fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+}
+
+/* ----------------------------------------------------------------------
+ * DES
+ * ---------------------------------------------------------------------- */
 
 static const unsigned char odd_parity[256] = {
 		1,  1,  2,  2,  4,  4,  7,  7,  8,  8, 11, 11, 13, 13, 14, 14,
@@ -39,7 +62,7 @@ void DES_set_odd_parity(DES_cblock *key)
 	unsigned int i;
 
 	for (i = 0; i < sizeof(DES_cblock); i++)
-		(*key)[i] =  odd_parity[(*key)[i]];
+		(*key)[i] = odd_parity[(*key)[i]];
 }
 
 int DES_check_key_parity(const_DES_cblock *key)
@@ -89,6 +112,8 @@ int DES_is_weak_key(const_DES_cblock *key)
 	return 0;
 }
 
+/* Returns 0 on success, -1 on parity error, -2 on weak key, as OpenSSL does.
+ * Like OpenSSL, the schedule is left untouched when the key is rejected. */
 int DES_set_key_checked(const_DES_cblock *key, DES_key_schedule *schedule)
 {
 	if (!DES_check_key_parity(key))
@@ -97,21 +122,40 @@ int DES_set_key_checked(const_DES_cblock *key, DES_key_schedule *schedule)
 	if (DES_is_weak_key(key))
 		return -2;
 
-	return des_setup((const unsigned char *)key, 8, 0, schedule);
+	return des_setup((const unsigned char *)key, 8, 0, schedule) == CRYPT_OK ? 0 : -3;
 }
 
+/* Returns 1 on success and 0 on failure, as OpenSSL does.  The original shim
+ * ignored read() failures entirely and always reported success, so a missing
+ * or exhausted /dev/urandom silently produced a constant key. */
 int DES_random_key(DES_cblock *ret)
 {
-	while (1) {
-		read(urandom_fd, ret, sizeof(DES_cblock));
-		if (DES_is_weak_key(ret))
-			continue;
-		break;
+	pthread_once(&crypto_once, crypto_init);
+
+	if (urandom_fd < 0)
+		return 0;
+
+	for (;;) {
+		size_t off = 0;
+
+		while (off < sizeof(DES_cblock)) {
+			ssize_t n = read(urandom_fd, (unsigned char *)ret + off,
+					 sizeof(DES_cblock) - off);
+			if (n > 0)
+				off += n;
+			else if (n < 0 && errno == EINTR)
+				continue;
+			else
+				return 0;
+		}
+
+		if (!DES_is_weak_key((const_DES_cblock *)ret))
+			break;
 	}
 
 	DES_set_odd_parity(ret);
 
-	return 0;
+	return 1;
 }
 
 void DES_ecb_encrypt(const_DES_cblock *input, DES_cblock *output, DES_key_schedule *ks, int enc)
@@ -125,19 +169,6 @@ void DES_ecb_encrypt(const_DES_cblock *input, DES_cblock *output, DES_key_schedu
 		des_ecb_encrypt((const unsigned char *)input, (unsigned char *)output, ks);
 	else if (enc == DES_DECRYPT)
 		des_ecb_decrypt((const unsigned char *)input, (unsigned char *)output, ks);
-}
-
-static void __attribute__((constructor)) init(void)
-{
-	/* HMAC takes a registry index rather than a descriptor, so the hashes
-	 * we expose have to be registered before find_hash() can see them. */
-	register_hash(&md4_desc);
-	register_hash(&md5_desc);
-	register_hash(&sha1_desc);
-	register_hash(&sha256_desc);
-
-	urandom_fd = open("/dev/urandom", O_RDONLY);
-	fcntl(urandom_fd, F_SETFD, fcntl(urandom_fd, F_GETFD) | FD_CLOEXEC);
 }
 
 /* ----------------------------------------------------------------------
@@ -248,6 +279,8 @@ unsigned char *HMAC(const EVP_MD *evp, const void *key, int key_len,
 
 	if (!evp || !md)
 		return NULL;
+
+	pthread_once(&crypto_once, crypto_init);
 
 	idx = find_hash(evp->name);
 	if (idx < 0)

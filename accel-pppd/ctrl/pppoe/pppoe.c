@@ -1693,8 +1693,13 @@ static int init_secret(struct pppoe_serv_t *serv)
 		return -1;
 	}
 
-	memset(key, 0, sizeof(key));
-	DES_random_key(&key);
+	/* This key protects the AC-Cookie against forgery.  Silently carrying
+	 * on with a zeroed key on failure, as this used to, makes cookies
+	 * predictable. */
+	if (!DES_random_key(&key)) {
+		log_error("pppoe: failed to generate AC-Cookie key\n");
+		return -1;
+	}
 	DES_set_key(&key, &serv->des_ks);
 
 	return 0;
