@@ -1,0 +1,144 @@
+#
+# The -DCRYPTO=OPENSSL|TOMCRYPT|INTERNAL selector existed from 2011 until it
+# was deleted in Sep 2025 (c912d090, b4015f9e).  It was never covered by CI,
+# which is why it rotted -- it still compiled at the point it was removed, but
+# nothing had ever run it, and it shipped a module-loading bug that only
+# appears at runtime.  This workflow exists so that cannot happen again.
+#
+name: Build crypto backends
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  crypto-backends:
+    strategy:
+      fail-fast: false
+      matrix:
+        crypto: [OPENSSL, TOMCRYPT, INTERNAL]
+    runs-on: ubuntu-24.04
+    name: CRYPTO=${{ matrix.crypto }}
+    steps:
+      - name: Install build tools
+        run: >
+          sudo apt update &&
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
+          git build-essential cmake gcc libpcre2-dev
+
+      - name: Install OpenSSL headers
+        if: matrix.crypto == 'OPENSSL'
+        run: >
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
+          libssl-dev
+
+      - name: Install libtomcrypt
+        if: matrix.crypto == 'TOMCRYPT'
+        run: >
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
+          libtomcrypt-dev
+
+      #
+      # The runner image ships libssl-dev, so a stray unguarded
+      # #include <openssl/...> would compile here and the job would prove
+      # nothing.  Take the headers away and let the compiler enforce it.
+      # Only the headers: libssl3/libcrypto3 stay, since git and friends
+      # need them, and they cannot make our build link against OpenSSL.
+      #
+      - name: Remove OpenSSL headers
+        if: matrix.crypto != 'OPENSSL'
+        run: |
+          set -eux
+          NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true \
+            sudo -E apt -y purge libssl-dev
+          ! ls -d /usr/include/openssl /usr/include/*/openssl /usr/local/include/openssl 2>/dev/null
+
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: cmake
+        run: >
+          cmake -S . -B build
+          -DCRYPTO=${{ matrix.crypto }}
+          -DCMAKE_INSTALL_PREFIX=/usr
+          -DRADIUS=TRUE -DSHAPER=FALSE
+          -DBUILD_IPOE_DRIVER=FALSE -DBUILD_VLAN_MON_DRIVER=FALSE
+
+      - name: make
+        run: make -C build -j$(nproc)
+
+      # The backends must agree bit for bit, otherwise a build that "works"
+      # would still hand wrong MSCHAP/RADIUS/SSTP digests to peers.
+      - name: known-answer tests
+        run: |
+          make -C build accel-crypto-test -j$(nproc)
+          ./build/crypto/accel-crypto-test
+
+      - name: install
+        run: sudo make -C build install
+
+      # Modules are dlopen'd, so a backend that is wired up wrong still builds
+      # and links cleanly and only falls over when the daemon is started --
+      # which is how the old scheme managed to rot unnoticed.  Start it.
+      - name: modules load at runtime
+        run: |
+          set -eux
+          printf 'user\t*\tpass\t*\n' | sudo tee /etc/chap-secrets >/dev/null
+          cat > /tmp/crypto-smoke.conf <<'EOF'
+          [modules]
+          log_file
+          auth_mschap_v2
+          auth_mschap_v1
+          auth_chap_md5
+          auth_pap
+          chap-secrets
+          radius
+          pppoe
+          sstp
+
+          [log]
+          log-file=/tmp/accel-ppp.log
+          level=3
+
+          [chap-secrets]
+          chap-secrets=/etc/chap-secrets
+          username-hash=md5,sha1
+
+          [radius]
+          dictionary=/usr/share/accel-ppp/radius/dictionary
+          server=127.0.0.1,secret
+          EOF
+          rc=0
+          sudo timeout -s KILL 10 accel-pppd -c /tmp/crypto-smoke.conf || rc=$?
+          # timeout(1) reports that it had to stop the command -- i.e. the
+          # daemon was still running -- as 124, or as 128+signo when the
+          # signal it sends is KILL.  Anything else means it died on its own.
+          # the daemon runs as root, so its log is only readable as root
+          sudo chmod a+r /tmp/accel-ppp.log || true
+          case "$rc" in
+          124|137) ;;
+          *) echo "accel-pppd exited on its own with rc=$rc"; cat /tmp/accel-ppp.log || true; exit 1 ;;
+          esac
+          # without this a missing log would make the grep below vacuously pass
+          test -s /tmp/accel-ppp.log
+          cat /tmp/accel-ppp.log
+          # any of these means a module failed to resolve the crypto shim
+          ! grep -qiE 'undefined symbol|not found|cannot open shared' /tmp/accel-ppp.log
+
+      - name: report linkage
+        run: |
+          set -eu
+          echo "--- accel-pppd DT_NEEDED ---"
+          objdump -p /usr/sbin/accel-pppd | grep NEEDED
+          echo "--- openssl linked? (must be empty for TOMCRYPT/INTERNAL) ---"
+          if [ "${{ matrix.crypto }}" = OPENSSL ]; then
+            objdump -p /usr/sbin/accel-pppd | grep -E 'libssl|libcrypto'
+          else
+            # not just informational: nothing built without OpenSSL may pull
+            # it back in through a module or a transitive dependency
+            ! objdump -p /usr/sbin/accel-pppd /usr/lib*/accel-ppp/*.so |
+                grep -E 'NEEDED.*(libssl|libcrypto)\.so'
+          fi
