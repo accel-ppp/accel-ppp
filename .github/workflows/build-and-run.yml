@@ -41,7 +41,8 @@ jobs:
       - name: cmake
         working-directory: ./build
         run: >
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DBUILD_PPPOSEQ_DRIVER=TRUE 
+          -DCMAKE_INSTALL_PREFIX=/usr 
           -DKDIR=/usr/src/linux-headers-`uname -r` 
           -DLUA=TRUE -DSHAPER=FALSE -DRADIUS=TRUE 
           -DCPACK_TYPE=${{ matrix.cpack-type }} ..
@@ -134,7 +135,8 @@ jobs:
       - name: cmake
         working-directory: ./build
         run: >
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DBUILD_PPPOSEQ_DRIVER=TRUE 
+          -DCMAKE_INSTALL_PREFIX=/usr 
           -DKDIR=/usr/src/linux-headers-${{ env.KERNEL_NAME }}
           -DMODULES_KDIR=${{ env.KERNEL_NAME }}
           -DLUA=TRUE -DSHAPER=FALSE -DRADIUS=TRUE 
@@ -199,7 +201,8 @@ jobs:
       - name: cmake
         working-directory: ./build
         run: >
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DBUILD_PPPOSEQ_DRIVER=TRUE 
+          -DCMAKE_INSTALL_PREFIX=/usr
           -DCMAKE_INSTALL_SYSCONFDIR=/etc
           -DKDIR=/usr/src/linux-headers-${{ env.KERNEL_NAME }}
           -DMODULES_KDIR=${{ env.KERNEL_NAME }}
@@ -233,7 +236,8 @@ jobs:
       - name: cmake
         working-directory: ./build
         run: >
-          cmake -DBUILD_IPOE_DRIVER=FALSE -DBUILD_VLAN_MON_DRIVER=FALSE -DCMAKE_INSTALL_PREFIX=/usr
+          cmake -DBUILD_IPOE_DRIVER=FALSE -DBUILD_VLAN_MON_DRIVER=FALSE -DBUILD_PPPOSEQ_DRIVER=FALSE 
+          -DCMAKE_INSTALL_PREFIX=/usr
           -DKDIR=/usr/src/linux-headers-`uname -r`
           -DLUA=TRUE -DSHAPER=FALSE -DRADIUS=TRUE ..
       - name: make and install
@@ -270,7 +274,8 @@ jobs:
       - name: cmake
         working-directory: ./build
         run: >
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DBUILD_PPPOSEQ_DRIVER=TRUE 
+          -DCMAKE_INSTALL_PREFIX=/usr
           -DCMAKE_INSTALL_SYSCONFDIR=/etc
           -DKDIR=/usr/src/linux
           -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE ..
@@ -305,7 +310,8 @@ jobs:
       - name: cmake
         working-directory: ./build
         run: >
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DBUILD_PPPOSEQ_DRIVER=TRUE 
+          -DCMAKE_INSTALL_PREFIX=/usr
           -DCMAKE_INSTALL_SYSCONFDIR=/etc
           -DKDIR=/usr/src/kernels/`ls -1 -t /usr/src/kernels | head -n 1`
           -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE ..

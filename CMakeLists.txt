@@ -96,6 +96,10 @@ if (BUILD_IPOE_DRIVER)
 	add_subdirectory(drivers/ipoe)
 endif (BUILD_IPOE_DRIVER)
 
+if (BUILD_PPPOSEQ_DRIVER)
+	add_subdirectory(drivers/ppposeq)
+endif (BUILD_PPPOSEQ_DRIVER)
+
 if (BUILD_VLAN_MON_DRIVER)
 	add_subdirectory(drivers/vlan_mon)
 endif ()

@@ -51,21 +51,24 @@ jobs:
         run: >
           CFLAGS="-fsanitize=${{ matrix.sanitizer }} -fno-sanitize-recover=all -fno-omit-frame-pointer -O2 -g"
           LDFLAGS="-fsanitize=${{ matrix.sanitizer }}"
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr
-          -DKDIR=/usr/src/linux-headers-`uname -r`
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DBUILD_PPPOSEQ_DRIVER=TRUE 
+          -DCMAKE_INSTALL_PREFIX=/usr 
+          -DKDIR=/usr/src/linux-headers-`uname -r` 
           -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE ..
 
       - name: make && make install
         working-directory: ./build
         run: make && sudo make install
 
-      - name: Insert and check kernel modules (ipoe and vlan-mon)
+      - name: Insert and check kernel modules (ipoe, vlan-mon, ppposeq)
         # if: ${{ false }}
         run: |
           sudo insmod build/drivers/vlan_mon/driver/vlan_mon.ko
           sudo insmod build/drivers/ipoe/driver/ipoe.ko
+          sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko
           lsmod | grep ipoe
           lsmod | grep vlan_mon
+          lsmod | grep ppposeq
 
       - name: Run tests
         timeout-minutes: 5
