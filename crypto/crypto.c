@@ -339,6 +339,7 @@ unsigned char *HMAC(const EVP_MD *evp, const void *key, int key_len,
 		    const unsigned char *data, size_t data_len,
 		    unsigned char *md, unsigned int *md_len)
 {
+	unsigned char tmp[EVP_MAX_MD_SIZE];
 	unsigned long outlen;
 	int idx;
 
@@ -351,10 +352,19 @@ unsigned char *HMAC(const EVP_MD *evp, const void *key, int key_len,
 	if (idx < 0)
 		return NULL;
 
-	outlen = evp->hashsize;
+	/* Digest into a scratch buffer, not straight into md: sstp's Compound
+	 * MAC computes in place (output inside the input buffer), which works
+	 * with OpenSSL because the input is fully consumed before the digest
+	 * is written.  hmac_memory() happens to behave the same way, but it
+	 * can dispatch to a hash descriptor's own hmac_block() -- so with a
+	 * system libtomcrypt that is somebody else's code.  Don't depend on it. */
+	outlen = sizeof(tmp);
 	if (hmac_memory(idx, (const unsigned char *)key, (unsigned long)key_len,
-			data, (unsigned long)data_len, md, &outlen) != CRYPT_OK)
+			data, (unsigned long)data_len, tmp, &outlen) != CRYPT_OK)
 		return NULL;
+
+	memcpy(md, tmp, outlen);
+	zeromem(tmp, sizeof(tmp));
 
 	if (md_len)
 		*md_len = outlen;

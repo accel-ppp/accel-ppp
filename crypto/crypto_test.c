@@ -148,6 +148,44 @@ static void test_hmac(void)
 			check("hmac-sha256 longkey", d, len,
 			      "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54");
 	}
+
+	/*
+	 * sstp's Compound MAC (MS-SSTP 3.3.5.2.3) computes in place: the CMK
+	 * HMAC writes over its own input buffer, and the MAC itself is written
+	 * into a field of the very message being hashed.  Every backend has to
+	 * consume all input before touching the output for that to be correct,
+	 * so assert it instead of trusting each library's internals.
+	 */
+	{
+		unsigned char buf[64], ref[EVP_MAX_MD_SIZE];
+		unsigned int reflen = 0;
+
+		memset(buf, 0x5a, sizeof(buf));
+		if (!HMAC(EVP_sha256(), key, 20, buf, sizeof(buf), ref, &reflen)) {
+			printf("FAIL hmac overlap reference returned NULL\n");
+			failures++;
+			return;
+		}
+
+		/* output on top of the input */
+		if (!HMAC(EVP_sha256(), key, 20, buf, sizeof(buf), buf, &len)) {
+			printf("FAIL hmac in-place returned NULL\n");
+			failures++;
+		} else {
+			check_int("hmac in-place len", len, reflen);
+			check_int("hmac in-place matches",
+				  memcmp(buf, ref, reflen) == 0, 1);
+		}
+
+		/* output inside the input, at an offset -- compound_mac */
+		memset(buf, 0x5a, sizeof(buf));
+		if (!HMAC(EVP_sha256(), key, 20, buf, sizeof(buf), buf + 16, &len)) {
+			printf("FAIL hmac overlap returned NULL\n");
+			failures++;
+		} else
+			check_int("hmac overlap matches",
+				  memcmp(buf + 16, ref, reflen) == 0, 1);
+	}
 }
 
 /* --------------------------------------------------------------- hmac ctx */
