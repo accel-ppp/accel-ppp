@@ -2082,8 +2082,8 @@ static int sstp_handler(struct sstp_conn_t *conn, struct buffer_t *buf)
 		}
 
 		n = ntohs(hdr->length);
-		if (n > SSTP_MAX_PACKET_SIZE) {
-			log_ppp_error("recv [SSTP too long packet]\n");
+		if (n < sizeof(*hdr) || n > SSTP_MAX_PACKET_SIZE) {
+			log_ppp_error("recv [SSTP invalid packet length %d]\n", n);
 			return -1;
 		} else if (n > buf->len)
 			break;
