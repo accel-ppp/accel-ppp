@@ -465,8 +465,7 @@ int ipoe_nl_flush_sessions(void)
 
 	if (rtnl_open_byproto(&rth, 0, NETLINK_GENERIC)) {
 		log_error("ipoe: cannot open generic netlink socket\n");
-		errno = EIO;
-		return -1;
+		return -EIO;
 	}
 
 	memset(&req, 0, sizeof(req));
@@ -480,7 +479,7 @@ int ipoe_nl_flush_sessions(void)
 	ghdr->cmd = IPOE_CMD_FLUSH;
 
 	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0)
-		ret = -1;
+		ret = errno ? -errno : -EIO;
 
 	rtnl_close(&rth);
 
@@ -540,10 +539,12 @@ static void delete_sessions()
 
 static void flush_sessions()
 {
-	if (!ipoe_nl_flush_sessions())
+	int r = ipoe_nl_flush_sessions();
+
+	if (!r)
 		return;
 
-	if (errno == EOPNOTSUPP) {
+	if (r == -EOPNOTSUPP) {
 		log_warn("ipoe: loaded ipoe module does not support IPOE_CMD_FLUSH,"
 			 " removing sessions one by one, reload the module to fix\n");
 		delete_sessions();
@@ -551,7 +552,7 @@ static void flush_sessions()
 	}
 
 	log_error("ipoe: failed to remove sessions left by a previous instance:"
-		  " %s\n", strerror(errno));
+		  " %s\n", strerror(-r));
 }
 
 static void ipoe_up_handler(const struct sockaddr_nl *addr, struct nlmsghdr *h)
