@@ -478,6 +478,7 @@ int ipoe_nl_flush_sessions(void)
 	ghdr = NLMSG_DATA(&req.n);
 	ghdr->cmd = IPOE_CMD_FLUSH;
 
+	errno = 0;
 	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0)
 		ret = errno ? -errno : -EIO;
 
