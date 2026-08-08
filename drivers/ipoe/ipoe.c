@@ -1579,7 +1579,11 @@ static int ipoe_nl_cmd_dump_sessions(struct sk_buff *skb, struct netlink_callbac
 #else
 		if (fill_info(skb, ses, NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq) < 0)
 #endif
+		{
+			/* this one did not fit, resume from it next time */
+			idx--;
 			break;
+		}
 	}
 
 	up(&ipoe_wlock);
