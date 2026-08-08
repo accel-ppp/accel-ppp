@@ -1420,6 +1420,52 @@ out_unlock:
 	return ret;
 }
 
+static int ipoe_nl_cmd_flush(struct sk_buff *skb, struct genl_info *info)
+{
+	struct ipoe_session *ses;
+	LIST_HEAD(list);
+	LIST_HEAD(kill_list);
+
+	down(&ipoe_wlock);
+
+	list_splice_init(&ipoe_list2, &list);
+
+	list_for_each_entry(ses, &list, entry2) {
+		if (ses->peer_addr)
+			list_del_rcu(&ses->entry);
+		if (ses->u.hwaddr_u)
+			list_del_rcu(&ses->entry3);
+	}
+
+	up(&ipoe_wlock);
+
+	if (list_empty(&list))
+		return 0;
+
+	/* a single grace period covers the whole batch */
+	synchronize_rcu();
+
+	list_for_each_entry(ses, &list, entry2) {
+		while (atomic_read(&ses->refs))
+			schedule_timeout_uninterruptible(1);
+
+		if (ses->link_dev) {
+			dev_put(ses->link_dev);
+			ses->link_dev = NULL;
+		}
+	}
+
+	rtnl_lock();
+	list_for_each_entry(ses, &list, entry2)
+		unregister_netdevice_queue(ses->dev, &kill_list);
+	unregister_netdevice_many(&kill_list);
+	rtnl_unlock();
+
+	/* the sessions are freed by now, do not touch 'list' again */
+
+	return 0;
+}
+
 static int ipoe_nl_cmd_modify(struct sk_buff *skb, struct genl_info *info)
 {
 	int ret = -EINVAL, r = 0;
@@ -1891,6 +1937,14 @@ static const struct genl_ops ipoe_nl_ops[] = {
 	{
 		.cmd = IPOE_CMD_DEL_NET,
 		.doit = ipoe_nl_cmd_del_net,
+		.flags = GENL_ADMIN_PERM,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		.policy = ipoe_nl_policy,
+#endif
+	},
+	{
+		.cmd = IPOE_CMD_FLUSH,
+		.doit = ipoe_nl_cmd_flush,
 		.flags = GENL_ADMIN_PERM,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
 		.policy = ipoe_nl_policy,
