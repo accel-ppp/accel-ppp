@@ -1399,6 +1399,8 @@ static int ipoe_nl_cmd_delete(struct sk_buff *skb, struct genl_info *info)
 	if (ses->u.hwaddr_u)
 		list_del_rcu(&ses->entry3);
 
+	/* drop the lock before sleeping in synchronize_rcu() and taking rtnl
+	 * in unregister_netdev() */
 	up(&ipoe_wlock);
 
 	synchronize_rcu();
@@ -1411,7 +1413,7 @@ static int ipoe_nl_cmd_delete(struct sk_buff *skb, struct genl_info *info)
 
 	unregister_netdev(ses->dev);
 
-	ret = 0;
+	return 0;
 
 out_unlock:
 	up(&ipoe_wlock);
