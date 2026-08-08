@@ -22,6 +22,7 @@
 #include <linux/version.h>
 
 #include <net/genetlink.h>
+#include <net/rtnetlink.h>
 #include <net/route.h>
 #include <net/sock.h>
 #include <net/ip.h>

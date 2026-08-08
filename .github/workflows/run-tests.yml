@@ -145,6 +145,7 @@ jobs:
           sudo dmesg"
 
       - name: Insert ipoe kernel module
+        if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp &&
           sudo insmod build/drivers/ipoe/driver/ipoe.ko &&
@@ -163,12 +164,14 @@ jobs:
           sudo dmesg"
 
       - name: Insert vlan_mon kernel module
+        if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp &&
           sudo insmod build/drivers/vlan_mon/driver/vlan_mon.ko &&
           lsmod | grep vlan_mon"
 
       - name: Insert ppposeq kernel module
+        if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp &&
           sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko &&
@@ -290,6 +293,7 @@ jobs:
           doas dmesg"
 
       - name: Insert ipoe kernel module
+        if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
           doas insmod build/drivers/ipoe/driver/ipoe.ko &&
@@ -308,12 +312,14 @@ jobs:
           doas dmesg"
 
       - name: Insert vlan_mon kernel module
+        if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
           doas insmod build/drivers/vlan_mon/driver/vlan_mon.ko &&
           lsmod | grep vlan_mon"
 
       - name: Insert ppposeq kernel module
+        if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
           doas modprobe pppox && doas insmod build/drivers/ppposeq/driver/ppposeq.ko &&
