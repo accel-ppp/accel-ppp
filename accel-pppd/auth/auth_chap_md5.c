@@ -36,7 +36,7 @@ static int conf_timeout = 5;
 static int conf_interval = 0;
 static int conf_max_failure = 3;
 static int conf_any_login = 0;
-static const char *conf_challenge_name = "accel-ppp";
+static char *conf_challenge_name;
 
 struct chap_hdr {
 	uint16_t proto;
@@ -488,8 +488,9 @@ static void load_config(void)
 		conf_any_login = atoi(opt);
 
 	opt = conf_get_opt("auth", "challenge-name");
-	if (opt)
-		conf_challenge_name = opt;
+	if (conf_challenge_name)
+		_free(conf_challenge_name);
+	conf_challenge_name = _strdup(opt ? opt : "accel-ppp");
 }
 
 static void auth_chap_md5_init()
