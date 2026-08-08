@@ -718,7 +718,6 @@ static void init(void)
 	if (!ipoe_genl_id) {
 		log_error("ipoe: cannot resolve netlink family, state left by a"
 			  " previous instance is not removed\n");
-		rth.fd = -1;
 		return;
 	}
 
@@ -733,13 +732,11 @@ static void init(void)
 
 	if (mcg_id == -1) {
 		log_warn("ipoe: unclassified packet handling is disabled\n");
-		rth.fd = -1;
 		return;
 	}
 
 	if (rtnl_open_byproto(&rth, 1 << (mcg_id - 1), NETLINK_GENERIC)) {
 		log_error("ipoe: cannot open generic netlink socket\n");
-		rth.fd = -1;
 		return;
 	}
 
