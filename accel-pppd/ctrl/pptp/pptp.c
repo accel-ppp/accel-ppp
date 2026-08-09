@@ -202,6 +202,7 @@ again:
 
 	if ( n<size ) {
 		memcpy(conn->out_buf, (uint8_t *)buf + n, size - n);
+		conn->out_size = size - n;
 		triton_md_enable_handler(&conn->hnd, MD_MODE_WRITE);
 	}
 
