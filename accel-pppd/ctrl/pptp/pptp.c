@@ -895,7 +895,7 @@ static void pptp_init(void)
 {
 	struct sockaddr_in addr;
 	char *opt;
-	int fd;
+	int fd, f = 1;
 
 	fd = socket(AF_PPPOX, SOCK_STREAM, PX_PROTO_PPTP);
 	if (fd >= 0)
@@ -925,7 +925,7 @@ static void pptp_init(void)
 	else
 		addr.sin_port = htons(PPTP_PORT);
 
-  setsockopt(serv.hnd.fd, SOL_SOCKET, SO_REUSEADDR, &serv.hnd.fd, 4);
+  setsockopt(serv.hnd.fd, SOL_SOCKET, SO_REUSEADDR, &f, sizeof(f));
   if (bind (serv.hnd.fd, (struct sockaddr *) &addr, sizeof (addr)) < 0) {
     log_emerg("pptp: failed to bind socket: %s\n", strerror(errno));
 		close(serv.hnd.fd);
