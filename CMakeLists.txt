@@ -88,10 +88,6 @@ if (NOT BUILD_DRIVER_ONLY)
 	install(DIRECTORY DESTINATION /var/log/accel-ppp)
 endif (NOT BUILD_DRIVER_ONLY)
 
-if (BUILD_PPTP_DRIVER)
-	add_subdirectory(drivers/pptp)
-endif (BUILD_PPTP_DRIVER)
-
 if (BUILD_IPOE_DRIVER)
 	add_subdirectory(drivers/ipoe)
 endif (BUILD_IPOE_DRIVER)
