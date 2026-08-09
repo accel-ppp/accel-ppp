@@ -393,8 +393,10 @@ static int pptp_out_call_rqst(struct pptp_conn_t *conn)
 		return -1;
 	}
 
-	if (send_pptp_out_call_rply(conn, msg, src_addr.sa_addr.pptp.call_id, PPTP_CALL_RES_OK, 0))
+	if (send_pptp_out_call_rply(conn, msg, src_addr.sa_addr.pptp.call_id, PPTP_CALL_RES_OK, 0)) {
+		close(pptp_sock);
 		return -1;
+	}
 
 	conn->call_id = src_addr.sa_addr.pptp.call_id;
 	conn->peer_call_id = msg->call_id;
