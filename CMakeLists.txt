@@ -7,6 +7,7 @@ endif ()
 project(accel-ppp C)
 
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fno-strict-aliasing -D_GNU_SOURCE -fPIC -rdynamic -Wno-unused-result")
+ADD_DEFINITIONS(-DOPENSSL_API_COMPAT=0x10100000L)
 
 IF (NOT DEFINED LIB_SUFFIX)
 	EXECUTE_PROCESS(
@@ -94,6 +95,10 @@ endif (BUILD_PPTP_DRIVER)
 if (BUILD_IPOE_DRIVER)
 	add_subdirectory(drivers/ipoe)
 endif (BUILD_IPOE_DRIVER)
+
+if (BUILD_PPPOSEQ_DRIVER)
+	add_subdirectory(drivers/ppposeq)
+endif (BUILD_PPPOSEQ_DRIVER)
 
 if (BUILD_VLAN_MON_DRIVER)
 	add_subdirectory(drivers/vlan_mon)

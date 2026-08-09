@@ -100,17 +100,22 @@ static const char *conf_ipv6_pool;
 static const char *conf_dpv6_pool;
 static const char *conf_ifname;
 
-static unsigned int stat_conn_starting;
-static unsigned int stat_conn_active;
-static unsigned int stat_conn_finishing;
+struct l2tp_stat_t
+{
+	unsigned int conn_starting;
+	unsigned int conn_active;
+	unsigned int conn_finishing;
 
-static unsigned int stat_sess_starting;
-static unsigned int stat_sess_active;
-static unsigned int stat_sess_finishing;
+	unsigned int sess_starting;
+	unsigned int sess_active;
+	unsigned int sess_finishing;
 
-static unsigned int stat_active;
-static unsigned int stat_starting;
-static unsigned int stat_finishing;
+	unsigned int data_starting;
+	unsigned int data_active;
+	unsigned int data_finishing;
+};
+
+static struct l2tp_stat_t l2tp_stat;
 
 struct l2tp_serv_t
 {
@@ -204,6 +209,45 @@ static int l2tp_conn_read(struct triton_md_handler_t *);
 static void l2tp_session_free(struct l2tp_sess_t *sess);
 static void l2tp_tunnel_free(struct l2tp_conn_t *conn);
 static void apses_stop(void *data);
+
+static void l2tp_stat_inc(unsigned int *stat)
+{
+	__atomic_add_fetch(stat, 1, __ATOMIC_RELAXED);
+}
+
+static void l2tp_stat_dec(unsigned int *stat)
+{
+	__atomic_sub_fetch(stat, 1, __ATOMIC_RELAXED);
+}
+
+static void l2tp_stat_move(unsigned int *from, unsigned int *to)
+{
+	l2tp_stat_dec(from);
+	l2tp_stat_inc(to);
+}
+
+static void l2tp_stat_get(struct l2tp_stat_t *stat)
+{
+	stat->conn_starting = __atomic_load_n(&l2tp_stat.conn_starting, __ATOMIC_RELAXED);
+	stat->conn_active = __atomic_load_n(&l2tp_stat.conn_active, __ATOMIC_RELAXED);
+	stat->conn_finishing = __atomic_load_n(&l2tp_stat.conn_finishing, __ATOMIC_RELAXED);
+	stat->sess_starting = __atomic_load_n(&l2tp_stat.sess_starting, __ATOMIC_RELAXED);
+	stat->sess_active = __atomic_load_n(&l2tp_stat.sess_active, __ATOMIC_RELAXED);
+	stat->sess_finishing = __atomic_load_n(&l2tp_stat.sess_finishing, __ATOMIC_RELAXED);
+	stat->data_starting = __atomic_load_n(&l2tp_stat.data_starting, __ATOMIC_RELAXED);
+	stat->data_active = __atomic_load_n(&l2tp_stat.data_active, __ATOMIC_RELAXED);
+	stat->data_finishing = __atomic_load_n(&l2tp_stat.data_finishing, __ATOMIC_RELAXED);
+}
+
+unsigned int __export l2tp_stat_starting(void)
+{
+	return __atomic_load_n(&l2tp_stat.data_starting, __ATOMIC_RELAXED);
+}
+
+unsigned int __export l2tp_stat_active(void)
+{
+	return __atomic_load_n(&l2tp_stat.data_active, __ATOMIC_RELAXED);
+}
 
 
 #define log_tunnel(log_func, conn, fmt, ...)				\
@@ -877,12 +921,10 @@ static int l2tp_tunnel_disconnect(struct l2tp_conn_t *conn,
 	case STATE_INIT:
 	case STATE_WAIT_SCCRP:
 	case STATE_WAIT_SCCCN:
-		__sync_sub_and_fetch(&stat_conn_starting, 1);
-		__sync_add_and_fetch(&stat_conn_finishing, 1);
+		l2tp_stat_move(&l2tp_stat.conn_starting, &l2tp_stat.conn_finishing);
 		break;
 	case STATE_ESTB:
-		__sync_sub_and_fetch(&stat_conn_active, 1);
-		__sync_add_and_fetch(&stat_conn_finishing, 1);
+		l2tp_stat_move(&l2tp_stat.conn_active, &l2tp_stat.conn_finishing);
 		break;
 	case STATE_FIN:
 	case STATE_FIN_WAIT:
@@ -962,7 +1004,7 @@ static void __tunnel_destroy(struct l2tp_conn_t *conn)
 
 	mempool_free(conn);
 
-	__sync_sub_and_fetch(&stat_conn_finishing, 1);
+	l2tp_stat_dec(&l2tp_stat.conn_finishing);
 }
 
 static void tunnel_put(struct l2tp_conn_t *conn)
@@ -999,7 +1041,7 @@ static void __session_destroy(struct l2tp_sess_t *sess)
 
 	mempool_free(sess);
 
-	__sync_sub_and_fetch(&stat_sess_finishing, 1);
+	l2tp_stat_dec(&l2tp_stat.sess_finishing);
 
 	/* Now that the session is fully destroyed,
 	 * drop the reference to the tunnel.
@@ -1032,15 +1074,13 @@ static void l2tp_session_free(struct l2tp_sess_t *sess)
 	case STATE_WAIT_OCCN:
 		log_session(log_info2, sess, "deleting session\n");
 
-		__sync_sub_and_fetch(&stat_sess_starting, 1);
-		__sync_add_and_fetch(&stat_sess_finishing, 1);
+		l2tp_stat_move(&l2tp_stat.sess_starting, &l2tp_stat.sess_finishing);
 		break;
 	case STATE_ESTB:
 		log_session(log_info2, sess, "deleting session\n");
 
 		triton_event_fire(EV_CTRL_FINISHED, &sess->ppp.ses);
-		__sync_sub_and_fetch(&stat_sess_active, 1);
-		__sync_add_and_fetch(&stat_sess_finishing, 1);
+		l2tp_stat_move(&l2tp_stat.sess_active, &l2tp_stat.sess_finishing);
 
 		pthread_mutex_lock(&sess->apses_lock);
 		if (sess->apses_ctx.tpd)
@@ -1135,12 +1175,10 @@ static void l2tp_tunnel_free(struct l2tp_conn_t *conn)
 	case STATE_INIT:
 	case STATE_WAIT_SCCRP:
 	case STATE_WAIT_SCCCN:
-		__sync_sub_and_fetch(&stat_conn_starting, 1);
-		__sync_add_and_fetch(&stat_conn_finishing, 1);
+		l2tp_stat_move(&l2tp_stat.conn_starting, &l2tp_stat.conn_finishing);
 		break;
 	case STATE_ESTB:
-		__sync_sub_and_fetch(&stat_conn_active, 1);
-		__sync_add_and_fetch(&stat_conn_finishing, 1);
+		l2tp_stat_move(&l2tp_stat.conn_active, &l2tp_stat.conn_finishing);
 		break;
 	case STATE_FIN:
 	case STATE_FIN_WAIT:
@@ -1263,7 +1301,7 @@ static void __apses_destroy(void *data)
 
 	log_ppp_info2("session destroyed\n");
 
-	__sync_sub_and_fetch(&stat_finishing, 1);
+	l2tp_stat_dec(&l2tp_stat.data_finishing);
 
 	/* Drop reference to the L2TP session */
 	session_put(sess);
@@ -1278,12 +1316,10 @@ static void apses_finished(struct ap_session *apses)
 
 	switch (sess->apses_state) {
 	case APSTATE_STARTING:
-		__sync_sub_and_fetch(&stat_starting, 1);
-		__sync_add_and_fetch(&stat_finishing, 1);
+		l2tp_stat_move(&l2tp_stat.data_starting, &l2tp_stat.data_finishing);
 		break;
 	case APSTATE_STARTED:
-		__sync_sub_and_fetch(&stat_active, 1);
-		__sync_add_and_fetch(&stat_finishing, 1);
+		l2tp_stat_move(&l2tp_stat.data_active, &l2tp_stat.data_finishing);
 		break;
 	case APSTATE_FINISHING:
 		break;
@@ -1324,12 +1360,10 @@ static void apses_stop(void *data)
 	switch (sess->apses_state) {
 	case APSTATE_INIT:
 	case APSTATE_STARTING:
-		__sync_sub_and_fetch(&stat_starting, 1);
-		__sync_add_and_fetch(&stat_finishing, 1);
+		l2tp_stat_move(&l2tp_stat.data_starting, &l2tp_stat.data_finishing);
 		break;
 	case APSTATE_STARTED:
-		__sync_sub_and_fetch(&stat_active, 1);
-		__sync_add_and_fetch(&stat_finishing, 1);
+		l2tp_stat_move(&l2tp_stat.data_active, &l2tp_stat.data_finishing);
 		break;
 	case APSTATE_FINISHING:
 		break;
@@ -1388,8 +1422,7 @@ static void apses_started(struct ap_session *apses)
 		return;
 	}
 
-	__sync_sub_and_fetch(&stat_starting, 1);
-	__sync_add_and_fetch(&stat_active, 1);
+	l2tp_stat_move(&l2tp_stat.data_starting, &l2tp_stat.data_active);
 	sess->apses_state = APSTATE_STARTED;
 
 	log_ppp_info1("session started over l2tp session %hu-%hu, %hu-%hu\n",
@@ -1518,7 +1551,7 @@ static struct l2tp_sess_t *l2tp_tunnel_alloc_session(struct l2tp_conn_t *conn)
 	tunnel_hold(conn);
 	session_hold(sess);
 
-	__sync_add_and_fetch(&stat_sess_starting, 1);
+	l2tp_stat_inc(&l2tp_stat.sess_starting);
 
 	return sess;
 }
@@ -1737,7 +1770,7 @@ static struct l2tp_conn_t *l2tp_tunnel_alloc(const struct sockaddr_in *peer,
 	conn->peer_rcv_wnd_sz = DEFAULT_PEER_RECV_WINDOW_SIZE;
 	tunnel_hold(conn);
 
-	__sync_add_and_fetch(&stat_conn_starting, 1);
+	l2tp_stat_inc(&l2tp_stat.conn_starting);
 
 	return conn;
 
@@ -1882,7 +1915,7 @@ static int l2tp_session_start_data_channel(struct l2tp_sess_t *sess)
 		goto err_put_ctx;
 	}
 
-	__sync_add_and_fetch(&stat_starting, 1);
+	l2tp_stat_inc(&l2tp_stat.data_starting);
 
 	return 0;
 
@@ -2012,8 +2045,7 @@ static int l2tp_session_connect(struct l2tp_sess_t *sess)
 	}
 
 	triton_event_fire(EV_CTRL_STARTED, &sess->ppp.ses);
-	__sync_sub_and_fetch(&stat_sess_starting, 1);
-	__sync_add_and_fetch(&stat_sess_active, 1);
+	l2tp_stat_move(&l2tp_stat.sess_starting, &l2tp_stat.sess_active);
 	sess->state1 = STATE_ESTB;
 
 	if (l2tp_session_start_data_channel(sess) < 0) {
@@ -2091,8 +2123,7 @@ static int l2tp_tunnel_connect(struct l2tp_conn_t *conn)
 
 	close(tunnel_fd);
 
-	__sync_sub_and_fetch(&stat_conn_starting, 1);
-	__sync_add_and_fetch(&stat_conn_active, 1);
+	l2tp_stat_move(&l2tp_stat.conn_starting, &l2tp_stat.conn_active);
 	conn->state = STATE_ESTB;
 
 	return 0;
@@ -2722,12 +2753,10 @@ static void l2tp_tunnel_finwait(struct l2tp_conn_t *conn)
 	switch (conn->state) {
 	case STATE_WAIT_SCCRP:
 	case STATE_WAIT_SCCCN:
-		__sync_sub_and_fetch(&stat_conn_starting, 1);
-		__sync_add_and_fetch(&stat_conn_finishing, 1);
+		l2tp_stat_move(&l2tp_stat.conn_starting, &l2tp_stat.conn_finishing);
 		break;
 	case STATE_ESTB:
-		__sync_sub_and_fetch(&stat_conn_active, 1);
-		__sync_add_and_fetch(&stat_conn_finishing, 1);
+		l2tp_stat_move(&l2tp_stat.conn_active, &l2tp_stat.conn_finishing);
 		break;
 	case STATE_FIN:
 		break;
@@ -2807,10 +2836,10 @@ static int l2tp_recv_SCCRQ(const struct l2tp_serv_t *serv,
 		return 0;
 	}
 
-	if (conf_max_starting && ap_session_stat.starting >= conf_max_starting)
+	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
 		return 0;
 
-	if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions)
+	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
 		return 0;
 
 	if (triton_module_loaded("connlimit")
@@ -3353,10 +3382,10 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 		return 0;
 	}
 
-	if (conf_max_starting && ap_session_stat.starting >= conf_max_starting)
+	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
 		return 0;
 
-	if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions)
+	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
 		return 0;
 
 	if (triton_module_loaded("connlimit")
@@ -3693,10 +3722,10 @@ static int l2tp_recv_OCRQ(struct l2tp_conn_t *conn,
 		return 0;
 	}
 
-	if (conf_max_starting && ap_session_stat.starting >= conf_max_starting)
+	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
 		return 0;
 
-	if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions)
+	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
 		return 0;
 
 	if (triton_module_loaded("connlimit")
@@ -4713,21 +4742,25 @@ err_fd:
 
 static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
 {
+	struct l2tp_stat_t stat;
+
+	l2tp_stat_get(&stat);
+
 	cli_send(client, "l2tp:\r\n");
 	cli_send(client, "  tunnels:\r\n");
-	cli_sendv(client, "    starting: %u\r\n", stat_conn_starting);
-	cli_sendv(client, "    active: %u\r\n", stat_conn_active);
-	cli_sendv(client, "    finishing: %u\r\n", stat_conn_finishing);
+	cli_sendv(client, "    starting: %u\r\n", stat.conn_starting);
+	cli_sendv(client, "    active: %u\r\n", stat.conn_active);
+	cli_sendv(client, "    finishing: %u\r\n", stat.conn_finishing);
 
 	cli_send(client, "  sessions (control channels):\r\n");
-	cli_sendv(client, "    starting: %u\r\n", stat_sess_starting);
-	cli_sendv(client, "    active: %u\r\n", stat_sess_active);
-	cli_sendv(client, "    finishing: %u\r\n", stat_sess_finishing);
+	cli_sendv(client, "    starting: %u\r\n", stat.sess_starting);
+	cli_sendv(client, "    active: %u\r\n", stat.sess_active);
+	cli_sendv(client, "    finishing: %u\r\n", stat.sess_finishing);
 
 	cli_send(client, "  sessions (data channels):\r\n");
-	cli_sendv(client, "    starting: %u\r\n", stat_starting);
-	cli_sendv(client, "    active: %u\r\n", stat_active);
-	cli_sendv(client, "    finishing: %u\r\n", stat_finishing);
+	cli_sendv(client, "    starting: %u\r\n", stat.data_starting);
+	cli_sendv(client, "    active: %u\r\n", stat.data_active);
+	cli_sendv(client, "    finishing: %u\r\n", stat.data_finishing);
 
 	return CLI_CMD_OK;
 }
@@ -4931,12 +4964,6 @@ static void l2tp_create_session_help(char * const *fields, int fields_cnt,
 	cli_send(client,
 		 "l2tp create session tid <tid>"
 		 " - place new call in tunnel <tid>\r\n");
-}
-
-void __export l2tp_get_stat(unsigned int **starting, unsigned int **active)
-{
-	*starting = &stat_starting;
-	*active = &stat_active;
 }
 
 static void load_config(void)

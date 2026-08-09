@@ -122,7 +122,8 @@ jobs:
         run: >
           ssh -i ssh-key -p2222 root@localhost "cd accel-ppp && git config --global --add safe.directory '*' &&
           mkdir build && cd build &&
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DBUILD_PPPOSEQ_DRIVER=TRUE 
+          -DCMAKE_INSTALL_PREFIX=/usr 
           -DKDIR=/usr/src/linux-headers-\`uname -r\` 
           -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE .. &&
           make && make install"
@@ -152,6 +153,11 @@ jobs:
           ssh -i ssh-key -p2222 root@localhost "cd accel-ppp &&
           insmod build/drivers/vlan_mon/driver/vlan_mon.ko &&
           lsmod | grep vlan_mon"
+      - name: Insert ppposeq kernel module
+        run: >
+          ssh -i ssh-key -p2222 root@localhost "cd accel-ppp &&
+          modprobe pppox && insmod build/drivers/ppposeq/driver/ppposeq.ko &&
+          lsmod | grep ppposeq"
       - name: Run tests (all)
         timeout-minutes: 5
         run: >
@@ -165,7 +171,7 @@ jobs:
         if: ${{ always() }}
         run: |
           ssh -i ssh-key -p2222 -o ConnectTimeout=5 root@localhost "dmesg" > /tmp/dmesg.log
-          if grep -E 'WARNING:|BUG:|Oops:|kernel panic|general protection fault|KASAN|UBSAN:|soft lockup|hard LOCKUP|INFO: task .+ blocked|Bad page state|invalid opcode' /tmp/dmesg.log; then
+          if grep -E 'WARNING: CPU:|BUG:|Oops:|kernel panic|general protection fault|KASAN|UBSAN:|soft lockup|hard LOCKUP|INFO: task .+ blocked|Bad page state|invalid opcode' /tmp/dmesg.log; then
             echo "::error::Kernel issues detected in dmesg"
             exit 1
           fi

@@ -113,6 +113,17 @@ struct rad_server_t *rad_server_put(struct rad_server_t *s, int type)
 	return (do_free || do_close) ? NULL : s;
 }
 
+char *rad_server_secret_dup(struct rad_server_t *s)
+{
+	char *secret;
+
+	pthread_mutex_lock(&s->lock);
+	secret = _strdup(s->secret);
+	pthread_mutex_unlock(&s->lock);
+
+	return secret;
+}
+
 static void req_wakeup(struct rad_req_t *req)
 {
 	struct timespec ts;
@@ -141,7 +152,20 @@ static void req_wakeup(struct rad_req_t *req)
 	}
 	pthread_mutex_unlock(&req->serv->lock);
 
-	req->send(req, 1);
+	if (req->send(req, 1) == -2) {
+		/* socket setup failed: release the slot taken in
+		 * rad_server_req_exit() and drive the failover path,
+		 * otherwise the server's req_cnt leaks and the request
+		 * is orphaned */
+		req->active = 0;
+		pthread_mutex_lock(&req->serv->lock);
+		req->serv->req_cnt--;
+		pthread_mutex_unlock(&req->serv->lock);
+
+		rad_server_fail(req->serv);
+
+		req->send(req, -1);
+	}
 }
 
 static void req_wakeup_failed(struct rad_req_t *req)
@@ -346,7 +370,7 @@ void rad_server_fail(struct rad_server_t *s)
 	}
 
 	s->queue_cnt = 0;
-	s->stat_fail_cnt++;
+	rad_server_stat_fail(s);
 
 	pthread_mutex_unlock(&s->lock);
 }
@@ -366,17 +390,85 @@ void rad_server_reply(struct rad_server_t *s)
 	s->timeout_cnt = 0;
 }
 
-static int req_set_RA(struct rad_req_t *req, const char *secret)
+void rad_server_stat_fail(struct rad_server_t *s)
 {
+	__atomic_add_fetch(&s->stat.fail_cnt, 1, __ATOMIC_RELAXED);
+}
+
+void rad_server_stat_auth_sent(struct rad_server_t *s)
+{
+	__atomic_add_fetch(&s->stat.auth_sent, 1, __ATOMIC_RELAXED);
+}
+
+void rad_server_stat_auth_lost(struct rad_server_t *s)
+{
+	__atomic_add_fetch(&s->stat.auth_lost, 1, __ATOMIC_RELAXED);
+	stat_accm_add(s->stat.auth_lost_1m, 1);
+	stat_accm_add(s->stat.auth_lost_5m, 1);
+}
+
+void rad_server_stat_auth_query(struct rad_server_t *s, unsigned int dt)
+{
+	stat_accm_add(s->stat.auth_query_1m, dt);
+	stat_accm_add(s->stat.auth_query_5m, dt);
+}
+
+void rad_server_stat_acct_sent(struct rad_server_t *s)
+{
+	__atomic_add_fetch(&s->stat.acct_sent, 1, __ATOMIC_RELAXED);
+}
+
+void rad_server_stat_acct_lost(struct rad_server_t *s)
+{
+	__atomic_add_fetch(&s->stat.acct_lost, 1, __ATOMIC_RELAXED);
+	stat_accm_add(s->stat.acct_lost_1m, 1);
+	stat_accm_add(s->stat.acct_lost_5m, 1);
+}
+
+void rad_server_stat_acct_query(struct rad_server_t *s, unsigned int dt)
+{
+	stat_accm_add(s->stat.acct_query_1m, dt);
+	stat_accm_add(s->stat.acct_query_5m, dt);
+}
+
+void rad_server_stat_interim_sent(struct rad_server_t *s)
+{
+	__atomic_add_fetch(&s->stat.interim_sent, 1, __ATOMIC_RELAXED);
+}
+
+void rad_server_stat_interim_lost(struct rad_server_t *s)
+{
+	__atomic_add_fetch(&s->stat.interim_lost, 1, __ATOMIC_RELAXED);
+	stat_accm_add(s->stat.interim_lost_1m, 1);
+	stat_accm_add(s->stat.interim_lost_5m, 1);
+}
+
+void rad_server_stat_interim_query(struct rad_server_t *s, unsigned int dt)
+{
+	stat_accm_add(s->stat.interim_query_1m, dt);
+	stat_accm_add(s->stat.interim_query_5m, dt);
+}
+
+static int req_set_RA(struct rad_req_t *req)
+{
+	char *secret;
 	MD5_CTX ctx;
 
-	if (rad_packet_build(req->pack, req->RA))
+	secret = rad_server_secret_dup(req->serv);
+	if (!secret)
 		return -1;
+
+	if (rad_packet_build(req->pack, req->RA)) {
+		_free(secret);
+		return -1;
+	}
 
 	MD5_Init(&ctx);
 	MD5_Update(&ctx, req->pack->buf, req->pack->len);
 	MD5_Update(&ctx, secret, strlen(secret));
 	MD5_Final(req->pack->buf + 4, &ctx);
+
+	_free(secret);
 
 	return 0;
 }
@@ -464,7 +556,7 @@ static void send_acct_on(struct rad_server_t *s)
 		if (rad_packet_add_ipaddr(req->pack, NULL, "NAS-IP-Address", conf_nas_ip_address))
 			goto out_err;
 
-	if (req_set_RA(req, s->secret))
+	if (req_set_RA(req))
 		goto out_err;
 
 	__rad_req_send(req, 0);
@@ -497,10 +589,66 @@ static void serv_ctx_close(struct triton_context_t *ctx)
 	}
 }
 
+struct rad_server_stat_snapshot_t {
+	int req_cnt;
+	int queue_cnt;
+	unsigned long auth_sent;
+	unsigned long auth_lost;
+	unsigned long auth_lost_1m;
+	unsigned long auth_lost_5m;
+	unsigned long auth_query_1m;
+	unsigned long auth_query_5m;
+	unsigned long acct_sent;
+	unsigned long acct_lost;
+	unsigned long acct_lost_1m;
+	unsigned long acct_lost_5m;
+	unsigned long acct_query_1m;
+	unsigned long acct_query_5m;
+	unsigned long interim_sent;
+	unsigned long interim_lost;
+	unsigned long interim_lost_1m;
+	unsigned long interim_lost_5m;
+	unsigned long interim_query_1m;
+	unsigned long interim_query_5m;
+	unsigned long fail_cnt;
+};
+
+static void rad_server_stat_get(struct rad_server_t *s, struct rad_server_stat_snapshot_t *stat)
+{
+	pthread_mutex_lock(&s->lock);
+	stat->req_cnt = s->req_cnt;
+	stat->queue_cnt = s->queue_cnt;
+	pthread_mutex_unlock(&s->lock);
+
+	stat->auth_sent = __atomic_load_n(&s->stat.auth_sent, __ATOMIC_RELAXED);
+	stat->auth_lost = __atomic_load_n(&s->stat.auth_lost, __ATOMIC_RELAXED);
+	stat->auth_lost_1m = stat_accm_get_cnt(s->stat.auth_lost_1m);
+	stat->auth_lost_5m = stat_accm_get_cnt(s->stat.auth_lost_5m);
+	stat->auth_query_1m = stat_accm_get_avg(s->stat.auth_query_1m);
+	stat->auth_query_5m = stat_accm_get_avg(s->stat.auth_query_5m);
+
+	stat->acct_sent = __atomic_load_n(&s->stat.acct_sent, __ATOMIC_RELAXED);
+	stat->acct_lost = __atomic_load_n(&s->stat.acct_lost, __ATOMIC_RELAXED);
+	stat->acct_lost_1m = stat_accm_get_cnt(s->stat.acct_lost_1m);
+	stat->acct_lost_5m = stat_accm_get_cnt(s->stat.acct_lost_5m);
+	stat->acct_query_1m = stat_accm_get_avg(s->stat.acct_query_1m);
+	stat->acct_query_5m = stat_accm_get_avg(s->stat.acct_query_5m);
+
+	stat->interim_sent = __atomic_load_n(&s->stat.interim_sent, __ATOMIC_RELAXED);
+	stat->interim_lost = __atomic_load_n(&s->stat.interim_lost, __ATOMIC_RELAXED);
+	stat->interim_lost_1m = stat_accm_get_cnt(s->stat.interim_lost_1m);
+	stat->interim_lost_5m = stat_accm_get_cnt(s->stat.interim_lost_5m);
+	stat->interim_query_1m = stat_accm_get_avg(s->stat.interim_query_1m);
+	stat->interim_query_5m = stat_accm_get_avg(s->stat.interim_query_5m);
+
+	stat->fail_cnt = __atomic_load_n(&s->stat.fail_cnt, __ATOMIC_RELAXED);
+}
+
 static void show_stat(struct rad_server_t *s, void *client)
 {
 	char addr[INET6_ADDRSTRLEN];  // Sufficient size for both IPv4 and IPv6 addresses
 	struct timespec ts;
+	struct rad_server_stat_snapshot_t stat;
 
 	if (s->ipv4) {
 		u_inet_ntoa(s->addr, addr);
@@ -509,6 +657,7 @@ static void show_stat(struct rad_server_t *s, void *client)
 	}
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
+	rad_server_stat_get(s, &stat);
 
 	cli_sendv(client, "radius(%i, %s):\r\n", s->id, addr);
 
@@ -517,31 +666,31 @@ static void show_stat(struct rad_server_t *s, void *client)
 	else
 		cli_send(client, "  state: active\r\n");
 
-	cli_sendv(client, "  fail count: %lu\r\n", s->stat_fail_cnt);
+	cli_sendv(client, "  fail count: %lu\r\n", stat.fail_cnt);
 
-	cli_sendv(client, "  request count: %i\r\n", s->req_cnt);
-	cli_sendv(client, "  queue length: %i\r\n", s->queue_cnt);
+	cli_sendv(client, "  request count: %i\r\n", stat.req_cnt);
+	cli_sendv(client, "  queue length: %i\r\n", stat.queue_cnt);
 
 	if (s->auth_port) {
-		cli_sendv(client, "  auth sent: %lu\r\n", s->stat_auth_sent);
+		cli_sendv(client, "  auth sent: %lu\r\n", stat.auth_sent);
 		cli_sendv(client, "  auth lost(total/5m/1m): %lu/%lu/%lu\r\n",
-			s->stat_auth_lost, stat_accm_get_cnt(s->stat_auth_lost_5m), stat_accm_get_cnt(s->stat_auth_lost_1m));
+			stat.auth_lost, stat.auth_lost_5m, stat.auth_lost_1m);
 		cli_sendv(client, "  auth avg query time(5m/1m): %lu/%lu ms\r\n",
-			stat_accm_get_avg(s->stat_auth_query_5m), stat_accm_get_avg(s->stat_auth_query_1m));
+			stat.auth_query_5m, stat.auth_query_1m);
 	}
 
 	if (s->acct_port) {
-		cli_sendv(client, "  acct sent: %lu\r\n", s->stat_acct_sent);
+		cli_sendv(client, "  acct sent: %lu\r\n", stat.acct_sent);
 		cli_sendv(client, "  acct lost(total/5m/1m): %lu/%lu/%lu\r\n",
-			s->stat_acct_lost, stat_accm_get_cnt(s->stat_acct_lost_5m), stat_accm_get_cnt(s->stat_acct_lost_1m));
+			stat.acct_lost, stat.acct_lost_5m, stat.acct_lost_1m);
 		cli_sendv(client, "  acct avg query time(5m/1m): %lu/%lu ms\r\n",
-			stat_accm_get_avg(s->stat_acct_query_5m), stat_accm_get_avg(s->stat_acct_query_1m));
+			stat.acct_query_5m, stat.acct_query_1m);
 
-		cli_sendv(client, "  interim sent: %lu\r\n", s->stat_interim_sent);
+		cli_sendv(client, "  interim sent: %lu\r\n", stat.interim_sent);
 		cli_sendv(client, "  interim lost(total/5m/1m): %lu/%lu/%lu\r\n",
-			s->stat_interim_lost, stat_accm_get_cnt(s->stat_interim_lost_5m), stat_accm_get_cnt(s->stat_interim_lost_1m));
+			stat.interim_lost, stat.interim_lost_5m, stat.interim_lost_1m);
 		cli_sendv(client, "  interim avg query time(5m/1m): %lu/%lu ms\r\n",
-			stat_accm_get_avg(s->stat_interim_query_5m), stat_accm_get_avg(s->stat_interim_query_1m));
+			stat.interim_query_5m, stat.interim_query_1m);
 	}
 }
 
@@ -558,6 +707,7 @@ static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt,
 static void __add_server(struct rad_server_t *s)
 {
 	struct rad_server_t *s1;
+	char *old_secret;
 
 	list_for_each_entry(s1, &serv_list, entry) {
 		if (s1->addr == s->addr && s1->auth_port == s->auth_port && s1->acct_port == s->acct_port) {
@@ -567,6 +717,13 @@ static void __add_server(struct rad_server_t *s)
 			s1->need_free = 0;
 			s1->bind_default = s->bind_default;
 			strcpy(s1->bind_device, s->bind_device);
+			/* adopt the freshly parsed secret so changes take effect on reload */
+			pthread_mutex_lock(&s1->lock);
+			old_secret = s1->secret;
+			s1->secret = s->secret;
+			s->secret = NULL;
+			pthread_mutex_unlock(&s1->lock);
+			_free(old_secret);
 			_free(s);
 			return;
 		}
@@ -579,20 +736,20 @@ static void __add_server(struct rad_server_t *s)
 	list_add_tail(&s->entry, &serv_list);
 	s->starting = conf_acct_on;
 
-	s->stat_auth_lost_1m = stat_accm_create(60);
-	s->stat_auth_lost_5m = stat_accm_create(5 * 60);
-	s->stat_auth_query_1m = stat_accm_create(60);
-	s->stat_auth_query_5m = stat_accm_create(5 * 60);
+	s->stat.auth_lost_1m = stat_accm_create(60);
+	s->stat.auth_lost_5m = stat_accm_create(5 * 60);
+	s->stat.auth_query_1m = stat_accm_create(60);
+	s->stat.auth_query_5m = stat_accm_create(5 * 60);
 
-	s->stat_acct_lost_1m = stat_accm_create(60);
-	s->stat_acct_lost_5m = stat_accm_create(5 * 60);
-	s->stat_acct_query_1m = stat_accm_create(60);
-	s->stat_acct_query_5m = stat_accm_create(5 * 60);
+	s->stat.acct_lost_1m = stat_accm_create(60);
+	s->stat.acct_lost_5m = stat_accm_create(5 * 60);
+	s->stat.acct_query_1m = stat_accm_create(60);
+	s->stat.acct_query_5m = stat_accm_create(5 * 60);
 
-	s->stat_interim_lost_1m = stat_accm_create(60);
-	s->stat_interim_lost_5m = stat_accm_create(5 * 60);
-	s->stat_interim_query_1m = stat_accm_create(60);
-	s->stat_interim_query_5m = stat_accm_create(5 * 60);
+	s->stat.interim_lost_1m = stat_accm_create(60);
+	s->stat.interim_lost_5m = stat_accm_create(5 * 60);
+	s->stat.interim_query_1m = stat_accm_create(60);
+	s->stat.interim_query_5m = stat_accm_create(5 * 60);
 
 	s->ctx.close = serv_ctx_close;
 
@@ -607,23 +764,24 @@ static void __free_server(struct rad_server_t *s)
 {
 	log_debug("radius: free(%i)\n", s->id);
 
-	stat_accm_free(s->stat_auth_lost_1m);
-	stat_accm_free(s->stat_auth_lost_5m);
-	stat_accm_free(s->stat_auth_query_1m);
-	stat_accm_free(s->stat_auth_query_5m);
+	stat_accm_free(s->stat.auth_lost_1m);
+	stat_accm_free(s->stat.auth_lost_5m);
+	stat_accm_free(s->stat.auth_query_1m);
+	stat_accm_free(s->stat.auth_query_5m);
 
-	stat_accm_free(s->stat_acct_lost_1m);
-	stat_accm_free(s->stat_acct_lost_5m);
-	stat_accm_free(s->stat_acct_query_1m);
-	stat_accm_free(s->stat_acct_query_5m);
+	stat_accm_free(s->stat.acct_lost_1m);
+	stat_accm_free(s->stat.acct_lost_5m);
+	stat_accm_free(s->stat.acct_query_1m);
+	stat_accm_free(s->stat.acct_query_5m);
 
-	stat_accm_free(s->stat_interim_lost_1m);
-	stat_accm_free(s->stat_interim_lost_5m);
-	stat_accm_free(s->stat_interim_query_1m);
-	stat_accm_free(s->stat_interim_query_5m);
+	stat_accm_free(s->stat.interim_lost_1m);
+	stat_accm_free(s->stat.interim_lost_5m);
+	stat_accm_free(s->stat.interim_query_1m);
+	stat_accm_free(s->stat.interim_query_5m);
 
 	triton_context_unregister(&s->ctx);
 
+	_free(s->secret);
 	_free(s);
 }
 

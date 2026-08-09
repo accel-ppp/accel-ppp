@@ -24,6 +24,7 @@ size_t u_parse_ip6cidr(const char *str, struct in6_addr *netp, uint8_t *plen);
 size_t u_parse_ip4cidr(const char *str, struct in_addr *netp, uint8_t *plen);
 size_t u_parse_ip4range(const char *str, struct in_addr *base_ip, uint8_t *max);
 
+void u_strstrip(char *str, char c);
 int u_randbuf(void *buf, size_t buf_len, int *err);
 
 #endif

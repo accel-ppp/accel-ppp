@@ -37,7 +37,7 @@ struct telnet_client_t {
 	struct cli_client_t cli_client;
 	struct list_head entry;
 	struct triton_md_handler_t hnd;
-	struct sockaddr_in addr;
+	struct sockaddr_storage addr;
 	struct list_head xmit_queue;
 	struct buffer_t *xmit_buf;
 	int xmit_pos;
@@ -305,8 +305,10 @@ static int telnet_input_char(struct telnet_client_t *cln, uint8_t c)
 			list_add(&b->entry, cln->history.next);
 			cln->history_pos = cln->history.next;
 
-			if (conf_verbose == 2)
-				log_info2("cli: %s: %s\n", inet_ntoa(cln->addr.sin_addr), cln->cmdline);
+			if (conf_verbose == 2) {
+				char abuf[INET6_ADDRSTRLEN];
+				log_info2("cli: %s: %s\n", cli_addr_str(&cln->addr, abuf, sizeof(abuf)), cln->cmdline);
+			}
 
 			if (cli_process_cmd(&cln->cli_client))
 				return -1;
@@ -556,13 +558,15 @@ disconn:
 
 static int serv_read(struct triton_md_handler_t *h)
 {
-  struct sockaddr_in addr;
-	socklen_t size = sizeof(addr);
+	struct sockaddr_storage addr;
+	socklen_t size;
 	int sock;
 	struct telnet_client_t *conn;
 	struct buffer_t *b, *b2;
+	char abuf[INET6_ADDRSTRLEN];
 
 	while(1) {
+		size = sizeof(addr);
 		sock = accept(h->fd, (struct sockaddr *)&addr, &size);
 		if (sock < 0) {
 			if (errno == EAGAIN)
@@ -572,7 +576,7 @@ static int serv_read(struct triton_md_handler_t *h)
 		}
 
 		if (conf_verbose)
-			log_info2("cli: telnet: new connection from %s\n", inet_ntoa(addr.sin_addr));
+			log_info2("cli: telnet: new connection from %s\n", cli_addr_str(&addr, abuf, sizeof(abuf)));
 
 		fcntl(sock, F_SETFL, O_NONBLOCK);
 		fcntl(sock, F_SETFD, fcntl(sock, F_GETFD) | FD_CLOEXEC);
@@ -657,9 +661,16 @@ static struct triton_md_handler_t serv_hnd = {
 
 static void start_server(const char *host, int port)
 {
-  struct sockaddr_in addr;
+	struct sockaddr_storage addr;
+	socklen_t addrlen;
+	int f = 1;
 
-	serv_hnd.fd = socket(PF_INET, SOCK_STREAM, 0);
+	if (cli_bind_addr(host, port, &addr, &addrlen) < 0) {
+		log_emerg("cli: telnet: invalid address '%s'\n", host);
+		return;
+	}
+
+	serv_hnd.fd = socket(addr.ss_family, SOCK_STREAM, 0);
   if (serv_hnd.fd < 0) {
     log_emerg("cli: telnet: failed to create server socket: %s\n", strerror(errno));
     return;
@@ -667,16 +678,8 @@ static void start_server(const char *host, int port)
 
 	fcntl(serv_hnd.fd, F_SETFD, fcntl(serv_hnd.fd, F_GETFD) | FD_CLOEXEC);
 
-	memset(&addr, 0, sizeof(addr));
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(port);
-	if (host)
-		addr.sin_addr.s_addr = inet_addr(host);
-	else
-		addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-  setsockopt(serv_hnd.fd, SOL_SOCKET, SO_REUSEADDR, &serv_hnd.fd, 4);
-  if (bind (serv_hnd.fd, (struct sockaddr *) &addr, sizeof (addr)) < 0) {
+  setsockopt(serv_hnd.fd, SOL_SOCKET, SO_REUSEADDR, &f, sizeof(f));
+  if (bind (serv_hnd.fd, (struct sockaddr *) &addr, addrlen) < 0) {
     log_emerg("cli: telnet: failed to bind socket: %s\n", strerror(errno));
 		close(serv_hnd.fd);
     return;
@@ -755,7 +758,8 @@ static void load_config(void)
 static void init(void)
 {
 	const char *opt;
-	char *host, *d;
+	const char *addr;
+	char *host;
 	int port;
 
 	opt = conf_get_opt("cli", "telnet");
@@ -763,13 +767,7 @@ static void init(void)
 		return;
 
 	host = strdup(opt);
-	d = strstr(host, ":");
-	if (!d)
-		goto err_fmt;
-
-	*d = 0;
-	port = atoi(d + 1);
-	if (port <= 0)
+	if (cli_parse_hostport(host, &addr, &port) < 0)
 		goto err_fmt;
 
 	opt = conf_get_opt("cli", "history-file");
@@ -783,7 +781,7 @@ static void init(void)
 
 	load_history_file();
 
-	start_server(host, port);
+	start_server(addr, port);
 
 	atexit(save_history_file);
 

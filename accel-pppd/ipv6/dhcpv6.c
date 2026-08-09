@@ -870,12 +870,14 @@ static int dhcpv6_read(struct triton_md_handler_t *h)
 
 static void add_aftr_gw(const char *val)
 {
-	int n = strlen(val);
+	int n;
 	const char *ptr;
 	uint8_t *buf;
 
-	if (!val)
+	if (!val || !*val)
 		return;
+
+	n = strlen(val);
 
 	if (val[n - 1] == '.')
 		n++;
@@ -917,12 +919,14 @@ static void add_aftr_gw(const char *val)
 
 static void add_dnssl(const char *val)
 {
-	int n = strlen(val);
+	int n;
 	const char *ptr;
 	uint8_t *buf;
 
-	if (!val)
+	if (!val || !*val)
 		return;
+
+	n = strlen(val);
 
 	if (val[n - 1] == '.')
 		n++;

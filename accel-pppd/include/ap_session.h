@@ -136,9 +136,13 @@ extern int ap_shutdown;
 extern int sock_fd;
 extern int sock6_fd;
 extern int urandom_fd;
-extern struct ap_session_stat ap_session_stat;
 extern int conf_max_sessions;
 extern int conf_max_starting;
+
+void ap_session_stat_get(struct ap_session_stat *stat);
+unsigned int ap_session_stat_starting(void);
+unsigned int ap_session_stat_active(void);
+unsigned int ap_session_stat_finishing(void);
 
 void ap_session_init(struct ap_session *ses);
 void ap_session_set_ifindex(struct ap_session *ses);

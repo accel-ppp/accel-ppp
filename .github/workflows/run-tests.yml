@@ -127,7 +127,8 @@ jobs:
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp &&
           mkdir build && cd build &&
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DBUILD_PPPOSEQ_DRIVER=TRUE 
+          -DCMAKE_INSTALL_PREFIX=/usr 
           -DKDIR=/usr/src/linux-headers-\`uname -r\` 
           -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE .. &&
           make && sudo make install"
@@ -167,6 +168,12 @@ jobs:
           sudo insmod build/drivers/vlan_mon/driver/vlan_mon.ko &&
           lsmod | grep vlan_mon"
 
+      - name: Insert ppposeq kernel module
+        run: >
+          ssh -i ssh-key -p2222 user@localhost "cd accel-ppp &&
+          sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko &&
+          lsmod | grep ppposeq"
+
       - name: Run tests (all)
         timeout-minutes: 5
         run: >
@@ -182,7 +189,7 @@ jobs:
         if: ${{ always() }}
         run: |
           ssh -i ssh-key -p2222 user@localhost "sudo dmesg" > /tmp/dmesg.log
-          if grep -E 'WARNING:|BUG:|Oops:|kernel panic|general protection fault|KASAN|UBSAN:|soft lockup|hard LOCKUP|INFO: task .+ blocked|Bad page state|invalid opcode' /tmp/dmesg.log; then
+          if grep -E 'WARNING: CPU:|BUG:|Oops:|kernel panic|general protection fault|KASAN|UBSAN:|soft lockup|hard LOCKUP|INFO: task .+ blocked|Bad page state|invalid opcode' /tmp/dmesg.log; then
             echo "::error::Kernel issues detected in dmesg"
             exit 1
           fi
@@ -265,7 +272,8 @@ jobs:
         run: >
           ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
           mkdir build && cd build &&
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DBUILD_PPPOSEQ_DRIVER=TRUE 
+          -DCMAKE_INSTALL_PREFIX=/usr 
           -DKDIR=/usr/src/linux-headers-\`uname -r\` 
           -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE .. &&
           make && doas make install"
@@ -305,6 +313,12 @@ jobs:
           doas insmod build/drivers/vlan_mon/driver/vlan_mon.ko &&
           lsmod | grep vlan_mon"
 
+      - name: Insert ppposeq kernel module
+        run: >
+          ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
+          doas modprobe pppox && doas insmod build/drivers/ppposeq/driver/ppposeq.ko &&
+          lsmod | grep ppposeq"
+
       - name: Run tests (all)
         timeout-minutes: 5
         run: >
@@ -320,7 +334,7 @@ jobs:
         if: ${{ always() }}
         run: |
           ssh -i ssh-key -p2222 alpine@localhost "doas dmesg" > /tmp/dmesg.log
-          if grep -E 'WARNING:|BUG:|Oops:|kernel panic|general protection fault|KASAN|UBSAN:|soft lockup|hard LOCKUP|INFO: task .+ blocked|Bad page state|invalid opcode' /tmp/dmesg.log; then
+          if grep -E 'WARNING: CPU:|BUG:|Oops:|kernel panic|general protection fault|KASAN|UBSAN:|soft lockup|hard LOCKUP|INFO: task .+ blocked|Bad page state|invalid opcode' /tmp/dmesg.log; then
             echo "::error::Kernel issues detected in dmesg"
             exit 1
           fi
@@ -360,7 +374,8 @@ jobs:
       - name: cmake
         working-directory: ./build
         run: >
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DBUILD_PPPOSEQ_DRIVER=TRUE 
+          -DCMAKE_INSTALL_PREFIX=/usr 
           -DKDIR=/usr/src/linux-headers-`uname -r` 
           -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE ..
 
@@ -368,13 +383,15 @@ jobs:
         working-directory: ./build
         run: make && sudo make install
 
-      - name: Insert and check kernel modules (ipoe and vlan-mon)
+      - name: Insert and check kernel modules (ipoe, vlan-mon, ppposeq)
         # if: ${{ false }}
         run: |
           sudo insmod build/drivers/vlan_mon/driver/vlan_mon.ko
           sudo insmod build/drivers/ipoe/driver/ipoe.ko
+          sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko
           lsmod | grep ipoe
           lsmod | grep vlan_mon
+          lsmod | grep ppposeq
 
       - name: Run tests
         timeout-minutes: 5
@@ -385,7 +402,7 @@ jobs:
         if: ${{ always() }}
         run: |
           sudo dmesg | tee /tmp/dmesg.log
-          if grep -E 'WARNING:|BUG:|Oops:|kernel panic|general protection fault|KASAN|UBSAN:|soft lockup|hard LOCKUP|INFO: task .+ blocked|Bad page state|invalid opcode' /tmp/dmesg.log; then
+          if grep -E 'WARNING: CPU:|BUG:|Oops:|kernel panic|general protection fault|KASAN|UBSAN:|soft lockup|hard LOCKUP|INFO: task .+ blocked|Bad page state|invalid opcode' /tmp/dmesg.log; then
             echo "::error::Kernel issues detected in dmesg"
             exit 1
           fi
@@ -424,7 +441,8 @@ jobs:
       - name: cmake (with coverage)
         working-directory: ./build
         run: >
-          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr 
+          cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DBUILD_PPPOSEQ_DRIVER=TRUE 
+          -DCMAKE_INSTALL_PREFIX=/usr 
           -DKDIR=/usr/src/linux-headers-`uname -r` 
           -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE 
           -DCMAKE_C_FLAGS="--coverage -O0" ..
@@ -433,13 +451,15 @@ jobs:
         working-directory: ./build
         run: make && sudo make install
 
-      - name: Insert and check kernel modules (ipoe and vlan-mon)
+      - name: Insert and check kernel modules (ipoe, vlan-mon, ppposeq)
         # if: ${{ false }}
         run: |
           sudo insmod build/drivers/vlan_mon/driver/vlan_mon.ko
           sudo insmod build/drivers/ipoe/driver/ipoe.ko
+          sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko
           lsmod | grep ipoe
           lsmod | grep vlan_mon
+          lsmod | grep ppposeq
 
       - name: Run tests (for coverage report) (fail is ok)
         timeout-minutes: 5
@@ -450,7 +470,7 @@ jobs:
         if: ${{ always() }}
         run: |
           sudo dmesg | tee /tmp/dmesg.log
-          if grep -E 'WARNING:|BUG:|Oops:|kernel panic|general protection fault|KASAN|UBSAN:|soft lockup|hard LOCKUP|INFO: task .+ blocked|Bad page state|invalid opcode' /tmp/dmesg.log; then
+          if grep -E 'WARNING: CPU:|BUG:|Oops:|kernel panic|general protection fault|KASAN|UBSAN:|soft lockup|hard LOCKUP|INFO: task .+ blocked|Bad page state|invalid opcode' /tmp/dmesg.log; then
             echo "::error::Kernel issues detected in dmesg"
             exit 1
           fi

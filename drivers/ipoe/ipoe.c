@@ -15,6 +15,7 @@
 #include <linux/init.h>
 #include <linux/if_ether.h>
 #include <linux/if_vlan.h>
+#include <linux/ipv6.h>
 #include <linux/semaphore.h>
 #include <linux/netfilter_ipv4.h>
 #include <linux/u64_stats_sync.h>
@@ -59,6 +60,14 @@
 
 #ifndef RHEL_MAJOR
 #define RHEL_MAJOR 0
+#endif
+
+/* ipv6.disable=1 leaves the IPv6 FIB uninitialized, so ip6_route_output()
+ * oopses; ipv6_mod_enabled() detects that (and CONFIG_IPV6=n) since 4.8 */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,8,0)
+#define ipoe_ipv6_enabled() ipv6_mod_enabled()
+#else
+#define ipoe_ipv6_enabled() 1
 #endif
 
 static inline void ipoe_flowi4_set_tos(struct flowi4 *fl4, __u8 dsfield)
@@ -890,6 +899,9 @@ static rx_handler_result_t ipoe_recv(struct sk_buff **pskb)
 			return RX_HANDLER_CONSUMED;
 		}
 	} else if (skb->protocol == htons(ETH_P_IPV6)) {
+		if (!ipoe_ipv6_enabled())
+			return RX_HANDLER_PASS;
+
 		if (!pskb_may_pull(skb, sizeof(*ip6h) + noff))
 			return RX_HANDLER_PASS;
 

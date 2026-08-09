@@ -5,11 +5,13 @@ set_property(TARGET pppd_compat PROPERTY INSTALL_RPATH ${CMAKE_INSTALL_PREFIX}/l
 ADD_LIBRARY(ippool SHARED ippool.c)
 ADD_LIBRARY(ipv6pool SHARED ipv6pool.c)
 ADD_LIBRARY(chap-secrets SHARED chap-secrets.c)
+TARGET_LINK_LIBRARIES(chap-secrets ${crypto_lib})
 ADD_LIBRARY(logwtmp SHARED logwtmp.c)
 TARGET_LINK_LIBRARIES(logwtmp util)
 ADD_LIBRARY(connlimit SHARED connlimit.c)
+ADD_LIBRARY(metrics SHARED metrics.c)
 
-INSTALL(TARGETS pppd_compat ippool ipv6pool sigchld chap-secrets logwtmp connlimit
+INSTALL(TARGETS pppd_compat ippool ipv6pool sigchld chap-secrets logwtmp connlimit metrics
 	LIBRARY DESTINATION lib${LIB_SUFFIX}/accel-ppp
 )
 

@@ -25,17 +25,26 @@
 
 #define INTERIM_SAFE_TIME 10
 
-static int req_set_RA(struct rad_req_t *req, const char *secret)
+static int req_set_RA(struct rad_req_t *req)
 {
+	char *secret;
 	MD5_CTX ctx;
 
-	if (rad_packet_build(req->pack, req->RA))
+	secret = rad_server_secret_dup(req->serv);
+	if (!secret)
 		return -1;
+
+	if (rad_packet_build(req->pack, req->RA)) {
+		_free(secret);
+		return -1;
+	}
 
 	MD5_Init(&ctx);
 	MD5_Update(&ctx, req->pack->buf, req->pack->len);
 	MD5_Update(&ctx, secret, strlen(secret));
 	MD5_Final(req->pack->buf + 4, &ctx);
+
+	_free(secret);
 
 	return 0;
 }
@@ -70,7 +79,7 @@ static void rad_acct_sent(struct rad_req_t *req, int res)
 	if (res)
 		return;
 
-	__sync_add_and_fetch(&req->serv->stat_interim_sent, 1);
+	rad_server_stat_interim_sent(req->serv);
 
 	if (!req->hnd.tpd)
 		triton_md_register_handler(req->rpd->ses->ctrl->ctx, &req->hnd);
@@ -88,8 +97,7 @@ static void rad_acct_recv(struct rad_req_t *req)
 	int dt = (req->reply->tv.tv_sec - req->pack->tv.tv_sec) * 1000 +
 		(req->reply->tv.tv_nsec - req->pack->tv.tv_nsec) / 1000000;
 
-	stat_accm_add(req->serv->stat_interim_query_1m, dt);
-	stat_accm_add(req->serv->stat_interim_query_5m, dt);
+	rad_server_stat_interim_query(req->serv, dt);
 
 	if (req->timeout.tpd)
 		triton_timer_del(&req->timeout);
@@ -109,9 +117,7 @@ static void rad_acct_timeout(struct triton_timer_t *t)
 	rad_server_req_exit(req);
 	rad_server_timeout(req->serv);
 
-	__sync_add_and_fetch(&req->serv->stat_interim_lost, 1);
-	stat_accm_add(req->serv->stat_interim_lost_1m, 1);
-	stat_accm_add(req->serv->stat_interim_lost_5m, 1);
+	rad_server_stat_interim_lost(req->serv);
 
 	if (conf_acct_timeout == 0) {
 		triton_timer_del(t);
@@ -183,7 +189,7 @@ static void rad_acct_interim_update(struct triton_timer_t *t)
 	rpd->acct_req->pack->id++;
 
 	if (!rpd->acct_req->before_send)
-		req_set_RA(rpd->acct_req, rpd->acct_req->serv->secret);
+		req_set_RA(rpd->acct_req);
 
 	rpd->acct_req->timeout.expire_tv.tv_sec = conf_timeout;
 	rpd->acct_req->try = 0;
@@ -215,7 +221,7 @@ static int rad_acct_before_send(struct rad_req_t *req)
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 
 	rad_packet_change_int(req->pack, NULL, "Acct-Delay-Time", ts.tv_sec - req->ts + conf_acct_delay_start);
-	req_set_RA(req, req->serv->secret);
+	req_set_RA(req);
 
 	return 0;
 }
@@ -227,7 +233,7 @@ static void rad_acct_start_sent(struct rad_req_t *req, int res)
 		return;
 	}
 
-	__sync_add_and_fetch(&req->serv->stat_acct_sent, 1);
+	rad_server_stat_acct_sent(req->serv);
 
 	if (!req->hnd.tpd)
 		triton_md_register_handler(req->rpd->ses->ctrl->ctx, &req->hnd);
@@ -246,8 +252,7 @@ static void rad_acct_start_recv(struct rad_req_t *req)
 	int dt = (req->reply->tv.tv_sec - req->pack->tv.tv_sec) * 1000 +
 					(req->reply->tv.tv_nsec - req->pack->tv.tv_nsec) / 1000000;
 
-	stat_accm_add(req->serv->stat_acct_query_1m, dt);
-	stat_accm_add(req->serv->stat_acct_query_5m, dt);
+	rad_server_stat_acct_query(req->serv, dt);
 
 	triton_timer_del(&req->timeout);
 
@@ -289,9 +294,7 @@ static void rad_acct_start_timeout(struct triton_timer_t *t)
 
 	rad_server_timeout(req->serv);
 
-	__sync_add_and_fetch(&req->serv->stat_acct_lost, 1);
-	stat_accm_add(req->serv->stat_acct_lost_1m, 1);
-	stat_accm_add(req->serv->stat_acct_lost_5m, 1);
+	rad_server_stat_acct_lost(req->serv);
 
 	if (req->before_send)
 		req->pack->id++;
@@ -314,7 +317,7 @@ static int __rad_acct_start(struct radius_pd_t *rpd)
 
 	if (conf_acct_delay_time)
 		req->before_send = rad_acct_before_send;
-	else if (req_set_RA(req, req->serv->secret))
+	else if (req_set_RA(req))
 		goto out_err;
 
 	req->recv = rad_acct_start_recv;
@@ -370,11 +373,21 @@ static void rad_acct_stop_sent(struct rad_req_t *req, int res)
 				rpd->acct_req = NULL;
 		} else if (req->rpd)
 			rad_acct_stop_defer(req->rpd);
+		else {
+			/* deferred request: the timeout timer is one-shot and
+			 * nobody else references this request, re-arm it to
+			 * retry later, otherwise the request and its socket
+			 * leak */
+			if (req->timeout.tpd)
+				triton_timer_mod(&req->timeout, 0);
+			else
+				triton_timer_add(NULL, &req->timeout, 0);
+		}
 
 		return;
 	}
 
-	__sync_add_and_fetch(&req->serv->stat_acct_sent, 1);
+	rad_server_stat_acct_sent(req->serv);
 
 	if (!req->hnd.tpd)
 		triton_md_register_handler(req->rpd ? req->rpd->ses->ctrl->ctx : NULL, &req->hnd);
@@ -393,8 +406,7 @@ static void rad_acct_stop_recv(struct rad_req_t *req)
 	int dt = (req->reply->tv.tv_sec - req->pack->tv.tv_sec) * 1000 +
 					(req->reply->tv.tv_nsec - req->pack->tv.tv_nsec) / 1000000;
 
-	stat_accm_add(req->serv->stat_acct_query_1m, dt);
-	stat_accm_add(req->serv->stat_acct_query_5m, dt);
+	rad_server_stat_acct_query(req->serv, dt);
 
 	rad_req_free(req);
 
@@ -415,15 +427,13 @@ static void rad_acct_stop_timeout(struct triton_timer_t *t)
 		rad_server_timeout(req->serv);
 		rad_server_req_exit(req);
 
-		__sync_add_and_fetch(&req->serv->stat_acct_lost, 1);
-		stat_accm_add(req->serv->stat_acct_lost_1m, 1);
-		stat_accm_add(req->serv->stat_acct_lost_5m, 1);
+		rad_server_stat_acct_lost(req->serv);
 
 		if (req->before_send)
 			req->pack->id++;
 	}
 
-	if (req->try == conf_max_try) {
+	if (req->try >= conf_max_try) {
 		if (req->rpd)
 			req->rpd->acct_req = NULL;
 		rad_req_free(req);
@@ -437,7 +447,14 @@ static void rad_acct_stop_timeout(struct triton_timer_t *t)
 			rad_req_free(req);
 			return;
 		}
-		req->try = 0;
+		/* no server available at the moment; the timeout timer is
+		 * one-shot, re-arm it to retry later, otherwise the request
+		 * and its socket leak; failed attempts count towards
+		 * conf_max_try so the request is freed above eventually */
+		if (req->timeout.tpd)
+			triton_timer_mod(&req->timeout, 0);
+		else
+			triton_timer_add(req->rpd ? req->rpd->ses->ctrl->ctx : NULL, &req->timeout, 0);
 	}
 }
 
@@ -533,7 +550,7 @@ int rad_acct_stop(struct radius_pd_t *rpd)
 
 	rad_packet_change_val(req->pack, NULL, "Acct-Status-Type", "Stop");
 	req_set_stat(req, rpd->ses);
-	req_set_RA(req, req->serv->secret);
+	req_set_RA(req);
 
 	req->recv = rad_acct_stop_recv;
 	req->timeout.expire = rad_acct_stop_timeout;

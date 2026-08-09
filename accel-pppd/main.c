@@ -41,6 +41,8 @@ static int term;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 
+static volatile sig_atomic_t need_reload;
+
 #if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
 static pthread_mutex_t *ssl_lock_cs;
 
@@ -73,12 +75,11 @@ static void ssl_lock_init(void)
 
 static void openssl_init(void)
 {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
 	SSL_library_init();
 	SSL_load_error_strings();
 	OpenSSL_add_all_algorithms();
 	OpenSSL_add_all_digests();
-
-#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
 	ssl_lock_init();
 #endif
 }
@@ -101,7 +102,7 @@ static void change_limits(void)
 		log_emerg("main: setrlimit: %s\n", strerror(errno));
 }
 
-static void config_reload_notify(int r)
+static void config_reload_notify(int r, void *arg)
 {
 	if (!r)
 		triton_event_fire(EV_CONFIG_RELOAD, NULL);
@@ -109,7 +110,7 @@ static void config_reload_notify(int r)
 
 static void config_reload(int num)
 {
-	triton_conf_reload(config_reload_notify);
+	need_reload = 1;
 }
 
 static void close_all_fd(void)
@@ -438,7 +439,19 @@ int main(int _argc, char **_argv)
 	backup_restore(internal);
 #endif
 
-	sigwait(&set, &sig);
+	{
+		struct timespec ts = { .tv_sec = 1 };
+		while (1) {
+			sig = sigtimedwait(&set, NULL, &ts);
+			if (sig > 0)
+				break;
+			if (need_reload) {
+				need_reload = 0;
+				if (triton_conf_reload(config_reload_notify, NULL))
+					log_warn("main: config reload is already in progress\n");
+			}
+		}
+	}
 	log_info1("terminate, sig = %i\n", sig);
 
 	ap_shutdown_soft(shutdown_cb, 1);

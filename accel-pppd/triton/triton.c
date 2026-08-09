@@ -32,13 +32,15 @@ static LIST_HEAD(init_list);
 static int terminate;
 static int need_terminate;
 
+/* 0 - idle, 1 - reload requested, 2 - reload running */
 static int need_config_reload;
-static void (*config_reload_notify)(int);
+static void (*config_reload_notify)(int, void *);
+static void *config_reload_arg;
 
 static mempool_t *ctx_pool;
 static mempool_t *call_pool;
 
-struct triton_stat_t __export triton_stat;
+static struct triton_stat_t triton_stat;
 
 static struct timeval ru_utime;
 static struct timeval ru_stime;
@@ -57,20 +59,167 @@ static __thread void *thread_frame;
 
 #define log_debug2(fmt, ...)
 
+void __export triton_stat_get(struct triton_stat_t *stat)
+{
+	stat->mempool_allocated = __atomic_load_n(&triton_stat.mempool_allocated, __ATOMIC_RELAXED);
+	stat->mempool_available = __atomic_load_n(&triton_stat.mempool_available, __ATOMIC_RELAXED);
+	stat->thread_count = __atomic_load_n(&triton_stat.thread_count, __ATOMIC_RELAXED);
+	stat->thread_active = __atomic_load_n(&triton_stat.thread_active, __ATOMIC_RELAXED);
+	stat->context_count = __atomic_load_n(&triton_stat.context_count, __ATOMIC_RELAXED);
+	stat->context_sleeping = __atomic_load_n(&triton_stat.context_sleeping, __ATOMIC_RELAXED);
+	stat->context_pending = __atomic_load_n(&triton_stat.context_pending, __ATOMIC_RELAXED);
+	stat->md_handler_count = __atomic_load_n(&triton_stat.md_handler_count, __ATOMIC_RELAXED);
+	stat->md_handler_pending = __atomic_load_n(&triton_stat.md_handler_pending, __ATOMIC_RELAXED);
+	stat->timer_count = __atomic_load_n(&triton_stat.timer_count, __ATOMIC_RELAXED);
+	stat->timer_pending = __atomic_load_n(&triton_stat.timer_pending, __ATOMIC_RELAXED);
+	stat->start_time = __atomic_load_n(&triton_stat.start_time, __ATOMIC_RELAXED);
+	stat->cpu = __atomic_load_n(&triton_stat.cpu, __ATOMIC_RELAXED);
+}
+
+time_t __export triton_stat_start_time(void)
+{
+	return __atomic_load_n(&triton_stat.start_time, __ATOMIC_RELAXED);
+}
+
+unsigned int __export triton_stat_cpu(void)
+{
+	return __atomic_load_n(&triton_stat.cpu, __ATOMIC_RELAXED);
+}
+
+void triton_stat_mempool_allocated_add(uint64_t value)
+{
+	__atomic_add_fetch(&triton_stat.mempool_allocated, value, __ATOMIC_RELAXED);
+}
+
+void triton_stat_mempool_allocated_sub(uint64_t value)
+{
+	__atomic_sub_fetch(&triton_stat.mempool_allocated, value, __ATOMIC_RELAXED);
+}
+
+void triton_stat_mempool_available_add(uint64_t value)
+{
+	__atomic_add_fetch(&triton_stat.mempool_available, value, __ATOMIC_RELAXED);
+}
+
+void triton_stat_mempool_available_sub(uint64_t value)
+{
+	__atomic_sub_fetch(&triton_stat.mempool_available, value, __ATOMIC_RELAXED);
+}
+
+void triton_stat_thread_count_inc(void)
+{
+	__atomic_add_fetch(&triton_stat.thread_count, 1, __ATOMIC_RELAXED);
+}
+
+void triton_stat_thread_active_inc(void)
+{
+	__atomic_add_fetch(&triton_stat.thread_active, 1, __ATOMIC_RELAXED);
+}
+
+unsigned int triton_stat_thread_active_dec(void)
+{
+	return __atomic_sub_fetch(&triton_stat.thread_active, 1, __ATOMIC_RELAXED);
+}
+
+static unsigned int triton_stat_thread_active(void)
+{
+	return __atomic_load_n(&triton_stat.thread_active, __ATOMIC_RELAXED);
+}
+
+void triton_stat_context_count_inc(void)
+{
+	__atomic_add_fetch(&triton_stat.context_count, 1, __ATOMIC_RELAXED);
+}
+
+unsigned int triton_stat_context_count_dec(void)
+{
+	return __atomic_sub_fetch(&triton_stat.context_count, 1, __ATOMIC_RELAXED);
+}
+
+void triton_stat_context_sleeping_inc(void)
+{
+	__atomic_add_fetch(&triton_stat.context_sleeping, 1, __ATOMIC_RELAXED);
+}
+
+void triton_stat_context_sleeping_dec(void)
+{
+	__atomic_sub_fetch(&triton_stat.context_sleeping, 1, __ATOMIC_RELAXED);
+}
+
+void triton_stat_context_pending_inc(void)
+{
+	__atomic_add_fetch(&triton_stat.context_pending, 1, __ATOMIC_RELAXED);
+}
+
+void triton_stat_context_pending_dec(void)
+{
+	__atomic_sub_fetch(&triton_stat.context_pending, 1, __ATOMIC_RELAXED);
+}
+
+void triton_stat_md_handler_count_inc(void)
+{
+	__atomic_add_fetch(&triton_stat.md_handler_count, 1, __ATOMIC_RELAXED);
+}
+
+void triton_stat_md_handler_count_dec(void)
+{
+	__atomic_sub_fetch(&triton_stat.md_handler_count, 1, __ATOMIC_RELAXED);
+}
+
+void triton_stat_md_handler_pending_inc(void)
+{
+	__atomic_add_fetch(&triton_stat.md_handler_pending, 1, __ATOMIC_RELAXED);
+}
+
+void triton_stat_md_handler_pending_dec(void)
+{
+	__atomic_sub_fetch(&triton_stat.md_handler_pending, 1, __ATOMIC_RELAXED);
+}
+
+void triton_stat_timer_count_inc(void)
+{
+	__atomic_add_fetch(&triton_stat.timer_count, 1, __ATOMIC_RELAXED);
+}
+
+void triton_stat_timer_count_dec(void)
+{
+	__atomic_sub_fetch(&triton_stat.timer_count, 1, __ATOMIC_RELAXED);
+}
+
+void triton_stat_timer_pending_inc(void)
+{
+	__atomic_add_fetch(&triton_stat.timer_pending, 1, __ATOMIC_RELAXED);
+}
+
+void triton_stat_timer_pending_dec(void)
+{
+	__atomic_sub_fetch(&triton_stat.timer_pending, 1, __ATOMIC_RELAXED);
+}
+
+void triton_stat_set_cpu(unsigned int value)
+{
+	__atomic_store_n(&triton_stat.cpu, value, __ATOMIC_RELAXED);
+}
+
+void triton_stat_set_start_time(time_t value)
+{
+	__atomic_store_n(&triton_stat.start_time, value, __ATOMIC_RELAXED);
+}
+
 void triton_thread_wakeup(struct _triton_thread_t *thread)
 {
 	log_debug2("wake up thread %p\n", thread);
 	pthread_kill(thread->thread, SIGUSR1);
 }
 
-static void __config_reload(void (*notify)(int))
+static void __config_reload(void)
 {
 	struct _triton_thread_t *t;
 	int r;
 
 	log_debug2("config_reload: enter\n");
 	r = conf_reload(NULL);
-	notify(r);
+	config_reload_notify(r, config_reload_arg);
 
 	spin_lock(&threads_lock);
 	need_config_reload = 0;
@@ -146,7 +295,7 @@ static void* triton_thread(struct _triton_thread_t *thread)
 				thread->ctx->thread = thread;
 				thread->ctx->queued = 0;
 				spin_unlock(&threads_lock);
-				__sync_sub_and_fetch(&triton_stat.context_pending, 1);
+				triton_stat_context_pending_dec();
 			}
 		} else {
 			log_debug2("thread: %p: sleeping\n", thread);
@@ -154,9 +303,10 @@ static void* triton_thread(struct _triton_thread_t *thread)
 			if (!terminate)
 				list_add(&thread->entry2, &sleep_threads);
 
-			if (__sync_sub_and_fetch(&triton_stat.thread_active, 1) == 0 && need_config_reload) {
+			if (triton_stat_thread_active_dec() == 0 && need_config_reload == 1) {
+				need_config_reload = 2;
 				spin_unlock(&threads_lock);
-				__config_reload(config_reload_notify);
+				__config_reload();
 			} else
 				spin_unlock(&threads_lock);
 
@@ -172,7 +322,7 @@ static void* triton_thread(struct _triton_thread_t *thread)
 			//printf("thread %p: exit sigwait\n", thread);
 
 			spin_lock(&threads_lock);
-			__sync_add_and_fetch(&triton_stat.thread_active, 1);
+			triton_stat_thread_active_inc();
 			if (!thread->ctx) {
 				list_del(&thread->entry2);
 				spin_unlock(&threads_lock);
@@ -228,7 +378,7 @@ static void ctx_thread(struct _triton_context_t *ctx)
 			list_del(&t->entry2);
 			t->pending = 0;
 			spin_unlock(&ctx->lock);
-			__sync_sub_and_fetch(&triton_stat.timer_pending, 1);
+			triton_stat_timer_pending_dec();
 			read(t->fd, &tt, sizeof(tt));
 			if (t->ud)
 				t->ud->expire(t->ud);
@@ -243,7 +393,7 @@ static void ctx_thread(struct _triton_context_t *ctx)
 			h->trig_epoll_events = 0;
 			spin_unlock(&ctx->lock);
 
-			__sync_sub_and_fetch(&triton_stat.md_handler_pending, 1);
+			triton_stat_md_handler_pending_dec();
 
 			h->armed = 0;
 
@@ -320,8 +470,8 @@ struct _triton_thread_t *create_thread()
 	while (pthread_create(&thread->thread, &attr, (void*(*)(void*))triton_thread, thread))
 		sleep(1);
 
-	__sync_add_and_fetch(&triton_stat.thread_count, 1);
-	__sync_add_and_fetch(&triton_stat.thread_active, 1);
+	triton_stat_thread_count_inc();
+	triton_stat_thread_active_inc();
 
 	return thread;
 }
@@ -340,7 +490,7 @@ int triton_queue_ctx(struct _triton_context_t *ctx)
 		spin_unlock(&threads_lock);
 		ctx->queued = 1;
 		log_debug2("ctx %p: queued\n", ctx);
-		__sync_add_and_fetch(&triton_stat.context_pending, 1);
+		triton_stat_context_pending_inc();
 		return 0;
 	}
 
@@ -386,8 +536,8 @@ int __export triton_context_register(struct triton_context_t *ud, void *bf_arg)
 	list_add_tail(&ctx->entry, &ctx_list);
 	spin_unlock(&ctx_list_lock);
 
-	__sync_add_and_fetch(&triton_stat.context_sleeping, 1);
-	__sync_add_and_fetch(&triton_stat.context_count, 1);
+	triton_stat_context_sleeping_inc();
+	triton_stat_context_count_inc();
 
 	return 0;
 }
@@ -437,7 +587,7 @@ void __export triton_context_unregister(struct triton_context_t *ud)
 
 	spin_lock(&ctx_list_lock);
 	list_del(&ctx->entry);
-	if (__sync_sub_and_fetch(&triton_stat.context_count, 1) == 1) {
+	if (triton_stat_context_count_dec() == 1) {
 		if (need_terminate)
 			terminate = 1;
 	}
@@ -492,7 +642,7 @@ void __export triton_context_schedule()
 	volatile struct _triton_context_t *ctx = (struct _triton_context_t *)this_ctx->tpd;
 
 	log_debug2("ctx %p: enter schedule\n", ctx);
-	__sync_add_and_fetch(&triton_stat.context_sleeping, 1);
+	triton_stat_context_sleeping_inc();
 
 	ctx->uc = alloc_context();
 
@@ -509,7 +659,7 @@ void __export triton_context_schedule()
 		spin_unlock(&threads_lock);
 		_free(ctx->uc);
 		ctx->uc = NULL;
-		__sync_sub_and_fetch(&triton_stat.context_sleeping, 1);
+		triton_stat_context_sleeping_dec();
 		log_debug2("ctx %p: exit schedule\n", ctx);
 	} else {
 		ctx->asleep = 1;
@@ -527,7 +677,7 @@ void __export triton_context_wakeup(struct triton_context_t *ud)
 	log_debug2("ctx %p: wakeup\n", ctx);
 
 	if (ctx->init) {
-		__sync_sub_and_fetch(&triton_stat.context_sleeping, 1);
+		triton_stat_context_sleeping_dec();
 		spin_lock(&ctx->lock);
 		ctx->init = 0;
 		if (ctx->pending)
@@ -610,7 +760,7 @@ void __export triton_collect_cpu_usage(void)
 		clock_gettime(CLOCK_MONOTONIC, &ru_timestamp);
 		ru_utime = rusage.ru_utime;
 		ru_stime = rusage.ru_stime;
-		triton_stat.cpu = 0;
+		triton_stat_set_cpu(0);
 	}
 }
 
@@ -634,7 +784,7 @@ static void ru_update(struct triton_timer_t *t)
 	val = (double)((rusage.ru_utime.tv_sec - ru_utime.tv_sec) * 1000000 + (rusage.ru_utime.tv_usec - ru_utime.tv_usec) +
 	      (rusage.ru_stime.tv_sec - ru_stime.tv_sec) * 1000000 + (rusage.ru_stime.tv_usec - ru_stime.tv_usec)) / dt * 100;
 
-	triton_stat.cpu = val;
+	triton_stat_set_cpu(val);
 
 	ru_timestamp = ts;
 	ru_utime = rusage.ru_utime;
@@ -709,16 +859,25 @@ int __export triton_load_modules(const char *mod_sect)
 	return 0;
 }
 
-void __export triton_conf_reload(void (*notify)(int))
+int __export triton_conf_reload(void (*notify)(int, void *), void *arg)
 {
 	spin_lock(&threads_lock);
-	need_config_reload = 1;
+	if (need_config_reload) {
+		spin_unlock(&threads_lock);
+		return -1;
+	}
 	config_reload_notify = notify;
-	if (triton_stat.thread_active == 0) {
+	config_reload_arg = arg;
+	if (triton_stat_thread_active() == 0) {
+		need_config_reload = 2;
 		spin_unlock(&threads_lock);
-		__config_reload(notify);
-	} else
+		__config_reload();
+	} else {
+		need_config_reload = 1;
 		spin_unlock(&threads_lock);
+	}
+
+	return 0;
 }
 
 void __export triton_run()
@@ -752,7 +911,7 @@ void __export triton_run()
 	}
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
-	triton_stat.start_time = ts.tv_sec;
+	triton_stat_set_start_time(ts.tv_sec);
 
 	md_run();
 	timer_run();

@@ -87,7 +87,7 @@ static void *md_thread(void *arg)
 				if (!h->pending) {
 					list_add_tail(&h->entry2, &h->ctx->pending_handlers);
 					h->pending = 1;
-					__sync_add_and_fetch(&triton_stat.md_handler_pending, 1);
+					triton_stat_md_handler_pending_inc();
 					r = triton_queue_ctx(h->ctx);
 				} else
 					r = 0;
@@ -129,7 +129,7 @@ void __export triton_md_register_handler(struct triton_context_t *ctx, struct tr
 	list_add_tail(&h->entry, &h->ctx->handlers);
 	spin_unlock(&h->ctx->lock);
 
-	__sync_add_and_fetch(&triton_stat.md_handler_count, 1);
+	triton_stat_md_handler_count_inc();
 }
 
 void __export triton_md_unregister_handler(struct triton_md_handler_t *ud, int c)
@@ -148,7 +148,7 @@ void __export triton_md_unregister_handler(struct triton_md_handler_t *ud, int c
 	list_del(&h->entry);
 	if (h->pending) {
 		list_del(&h->entry2);
-		__sync_sub_and_fetch(&triton_stat.md_handler_pending, 1);
+		triton_stat_md_handler_pending_dec();
 	}
 	spin_unlock(&h->ctx->lock);
 
@@ -158,7 +158,7 @@ void __export triton_md_unregister_handler(struct triton_md_handler_t *ud, int c
 
 	ud->tpd = NULL;
 
-	__sync_sub_and_fetch(&triton_stat.md_handler_count, 1);
+	triton_stat_md_handler_count_dec();
 }
 
 int __export triton_md_enable_handler(struct triton_md_handler_t *ud, int mode)

@@ -62,12 +62,57 @@ static spinlock_t seq_lock;
 static long long unsigned seq;
 static struct timespec seq_ts;
 
-struct ap_session_stat __export ap_session_stat;
+static struct ap_session_stat ap_session_stat;
 
 static void (*shutdown_cb)(void);
 
 static void generate_sessionid(struct ap_session *ses);
 static void save_seq(void);
+
+void __export ap_session_stat_get(struct ap_session_stat *stat)
+{
+	stat->starting = __atomic_load_n(&ap_session_stat.starting, __ATOMIC_RELAXED);
+	stat->active = __atomic_load_n(&ap_session_stat.active, __ATOMIC_RELAXED);
+	stat->finishing = __atomic_load_n(&ap_session_stat.finishing, __ATOMIC_RELAXED);
+}
+
+unsigned int __export ap_session_stat_starting(void)
+{
+	return __atomic_load_n(&ap_session_stat.starting, __ATOMIC_RELAXED);
+}
+
+unsigned int __export ap_session_stat_active(void)
+{
+	return __atomic_load_n(&ap_session_stat.active, __ATOMIC_RELAXED);
+}
+
+unsigned int __export ap_session_stat_finishing(void)
+{
+	return __atomic_load_n(&ap_session_stat.finishing, __ATOMIC_RELAXED);
+}
+
+static void ap_session_stat_inc(unsigned int *stat)
+{
+	__atomic_add_fetch(stat, 1, __ATOMIC_RELAXED);
+}
+
+static void ap_session_stat_dec(unsigned int *stat)
+{
+	__atomic_sub_fetch(stat, 1, __ATOMIC_RELAXED);
+}
+
+static void ap_session_stat_move(unsigned int *from, unsigned int *to)
+{
+	ap_session_stat_dec(from);
+	ap_session_stat_inc(to);
+}
+
+static int ap_session_stat_idle(void)
+{
+	return !ap_session_stat_starting()
+	    && !ap_session_stat_active()
+	    && !ap_session_stat_finishing();
+}
 
 void __export ap_session_init(struct ap_session *ses)
 {
@@ -113,7 +158,7 @@ int __export ap_session_starting(struct ap_session *ses)
 		ses->state = AP_STATE_STARTING;
 	}
 
-	__sync_add_and_fetch(&ap_session_stat.starting, 1);
+	ap_session_stat_inc(&ap_session_stat.starting);
 
 	pthread_rwlock_wrlock(&ses_lock);
 	list_add_tail(&ses->entry, &ses_list);
@@ -156,8 +201,7 @@ void __export ap_session_activate(struct ap_session *ses)
 		return;
 
 	ses->state = AP_STATE_ACTIVE;
-	__sync_sub_and_fetch(&ap_session_stat.starting, 1);
-	__sync_add_and_fetch(&ap_session_stat.active, 1);
+	ap_session_stat_move(&ap_session_stat.starting, &ap_session_stat.active);
 
 	if (!ses->session_timeout && conf_session_timeout)
 		ses->session_timeout = conf_session_timeout;
@@ -198,14 +242,14 @@ void __export ap_session_finished(struct ap_session *ses)
 
 	switch (ses->state) {
 		case AP_STATE_ACTIVE:
-			__sync_sub_and_fetch(&ap_session_stat.active, 1);
+			ap_session_stat_dec(&ap_session_stat.active);
 			break;
 		case AP_STATE_RESTORE:
 		case AP_STATE_STARTING:
-			__sync_sub_and_fetch(&ap_session_stat.starting, 1);
+			ap_session_stat_dec(&ap_session_stat.starting);
 			break;
 		case AP_STATE_FINISHING:
-			__sync_sub_and_fetch(&ap_session_stat.finishing, 1);
+			ap_session_stat_dec(&ap_session_stat.finishing);
 			break;
 	}
 
@@ -266,7 +310,7 @@ void __export ap_session_finished(struct ap_session *ses)
 		ses->backup->storage->free(ses->backup);
 #endif
 
-	if (ap_shutdown && !ap_session_stat.starting && !ap_session_stat.active && !ap_session_stat.finishing) {
+	if (ap_shutdown && ap_session_stat_idle()) {
 		if (shutdown_cb)
 			shutdown_cb();
 		else
@@ -299,11 +343,10 @@ void __export ap_session_terminate(struct ap_session *ses, int cause, int hard)
 	}
 
 	if (ses->state == AP_STATE_ACTIVE)
-		__sync_sub_and_fetch(&ap_session_stat.active, 1);
+		ap_session_stat_move(&ap_session_stat.active, &ap_session_stat.finishing);
 	else
-		__sync_sub_and_fetch(&ap_session_stat.starting, 1);
+		ap_session_stat_move(&ap_session_stat.starting, &ap_session_stat.finishing);
 
-	__sync_add_and_fetch(&ap_session_stat.finishing, 1);
 	ses->terminating = 1;
 	ses->state = AP_STATE_FINISHING;
 
@@ -333,7 +376,7 @@ int ap_shutdown_soft(void (*cb)(void), int term)
 
 	pthread_rwlock_rdlock(&ses_lock);
 
-	if (!ap_session_stat.starting && !ap_session_stat.active && !ap_session_stat.finishing) {
+	if (ap_session_stat_idle()) {
 		pthread_rwlock_unlock(&ses_lock);
 		if (shutdown_cb)
 			shutdown_cb();

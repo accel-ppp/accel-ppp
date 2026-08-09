@@ -30,6 +30,9 @@ static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt,
 #ifdef MEMDEBUG
 	struct mallinfo mi = mallinfo();
 #endif
+	struct triton_stat_t stat;
+
+	triton_stat_get(&stat);
 
 	sprintf(statm_fname, "/proc/%i/statm", getpid());
 	f = fopen(statm_fname, "r");
@@ -39,14 +42,14 @@ static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt,
 	}
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
-	dt = ts.tv_sec - triton_stat.start_time;
+	dt = ts.tv_sec - stat.start_time;
 	day = dt / (60 * 60 * 24);
 	dt %= 60 * 60 * 24;
 	hour = dt / (60 * 60);
 	dt %= 60 * 60;
 
 	cli_sendv(client, "uptime: %i.%02i:%02lu:%02lu\r\n", day, hour, dt / 60, dt % 60);
-	cli_sendv(client, "cpu: %i%%\r\n", triton_stat.cpu);
+	cli_sendv(client, "cpu: %i%%\r\n", stat.cpu);
 #ifdef MEMDEBUG
 	cli_send(client,  "memory:\r\n");
 	cli_sendv(client, "  rss/virt: %lu/%lu kB\r\n", vmrss * page_size_kb, vmsize * page_size_kb);
@@ -58,23 +61,29 @@ static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt,
 	cli_sendv(client, "mem(rss/virt): %lu/%lu kB\r\n", vmrss * page_size_kb, vmsize * page_size_kb);
 #endif
 	cli_send(client, "core:\r\n");
-	cli_sendv(client, "  mempool_allocated: %" PRIu64 "\r\n", triton_stat.mempool_allocated);
-	cli_sendv(client, "  mempool_available: %" PRIu64 "\r\n", triton_stat.mempool_available);
-	cli_sendv(client, "  thread_count: %u\r\n", triton_stat.thread_count);
-	cli_sendv(client, "  thread_active: %u\r\n", triton_stat.thread_active);
-	cli_sendv(client, "  context_count: %u\r\n", triton_stat.context_count);
-	cli_sendv(client, "  context_sleeping: %u\r\n", triton_stat.context_sleeping);
-	cli_sendv(client, "  context_pending: %u\r\n", triton_stat.context_pending);
-	cli_sendv(client, "  md_handler_count: %u\r\n", triton_stat.md_handler_count);
-	cli_sendv(client, "  md_handler_pending: %u\r\n", triton_stat.md_handler_pending);
-	cli_sendv(client, "  timer_count: %u\r\n", triton_stat.timer_count);
-	cli_sendv(client, "  timer_pending: %u\r\n", triton_stat.timer_pending);
+	cli_sendv(client, "  mempool_allocated: %" PRIu64 "\r\n", stat.mempool_allocated);
+	cli_sendv(client, "  mempool_available: %" PRIu64 "\r\n", stat.mempool_available);
+	cli_sendv(client, "  thread_count: %u\r\n", stat.thread_count);
+	cli_sendv(client, "  thread_active: %u\r\n", stat.thread_active);
+	cli_sendv(client, "  context_count: %u\r\n", stat.context_count);
+	cli_sendv(client, "  context_sleeping: %u\r\n", stat.context_sleeping);
+	cli_sendv(client, "  context_pending: %u\r\n", stat.context_pending);
+	cli_sendv(client, "  md_handler_count: %u\r\n", stat.md_handler_count);
+	cli_sendv(client, "  md_handler_pending: %u\r\n", stat.md_handler_pending);
+	cli_sendv(client, "  timer_count: %u\r\n", stat.timer_count);
+	cli_sendv(client, "  timer_pending: %u\r\n", stat.timer_pending);
 
 //===========
-	cli_send(client, "sessions:\r\n");
-	cli_sendv(client, "  starting: %u\r\n", ap_session_stat.starting);
-	cli_sendv(client, "  active: %u\r\n", ap_session_stat.active);
-	cli_sendv(client, "  finishing: %u\r\n", ap_session_stat.finishing);
+	{
+		struct ap_session_stat ses_stat;
+
+		ap_session_stat_get(&ses_stat);
+
+		cli_send(client, "sessions:\r\n");
+		cli_sendv(client, "  starting: %u\r\n", ses_stat.starting);
+		cli_sendv(client, "  active: %u\r\n", ses_stat.active);
+		cli_sendv(client, "  finishing: %u\r\n", ses_stat.finishing);
+	}
 
 	return CLI_CMD_OK;
 }
@@ -331,26 +340,41 @@ static int shutdown_exec(const char *cmd, char * const *f, int f_cnt, void *cli)
 }
 
 //==========================
-static int conf_reload_res;
-static struct triton_context_t *conf_reload_ctx;
-static void conf_reload_notify(int r)
+struct conf_reload_req {
+	struct triton_context_t *ctx;
+	int res;
+};
+static void conf_reload_notify(int r, void *arg)
 {
+	struct conf_reload_req *req = arg;
+
 	if (!r)
 		triton_event_fire(EV_CONFIG_RELOAD, NULL);
-	conf_reload_res = r;
-	triton_context_wakeup(conf_reload_ctx);
+	req->res = r;
+	triton_context_wakeup(req->ctx);
 }
 static int reload_exec(const char *cmd, char * const *f, int f_cnt, void *cli)
 {
-	if (f_cnt == 1) {
-		conf_reload_ctx = triton_context_self();
-		triton_conf_reload(conf_reload_notify);
-		triton_context_schedule();
-		if (conf_reload_res)
-			cli_send(cli, "failed\r\n");
-		return CLI_CMD_OK;
-	} else
+	struct conf_reload_req *req;
+
+	if (f_cnt != 1)
 		return CLI_CMD_SYNTAX;
+
+	/* heap-allocated: triton_context_schedule() can migrate this
+	 * context to another worker thread's stack before notify runs */
+	req = _malloc(sizeof(*req));
+	req->ctx = triton_context_self();
+
+	if (triton_conf_reload(conf_reload_notify, req)) {
+		_free(req);
+		cli_send(cli, "reload is already in progress\r\n");
+		return CLI_CMD_OK;
+	}
+	triton_context_schedule();
+	if (req->res)
+		cli_send(cli, "failed\r\n");
+	_free(req);
+	return CLI_CMD_OK;
 }
 
 static void reload_help(char * const *fields, int fields_cnt, void *client)

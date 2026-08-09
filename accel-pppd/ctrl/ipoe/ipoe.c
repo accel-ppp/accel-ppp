@@ -180,9 +180,7 @@ static int conf_check_mac_change;
 static int conf_soft_terminate;
 static int conf_calling_sid = SID_MAC;
 
-static unsigned int stat_starting;
-static unsigned int stat_active;
-static unsigned int stat_delayed_offer;
+static struct ipoe_stat_t ipoe_stat;
 
 static mempool_t ses_pool;
 static mempool_t disc_item_pool;
@@ -224,6 +222,39 @@ static void ipoe_serv_timeout(struct triton_timer_t *t);
 static struct ipoe_session *ipoe_session_create_up(struct ipoe_serv *serv, struct ethhdr *eth, struct iphdr *iph, struct _arphdr *arph);
 static void __terminate(struct ap_session *ses);
 static void ipoe_ipv6_disable(struct ipoe_serv *serv);
+
+void __export ipoe_stat_get(struct ipoe_stat_t *stat)
+{
+	stat->starting = __atomic_load_n(&ipoe_stat.starting, __ATOMIC_RELAXED);
+	stat->active = __atomic_load_n(&ipoe_stat.active, __ATOMIC_RELAXED);
+	stat->delayed_offer = __atomic_load_n(&ipoe_stat.delayed_offer, __ATOMIC_RELAXED);
+}
+
+unsigned int __export ipoe_stat_starting(void)
+{
+	return __atomic_load_n(&ipoe_stat.starting, __ATOMIC_RELAXED);
+}
+
+unsigned int __export ipoe_stat_active(void)
+{
+	return __atomic_load_n(&ipoe_stat.active, __ATOMIC_RELAXED);
+}
+
+static void ipoe_stat_inc(unsigned int *stat)
+{
+	__atomic_add_fetch(stat, 1, __ATOMIC_RELAXED);
+}
+
+static void ipoe_stat_dec(unsigned int *stat)
+{
+	__atomic_sub_fetch(stat, 1, __ATOMIC_RELAXED);
+}
+
+static void ipoe_stat_move(unsigned int *from, unsigned int *to)
+{
+	ipoe_stat_dec(from);
+	ipoe_stat_inc(to);
+}
 
 static void ipoe_ctx_switch(struct triton_context_t *ctx, void *arg)
 {
@@ -741,7 +772,7 @@ static void ipoe_session_start(struct ipoe_session *ses)
 		}
 	}
 
-	__sync_add_and_fetch(&stat_starting, 1);
+	ipoe_stat_inc(&ipoe_stat.starting);
 
 	assert(!ses->ses.username);
 
@@ -751,6 +782,10 @@ static void ipoe_session_start(struct ipoe_session *ses)
 		ipoe_session_finished(&ses->ses);
 		return;
 	}
+
+	/* take ownership now so the string is freed by ipoe_session_free()
+	 * even if the session terminates before auth_result() consumes it */
+	ses->username = username;
 
 	ses->ses.unit_idx = ses->serv->ifindex;
 
@@ -763,7 +798,6 @@ static void ipoe_session_start(struct ipoe_session *ses)
 		return;
 
 	if (conf_noauth) {
-		ses->username = username;
 		r = PWDB_SUCCESS;
 	} else {
 #ifdef RADIUS
@@ -782,7 +816,6 @@ static void ipoe_session_start(struct ipoe_session *ses)
 		} else
 			pass = username;
 
-		ses->username = username;
 		r = pwdb_check(&ses->ses, (pwdb_callback)auth_result, ses, username, PPP_PAP, pass);
 
 		if (r == PWDB_WAIT)
@@ -1058,8 +1091,7 @@ static void __ipoe_session_activate(struct ipoe_session *ses)
 		}
 	}
 
-	__sync_sub_and_fetch(&stat_starting, 1);
-	__sync_add_and_fetch(&stat_active, 1);
+	ipoe_stat_move(&ipoe_stat.starting, &ipoe_stat.active);
 	ses->started = 1;
 
 	ap_session_activate(&ses->ses);
@@ -1184,9 +1216,9 @@ static void ipoe_session_started(struct ap_session *s)
 static void ipoe_session_free(struct ipoe_session *ses)
 {
 	if (ses->started)
-		__sync_sub_and_fetch(&stat_active, 1);
+		ipoe_stat_dec(&ipoe_stat.active);
 	else
-		__sync_sub_and_fetch(&stat_starting, 1);
+		ipoe_stat_dec(&ipoe_stat.starting);
 
 	if (ses->timer.tpd)
 		triton_timer_del(&ses->timer);
@@ -1211,6 +1243,9 @@ static void ipoe_session_free(struct ipoe_session *ses)
 
 	if (ses->l4_redirect_ipset)
 		_free(ses->l4_redirect_ipset);
+
+	if (ses->username)
+		_free(ses->username);
 
 	triton_context_unregister(&ses->ctx);
 
@@ -1362,10 +1397,10 @@ static struct ipoe_session *ipoe_session_create_dhcpv4(struct ipoe_serv *serv, s
 	if (ap_shutdown)
 		return NULL;
 
-	if (conf_max_starting && ap_session_stat.starting >= conf_max_starting)
+	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
 		return NULL;
 
-	if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions)
+	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
 		return NULL;
 
 	ses = ipoe_session_alloc(serv->ifname);
@@ -1632,7 +1667,7 @@ static void ipoe_serv_disc_timer(struct triton_timer_t *t)
 		list_del(&d->entry);
 		mempool_free(d);
 
-		__sync_sub_and_fetch(&stat_delayed_offer, 1);
+		ipoe_stat_dec(&ipoe_stat.delayed_offer);
 	}
 
 	while (!list_empty(&serv->arp_list)) {
@@ -1651,7 +1686,7 @@ static void ipoe_serv_disc_timer(struct triton_timer_t *t)
 		list_del(&d->entry);
 		mempool_free(d);
 
-		__sync_sub_and_fetch(&stat_delayed_offer, 1);
+		ipoe_stat_dec(&ipoe_stat.delayed_offer);
 	}
 
 	if (list_empty(&serv->disc_list) && list_empty(&serv->arp_list))
@@ -1672,7 +1707,7 @@ static void ipoe_serv_add_disc_arp(struct ipoe_serv *serv, struct _arphdr *arph,
 	if (!d)
 		return;
 
-	__sync_add_and_fetch(&stat_delayed_offer, 1);
+	ipoe_stat_inc(&ipoe_stat.delayed_offer);
 
 	memcpy(&d->arph, arph, sizeof(*arph));
 	clock_gettime(CLOCK_MONOTONIC, &d->ts);
@@ -1692,7 +1727,7 @@ static void ipoe_serv_add_disc(struct ipoe_serv *serv, struct dhcpv4_packet *pac
 	if (!d)
 		return;
 
-	__sync_add_and_fetch(&stat_delayed_offer, 1);
+	ipoe_stat_inc(&ipoe_stat.delayed_offer);
 
 	dhcpv4_packet_ref(pack);
 	d->pack = pack;
@@ -1721,7 +1756,7 @@ static int ipoe_serv_check_disc(struct ipoe_serv *serv, struct dhcpv4_packet *pa
 		dhcpv4_packet_free(d->pack);
 		mempool_free(d);
 
-		__sync_sub_and_fetch(&stat_delayed_offer, 1);
+		ipoe_stat_dec(&ipoe_stat.delayed_offer);
 
 		return 1;
 	}
@@ -1869,7 +1904,7 @@ static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet 
 			if (!ses)
 				goto out;
 
-			ses->weight = weight = serv->opt_weight >= 0 ? serv->sess_cnt * serv->opt_weight : (stat_active + 1) * conf_weight;
+			ses->weight = weight = serv->opt_weight >= 0 ? serv->sess_cnt * serv->opt_weight : (ipoe_stat_active() + 1) * conf_weight;
 		}	else {
 			if (ses->terminate) {
 				triton_context_call(ses->ctrl.ctx, (triton_event_func)ipoe_session_terminated, ses);
@@ -2000,6 +2035,7 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 
 	if (!ses->dhcpv4_request) {
 		ses->dhcpv4_relay_reply = NULL;
+		dhcpv4_packet_free(pack);
 		return;
 	}
 
@@ -2107,10 +2143,10 @@ static struct ipoe_session *ipoe_session_create_up(struct ipoe_serv *serv, struc
 	if (ap_shutdown)
 		return NULL;
 
-	if (conf_max_starting && ap_session_stat.starting >= conf_max_starting)
+	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
 		return NULL;
 
-	if (conf_max_sessions && ap_session_stat.active + ap_session_stat.starting >= conf_max_sessions)
+	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
 		return NULL;
 
 	if (connlimit_loaded && connlimit_check(serv->opt_shared ? cl_key_from_ipv4(saddr) : serv->ifindex))
@@ -2327,7 +2363,7 @@ void ipoe_serv_recv_arp(struct ipoe_serv *serv, struct _arphdr *arph)
 				list_del(&d->entry);
 				mempool_free(d);
 
-				__sync_sub_and_fetch(&stat_delayed_offer, 1);
+				ipoe_stat_dec(&ipoe_stat.delayed_offer);
 
 				break;
 			}
@@ -2624,14 +2660,14 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 		list_del(&d->entry);
 		dhcpv4_packet_free(d->pack);
 		mempool_free(d);
-		__sync_sub_and_fetch(&stat_delayed_offer, 1);
+		ipoe_stat_dec(&ipoe_stat.delayed_offer);
 	}
 
 	while (!list_empty(&serv->arp_list)) {
 		struct arp_item *d = list_entry(serv->arp_list.next, typeof(*d), entry);
 		list_del(&d->entry);
 		mempool_free(d);
-		__sync_sub_and_fetch(&stat_delayed_offer, 1);
+		ipoe_stat_dec(&ipoe_stat.delayed_offer);
 	}
 
 	while (!list_empty(&serv->req_list)) {
@@ -2704,10 +2740,14 @@ static void l4_redirect_ctx_close(struct triton_context_t *ctx)
 
 static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
 {
+	struct ipoe_stat_t stat;
+
+	ipoe_stat_get(&stat);
+
 	cli_send(client, "ipoe:\r\n");
-	cli_sendv(client,"  starting: %u\r\n", stat_starting);
-	cli_sendv(client,"  active: %u\r\n", stat_active);
-	cli_sendv(client,"  delayed: %u\r\n", stat_delayed_offer);
+	cli_sendv(client,"  starting: %u\r\n", stat.starting);
+	cli_sendv(client,"  active: %u\r\n", stat.active);
+	cli_sendv(client,"  delayed: %u\r\n", stat.delayed_offer);
 
 	return CLI_CMD_OK;
 }
@@ -2723,12 +2763,6 @@ static void print_session_type(struct ap_session *s, char *buf)
 			strcpy(buf, "dhcp");
 	} else
 		*buf = 0;
-}
-
-void __export ipoe_get_stat(unsigned int **starting, unsigned int **active)
-{
-	*starting = &stat_starting;
-	*active = &stat_active;
 }
 
 static void __terminate(struct ap_session *ses)
@@ -2768,9 +2802,10 @@ struct ipoe_serv *ipoe_find_serv(const char *ifname)
 static int get_offer_delay()
 {
 	struct delay *r, *prev = NULL;
+	unsigned int active = ipoe_stat_active();
 
 	list_for_each_entry(r, &conf_offer_delay, entry) {
-		if (!prev || stat_active >= r->conn_cnt) {
+		if (!prev || active >= r->conn_cnt) {
 			prev = r;
 			continue;
 		}
@@ -3545,19 +3580,6 @@ static void load_radius_attrs(void)
 }
 #endif
 
-static void strip(char *str)
-{
-	char *ptr = str;
-	char *endptr = strchr(str, 0);
-	while (1) {
-		ptr = strchr(ptr, ' ');
-		if (ptr)
-			memmove(ptr, ptr + 1, endptr - ptr - 1);
-		else
-			break;
-	}
-}
-
 int parse_offer_delay(const char *str)
 {
 	char *str1;
@@ -3574,7 +3596,7 @@ int parse_offer_delay(const char *str)
 		return 0;
 
 	str1 = _strdup(str);
-	strip(str1);
+	u_strstrip(str1, ' ');
 
 	ptr1 = str1;
 
@@ -3590,17 +3612,23 @@ int parse_offer_delay(const char *str)
 		memset(r, 0, sizeof(*r));
 
 		r->delay = strtol(ptr1, &endptr, 10);
-		if (*endptr)
+		if (*endptr) {
+			_free(r);
 			goto out_err;
+		}
 
 		if (list_empty(&conf_offer_delay))
 			r->conn_cnt = 0;
 		else {
-			if (!ptr3)
+			if (!ptr3) {
+				_free(r);
 				goto out_err;
+			}
 			r->conn_cnt = strtol(ptr3 + 1, &endptr, 10);
-			if (*endptr)
+			if (*endptr) {
+				_free(r);
 				goto out_err;
+			}
 		}
 
 		list_add_tail(&r->entry, &conf_offer_delay);
@@ -3615,6 +3643,11 @@ int parse_offer_delay(const char *str)
 	return 0;
 
 out_err:
+	while (!list_empty(&conf_offer_delay)) {
+		r = list_entry(conf_offer_delay.next, typeof(*r), entry);
+		list_del(&r->entry);
+		_free(r);
+	}
 	_free(str1);
 	log_error("ipoe: failed to parse offer-delay\n");
 	return -1;
