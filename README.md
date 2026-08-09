@@ -237,8 +237,8 @@ digest is stored as hexadecimal.
 Kernel module warning
 =====================
 
-PPTP requires the kernel's own pptp module (drivers/net/ppp/pptp.c, present
-since Linux 2.6.37); ACCEL-PPP no longer ships an out-of-tree replacement.
+PPTP requires the kernel's PPTP PPPoX support (CONFIG_PPTP, available since
+Linux 2.6.37); ACCEL-PPP no longer ships an out-of-tree replacement.
 Do not mix ACCEL-PPP PPTP connections with poptop's pptpd; stop existing pptpd
 sessions before starting ACCEL-PPP.
 

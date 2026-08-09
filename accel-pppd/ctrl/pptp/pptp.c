@@ -11,7 +11,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
-#include "if_pppox.h"
+#include <linux/if_pppox.h>
 
 #include "events.h"
 #include "list.h"
