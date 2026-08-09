@@ -567,6 +567,10 @@ static int pptp_read(struct triton_md_handler_t *h)
 				log_ppp_error("pptp: invalid magic\n");
 				goto drop;
 			}
+			if (ntohs(hdr->length) < sizeof(*hdr)) {
+				log_ppp_error("pptp: message is too short\n");
+				goto drop;
+			}
 			if (ntohs(hdr->length) >= PPTP_CTRL_SIZE_MAX) {
 				log_ppp_error("pptp: message is too long\n");
 				goto drop;
