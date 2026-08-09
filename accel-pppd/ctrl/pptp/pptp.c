@@ -409,7 +409,7 @@ static int pptp_out_call_rqst(struct pptp_conn_t *conn)
 	}
 
 	conn->call_id = src_addr.sa_addr.pptp.call_id;
-	conn->peer_call_id = msg->call_id;
+	conn->peer_call_id = ntohs(msg->call_id);
 	conn->ppp.fd = pptp_sock;
 	conn->ppp.ses.chan_name = _strdup(inet_ntoa(dst_addr.sa_addr.pptp.sin_addr));
 
