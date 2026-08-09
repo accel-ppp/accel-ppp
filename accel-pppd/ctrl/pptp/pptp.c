@@ -911,12 +911,17 @@ static void pptp_init(void)
 
 	fcntl(serv.hnd.fd, F_SETFD, fcntl(serv.hnd.fd, F_GETFD) | FD_CLOEXEC);
 
+	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
 
 	opt = conf_get_opt("pptp", "bind");
-	if (opt)
-		addr.sin_addr.s_addr = inet_addr(opt);
-	else
+	if (opt) {
+		if (!inet_aton(opt, &addr.sin_addr)) {
+			log_emerg("pptp: failed to parse bind address '%s'\n", opt);
+			close(serv.hnd.fd);
+			return;
+		}
+	} else
 		addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
 	opt = conf_get_opt("pptp", "port");
