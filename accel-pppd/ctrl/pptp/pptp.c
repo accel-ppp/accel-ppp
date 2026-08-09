@@ -508,7 +508,7 @@ static void pptp_send_echo(struct triton_timer_t *t)
 		.header = PPTP_HEADER_CTRL(PPTP_ECHO_RQST),
 	};
 
-	if (++conn->echo_sent == conf_echo_failure) {
+	if (conf_echo_failure && ++conn->echo_sent >= conf_echo_failure) {
 		log_ppp_warn("pptp: no echo reply\n");
 		disconnect(conn);
 		return;
