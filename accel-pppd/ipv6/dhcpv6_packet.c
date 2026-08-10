@@ -531,14 +531,15 @@ static void print_status(struct dhcpv6_option *opt, void (*print)(const char *fm
 		"NoAddrsAvail",
 		"NoBindings",
 		"NotOnLink",
-		"UseMulticast"
+		"UseMulticast",
 		"NoPrefixAvail"
 	};
+	unsigned int code = ntohs(o->code);
 
-	if (ntohs(o->code) < 0 || ntohs(o->code) > sizeof(status_name))
-		print(" %u", ntohs(o->code));
+	if (code >= sizeof(status_name) / sizeof(status_name[0]))
+		print(" %u", code);
 	else
-		print(" %s", status_name[ntohs(o->code)]);
+		print(" %s", status_name[code]);
 }
 
 static void print_reconf(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))
