@@ -164,7 +164,7 @@ struct dhcpv6_packet *dhcpv6_packet_parse(const void *buf, size_t size)
 
 			if (opth->code == htons(D6_OPTION_RELAY_MSG)) {
 				pkt->hdr = (struct dhcpv6_msg_hdr *)opth->data;
-				endptr = opth->data + sizeof(*opth) + ntohs(opth->len);
+				endptr = opth->data + ntohs(opth->len);
 			}
 
 			ptr += sizeof(*opth) + ntohs(opth->len);
