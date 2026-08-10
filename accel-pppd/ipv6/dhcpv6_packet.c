@@ -534,7 +534,12 @@ static void print_status(struct dhcpv6_option *opt, void (*print)(const char *fm
 		"UseMulticast",
 		"NoPrefixAvail"
 	};
-	unsigned int code = ntohs(o->code);
+	unsigned int code;
+
+	if ((unsigned int)ntohs(opt->hdr->len) < sizeof(o->code))
+		return;
+
+	code = ntohs(o->code);
 
 	if (code >= sizeof(status_name) / sizeof(status_name[0]))
 		print(" %u", code);
