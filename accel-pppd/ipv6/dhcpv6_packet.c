@@ -498,12 +498,21 @@ static void print_hex_array(struct dhcpv6_option *opt, void (*print)(const char 
 
 static void print_uint8(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))
 {
+	if (ntohs(opt->hdr->len) < sizeof(uint8_t))
+		return;
+
 	print(" %i", *(uint8_t *)opt->hdr->data);
 }
 
 static void print_time(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))
 {
-	print(" %u", *(uint32_t *)opt->hdr->data);
+	uint16_t val;
+
+	if (ntohs(opt->hdr->len) < sizeof(val))
+		return;
+
+	memcpy(&val, opt->hdr->data, sizeof(val));
+	print(" %u", ntohs(val));
 }
 
 static void print_ipv6addr(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))
