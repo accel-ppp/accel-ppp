@@ -133,6 +133,8 @@ struct dhcpv6_packet *dhcpv6_packet_parse(const void *buf, size_t size)
 	endptr = ((void *)pkt->hdr) + size;
 
 	while (pkt->hdr->type == D6_RELAY_FORW) {
+		struct dhcpv6_msg_hdr *prev_hdr = pkt->hdr;
+
 		rhdr = (struct dhcpv6_relay_hdr *)pkt->hdr;
 		if (((void *)rhdr) + sizeof(*rhdr) > endptr) {
 			log_warn("dhcpv6: invalid packet received\n");
@@ -166,6 +168,11 @@ struct dhcpv6_packet *dhcpv6_packet_parse(const void *buf, size_t size)
 			}
 
 			ptr += sizeof(*opth) + ntohs(opth->len);
+		}
+
+		if (pkt->hdr == prev_hdr) {
+			log_warn("dhcpv6: invalid packet received\n");
+			goto error;
 		}
 	}
 
