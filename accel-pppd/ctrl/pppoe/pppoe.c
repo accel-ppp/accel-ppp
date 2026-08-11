@@ -1043,6 +1043,8 @@ static void pppoe_recv_PADI(struct pppoe_serv_t *serv, uint8_t *pack, int size)
 	len = ntohs(hdr->length);
 	for (n = 0; n < len; n += sizeof(*tag) + ntohs(tag->tag_len)) {
 		tag = (struct pppoe_tag *)(pack + ETH_HLEN + sizeof(*hdr) + n);
+		if (n + sizeof(*tag) > len)
+			return;
 		if (n + sizeof(*tag) + ntohs(tag->tag_len) > len)
 			return;
 		switch (ntohs(tag->tag_type)) {
