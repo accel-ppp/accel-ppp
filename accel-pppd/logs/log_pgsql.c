@@ -9,10 +9,9 @@
 #include "log.h"
 #include "list.h"
 #include "ap_session.h"
+#include "utils.h"
 
 #include "memdebug.h"
-
-#define min(x,y) ((x)<(y)?(x):(y))
 
 static char *conf_conninfo;
 static int conf_queue_max = 1000;

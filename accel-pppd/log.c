@@ -11,14 +11,11 @@
 #include "triton/mempool.h"
 #include "events.h"
 #include "ppp.h"
+#include "utils.h"
 
 #include "log.h"
 
 #include "memdebug.h"
-
-#ifndef min
-#define min(x,y) ((x)<(y)?(x):(y))
-#endif
 
 #define LOG_MSG   0
 #define LOG_ERROR 1

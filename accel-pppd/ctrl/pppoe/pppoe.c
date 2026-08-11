@@ -24,6 +24,7 @@
 #endif
 
 #include "iputils.h"
+#include "utils.h"
 #include "connlimit.h"
 #include "vlan_mon.h"
 
@@ -32,10 +33,6 @@
 #include "memdebug.h"
 
 #define SID_MAX 65536
-
-#ifndef min
-#define min(x,y) ((x)<(y)?(x):(y))
-#endif
 
 struct pppoe_conn_t {
 	struct list_head entry;
