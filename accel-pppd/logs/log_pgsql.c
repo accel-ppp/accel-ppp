@@ -12,6 +12,8 @@
 
 #include "memdebug.h"
 
+#define min(x,y) ((x)<(y)?(x):(y))
+
 static char *conf_conninfo;
 static int conf_queue_max = 1000;
 static char *conf_query;
@@ -57,20 +59,28 @@ static void unpack_msg(struct log_msg_t *msg)
 
 static void set_hdr(struct log_msg_t *msg, struct ap_session *ses)
 {
+	const char *username = ses && ses->username ? ses->username : "";
+	const char *sessionid = ses && ses->username ? ses->sessionid : "";
 	struct tm tm;
+	int pos, len, avail;
 
 	localtime_r(&msg->timestamp.tv_sec, &tm);
 
 	strftime(msg->hdr->msg, LOG_CHUNK_SIZE, "%Y-%m-%d %H:%M:%S", &tm);
-	msg->hdr->len = strlen(msg->hdr->msg) + 1;
-	if (ses && ses->username) {
-		strcpy(msg->hdr->msg + msg->hdr->len, ses->username);
-		msg->hdr->len += strlen(ses->username) + 1;
-		strcpy(msg->hdr->msg + msg->hdr->len, ses->sessionid);
-		msg->hdr->len += strlen(ses->sessionid) + 1;
-	} else
-		memset(msg->hdr->msg + msg->hdr->len, 0, 2);
+	pos = strlen(msg->hdr->msg) + 1;
 
+	/* username is peer supplied and may be up to 255 bytes long,
+	 * truncate it to what is left of the chunk, keeping one byte
+	 * for the terminator of the sessionid */
+	avail = LOG_CHUNK_SIZE - pos - 1;
+	len = snprintf(msg->hdr->msg + pos, avail, "%s", username);
+	pos += min(len, avail - 1) + 1;
+
+	avail = LOG_CHUNK_SIZE - pos;
+	len = snprintf(msg->hdr->msg + pos, avail, "%s", sessionid);
+	pos += min(len, avail - 1) + 1;
+
+	msg->hdr->len = pos;
 }
 
 static void write_next_msg(void)
