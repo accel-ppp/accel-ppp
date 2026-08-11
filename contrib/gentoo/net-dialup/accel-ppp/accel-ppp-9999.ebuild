@@ -48,7 +48,7 @@ src_configure() {
 	fi
 
 	if  use postgres; then
-		mycmakeargs+=( "-DLOG_PGSQL=TRUE" )
+		mycmakeargs+=( "-DLOG_PGSQL_DEPRECATED=TRUE" )
 	fi
 	
 	if use shaper; then

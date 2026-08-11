@@ -1,3 +1,13 @@
+/*
+ * DEPRECATED
+ *
+ * This module is scheduled for removal in a future release. It is built
+ * only when the deprecated LOG_PGSQL_DEPRECATED build flag is given.
+ * If you depend on it, please object at
+ * https://github.com/accel-ppp/accel-ppp/issues, otherwise it will be
+ * deleted.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -292,6 +302,9 @@ static struct log_target_t target = {
 static void init(void)
 {
 	char *opt;
+
+	log_warn("log_pgsql: this module is deprecated and is scheduled for removal,"
+		 " please object at https://github.com/accel-ppp/accel-ppp/issues if you need it\n");
 
 	spinlock_init(&queue_lock);
 
