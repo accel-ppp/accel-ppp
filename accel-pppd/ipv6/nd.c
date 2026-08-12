@@ -174,7 +174,32 @@ static void ipv6_nd_send_ra(struct ipv6_nd_handler_t *h, struct sockaddr_in6 *ds
 		rinfo++;
 	}*/
 
-	if (conf_dns_count) {
+	if (ses->ipv6_dns && !list_empty(&ses->ipv6_dns->addr_list)) {
+		int i = 0, j = 0;
+		struct ipv6db_addr_t *dns;
+
+		list_for_each_entry(dns, &ses->ipv6_dns->addr_list, entry) {
+			i++;
+		}
+		if (i >= 3) {
+			i = 3;
+		}
+		rdnssinfo = (struct nd_opt_rdnss_info_local *)pinfo;
+		memset(rdnssinfo, 0, sizeof(*rdnssinfo));
+		rdnssinfo->nd_opt_rdnssi_type = ND_OPT_RDNSS_INFORMATION;
+		rdnssinfo->nd_opt_rdnssi_len = 1 + 2 * i;
+		rdnssinfo->nd_opt_rdnssi_lifetime = htonl(conf_rdnss_lifetime);
+		rdnss_addr = (struct in6_addr *)rdnssinfo->nd_opt_rdnssi;
+		list_for_each_entry(dns, &ses->ipv6_dns->addr_list, entry) {
+			if (j < i) {
+				memcpy(rdnss_addr, &dns->addr, sizeof(*rdnss_addr));
+				j++;
+				rdnss_addr++;
+			} else {
+				break;
+			}
+		}
+	} else if (conf_dns_count) {
 		rdnssinfo = (struct nd_opt_rdnss_info_local *)pinfo;
 		memset(rdnssinfo, 0, sizeof(*rdnssinfo));
 		rdnssinfo->nd_opt_rdnssi_type = ND_OPT_RDNSS_INFORMATION;
