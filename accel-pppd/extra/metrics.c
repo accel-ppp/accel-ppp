@@ -6,6 +6,8 @@
 #include <inttypes.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <pthread.h>
 #include <time.h>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -19,6 +21,7 @@
 #include "list.h"
 #include "utils.h"
 #include "ap_session.h"
+#include "ipdb.h"
 #include "version.h"
 
 #include "memdebug.h"
@@ -65,6 +68,7 @@ enum metrics_format {
 };
 
 #define METRICS_RECV_BUF_SIZE 2048
+#define METRICS_HDR_RESERVE 256		/* room reserved for the response header */
 #define METRICS_DEFAULT_READ_TIMEOUT 5	/* seconds */
 #define METRICS_DEFAULT_MAX_CLIENTS 64
 
@@ -88,10 +92,14 @@ struct metrics_acl_t {
 };
 
 static enum metrics_format conf_format = METRICS_FORMAT_PROMETHEUS;
+/* TODO: Support simultaneous Prometheus and JSON output, selected by endpoint
+ * (for example, /metrics and /metrics.json) instead of a process-wide format.
+ */
 static char *conf_address;
 static LIST_HEAD(conf_allowed);
 static int conf_read_timeout = METRICS_DEFAULT_READ_TIMEOUT;
 static int conf_max_clients = METRICS_DEFAULT_MAX_CLIENTS;
+static int conf_sessions;
 
 #define METRICS_ACCEPT_BACKOFF 1	/* seconds */
 #define METRICS_ACCEPT_BATCH 16	/* max accept()s per serv_read tick */
@@ -350,6 +358,9 @@ static int load_config(void)
 		conf_max_clients = n > 0 ? n : 0;
 	}
 
+	opt = conf_get_opt("metrics", "sessions");
+	conf_sessions = opt ? atoi(opt) != 0 : 0;
+
 	return 0;
 }
 
@@ -497,6 +508,81 @@ static void emit_prom_gauge(struct strbuf *sb, const char *name,
 	strbuf_appendf(sb, "%s %llu\n", name, value);
 }
 
+static const char *session_state_name(int state)
+{
+	switch (state) {
+	case AP_STATE_STARTING:
+		return "starting";
+	case AP_STATE_ACTIVE:
+		return "active";
+	case AP_STATE_FINISHING:
+		return "finishing";
+	case AP_STATE_RESTORE:
+		return "restore";
+	default:
+		return "unknown";
+	}
+}
+
+static void append_prefix_len(char *buf, size_t len, int prefix_len)
+{
+	size_t pos = strlen(buf);
+
+	if (pos < len)
+		snprintf(buf + pos, len - pos, "/%i", prefix_len);
+}
+
+static void session_ipv6(struct ap_session *ses, char *buf, size_t len, int with_plen)
+{
+	struct ipv6db_addr_t *a;
+	struct in6_addr addr;
+
+	buf[0] = 0;
+	if (!ses->ipv6 || list_empty(&ses->ipv6->addr_list))
+		return;
+
+	a = list_first_entry(&ses->ipv6->addr_list, typeof(*a), entry);
+	if (!a->prefix_len)
+		return;
+	build_ip6_addr(a, ses->ipv6->peer_intf_id, &addr);
+	if (!inet_ntop(AF_INET6, &addr, buf, len))
+		return;
+	if (with_plen)
+		append_prefix_len(buf, len, a->prefix_len);
+}
+
+static void session_ipv6_dp(struct ap_session *ses, char *buf, size_t len)
+{
+	struct ipv6db_addr_t *a;
+
+	buf[0] = 0;
+	if (!ses->ipv6_dp || list_empty(&ses->ipv6_dp->prefix_list))
+		return;
+
+	a = list_first_entry(&ses->ipv6_dp->prefix_list, typeof(*a), entry);
+	if (!inet_ntop(AF_INET6, &a->addr, buf, len))
+		return;
+	append_prefix_len(buf, len, a->prefix_len);
+}
+
+/* Bare peer address, no prefix length: this is the address the peer is
+ * reachable at, mirroring the "ip" column of "accel-cmd show sessions". */
+static void session_ip(struct ap_session *ses, char *buf, size_t len)
+{
+	if (ses->ipv4) {
+		inet_ntop(AF_INET, &ses->ipv4->peer_addr, buf, len);
+		return;
+	}
+	session_ipv6(ses, buf, len, 0);
+}
+
+static unsigned long long session_uptime(struct ap_session *ses, time_t now)
+{
+	time_t end = ses->stop_time ? ses->stop_time : now;
+
+	return end > ses->start_time ? (unsigned long long)(end - ses->start_time) : 0;
+}
+
 static void render_prometheus(struct strbuf *sb)
 {
 	struct accel_stats s;
@@ -574,39 +660,101 @@ static void render_prometheus(struct strbuf *sb)
 	}
 }
 
-static void append_json_string(struct strbuf *sb, const char *s)
+/* Length of the well formed UTF-8 sequence starting at s, 0 if the bytes
+ * there are not one. Overlong forms, surrogates and out of range code
+ * points are rejected. */
+static int utf8_seq_len(const unsigned char *s)
 {
+	unsigned int cp, min;
+	int n, i;
+
+	if (s[0] < 0x80)
+		return 1;
+
+	if ((s[0] & 0xe0) == 0xc0) {
+		n = 2;
+		min = 0x80;
+		cp = s[0] & 0x1f;
+	} else if ((s[0] & 0xf0) == 0xe0) {
+		n = 3;
+		min = 0x800;
+		cp = s[0] & 0x0f;
+	} else if ((s[0] & 0xf8) == 0xf0) {
+		n = 4;
+		min = 0x10000;
+		cp = s[0] & 0x07;
+	} else
+		return 0;
+
+	for (i = 1; i < n; i++) {
+		if ((s[i] & 0xc0) != 0x80)
+			return 0;
+		cp = (cp << 6) | (s[i] & 0x3f);
+	}
+
+	if (cp < min || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff))
+		return 0;
+
+	return n;
+}
+
+static void append_json_string(struct strbuf *sb, const char *str)
+{
+	const unsigned char *s = (const unsigned char *)str;
+	const char *esc;
+	int n;
+
 	strbuf_appendf(sb, "\"");
-	for (; *s; s++) {
+	while (*s) {
+		esc = NULL;
 		switch (*s) {
 		case '"':
-			strbuf_appendf(sb, "\\\"");
+			esc = "\\\"";
 			break;
 		case '\\':
-			strbuf_appendf(sb, "\\\\");
+			esc = "\\\\";
 			break;
 		case '\b':
-			strbuf_appendf(sb, "\\b");
+			esc = "\\b";
 			break;
 		case '\f':
-			strbuf_appendf(sb, "\\f");
+			esc = "\\f";
 			break;
 		case '\n':
-			strbuf_appendf(sb, "\\n");
+			esc = "\\n";
 			break;
 		case '\r':
-			strbuf_appendf(sb, "\\r");
+			esc = "\\r";
 			break;
 		case '\t':
-			strbuf_appendf(sb, "\\t");
-			break;
-		default:
-			if ((unsigned char)*s < 0x20)
-				strbuf_appendf(sb, "\\u%04x", (unsigned)*s);
-			else
-				strbuf_appendf(sb, "%c", *s);
+			esc = "\\t";
 			break;
 		}
+
+		if (esc) {
+			strbuf_appendf(sb, "%s", esc);
+			s++;
+			continue;
+		}
+
+		if (*s < 0x20) {
+			strbuf_appendf(sb, "\\u%04x", *s);
+			s++;
+			continue;
+		}
+
+		/* Usernames and station ids come from the peer and are not
+		 * validated anywhere, so a single malformed sequence would
+		 * otherwise make the whole document undecodable. */
+		n = utf8_seq_len(s);
+		if (!n) {
+			strbuf_appendf(sb, "\\ufffd");
+			s++;
+			continue;
+		}
+
+		strbuf_appendf(sb, "%.*s", n, (const char *)s);
+		s += n;
 	}
 	strbuf_appendf(sb, "\"");
 }
@@ -619,6 +767,76 @@ static void emit_json_proto(struct strbuf *sb, const char *name, int *first,
 	*first = 0;
 	strbuf_appendf(sb, "\"%s\":{\"starting\":%u,\"active\":%u}",
 		       name, starting, active);
+}
+
+static void append_json_field(struct strbuf *sb, int *first, const char *name,
+			      const char *value)
+{
+	if (!*first)
+		strbuf_appendf(sb, ",");
+	*first = 0;
+	append_json_string(sb, name);
+	strbuf_appendf(sb, ":");
+	append_json_string(sb, value ? value : "");
+}
+
+/* TODO: Copy a bounded snapshot of the required fields under ses_lock, then
+ * serialize it after unlocking. This would shorten lock hold time and make it
+ * practical to add a response-size limit or pagination for large deployments.
+ */
+/* The whole list is walked with ses_lock held, so nothing in here may
+ * block or touch the session. In particular ap_session_read_stats() is
+ * not used: it issues a synchronous netlink round trip per session,
+ * which would stall every session setup and teardown for the duration
+ * of a scrape, it writes back into the session while only the read lock
+ * is held, and it needs the thread local "net" of the session's
+ * namespace, which this context does not have. The accounting counters
+ * last sampled by the session itself are reported instead. */
+static void render_json_sessions(struct strbuf *sb)
+{
+	struct ap_session *ses;
+	time_t now = _time();
+	char ip[INET6_ADDRSTRLEN];
+	char ipv6[INET6_ADDRSTRLEN + 5];
+	char ipv6_dp[INET6_ADDRSTRLEN + 5];
+	int first = 1;
+	int f;
+
+	strbuf_appendf(sb, ",\"session_details\":[");
+	pthread_rwlock_rdlock(&ses_lock);
+	list_for_each_entry(ses, &ses_list, entry) {
+		session_ip(ses, ip, sizeof(ip));
+		session_ipv6(ses, ipv6, sizeof(ipv6), 1);
+		session_ipv6_dp(ses, ipv6_dp, sizeof(ipv6_dp));
+
+		strbuf_appendf(sb, "%s", first ? "{" : ",{");
+		first = 0;
+		f = 1;
+		append_json_field(sb, &f, "session_id", ses->sessionid);
+		append_json_field(sb, &f, "ifname", ses->ifname);
+		append_json_field(sb, &f, "username", ses->username);
+		append_json_field(sb, &f, "ip", ip);
+		append_json_field(sb, &f, "ipv6", ipv6);
+		append_json_field(sb, &f, "delegated_ipv6_prefix", ipv6_dp);
+		append_json_field(sb, &f, "protocol", ses->ctrl ? ses->ctrl->name : NULL);
+		append_json_field(sb, &f, "state", session_state_name(ses->state));
+		append_json_field(sb, &f, "calling_station_id", ses->ctrl ? ses->ctrl->calling_station_id : NULL);
+		append_json_field(sb, &f, "called_station_id", ses->ctrl ? ses->ctrl->called_station_id : NULL);
+		append_json_field(sb, &f, "service_name", ses->ctrl ? ses->ctrl->service_name : NULL);
+		append_json_field(sb, &f, "inbound_if", ses->ctrl ? ses->ctrl->ifname : NULL);
+		append_json_field(sb, &f, "compression", ses->comp);
+		append_json_field(sb, &f, "vrf", ses->vrf_name);
+		append_json_field(sb, &f, "netns", ses->net ? ses->net->name : NULL);
+		strbuf_appendf(sb,
+			",\"uptime_seconds\":%llu,\"rx_bytes\":%" PRIu64
+			",\"tx_bytes\":%" PRIu64 ",\"rx_packets\":%" PRIu64
+			",\"tx_packets\":%" PRIu64 "}",
+			session_uptime(ses, now), ses->acct_rx_bytes,
+			ses->acct_tx_bytes, ses->acct_rx_packets,
+			ses->acct_tx_packets);
+	}
+	pthread_rwlock_unlock(&ses_lock);
+	strbuf_appendf(sb, "]");
 }
 
 static void render_json(struct strbuf *sb)
@@ -665,6 +883,8 @@ static void render_json(struct strbuf *sb)
 		emit_json_proto(sb, p->module, &first, p->starting(), p->active());
 	}
 	strbuf_appendf(sb, "}");
+	if (conf_sessions)
+		render_json_sessions(sb);
 
 	strbuf_appendf(sb, "}\n");
 }
@@ -696,25 +916,47 @@ static int xmit_flush(struct metrics_client_t *cln)
 	return 0;
 }
 
+static int format_header(char *buf, size_t size, int status, const char *reason,
+			 const char *ctype, size_t body_len)
+{
+	int hlen;
+
+	hlen = snprintf(buf, size,
+			"HTTP/1.1 %d %s\r\n"
+			"Server: accel-ppp\r\n"
+			"Content-Type: %s\r\n"
+			"Content-Length: %zu\r\n"
+			"Connection: close\r\n"
+			"\r\n",
+			status, reason, ctype, body_len);
+	if (hlen <= 0 || hlen >= (int)size)
+		return -1;
+
+	return hlen;
+}
+
+static void start_xmit(struct metrics_client_t *cln)
+{
+	int rc = xmit_flush(cln);
+
+	if (rc < 0)
+		cln->disconnect = 1;
+	else if (rc == 0)
+		cln->disconnect = 1;	/* fully flushed, ready to close */
+}
+
 static void send_response(struct metrics_client_t *cln, int status, const char *reason,
 			  const char *ctype, const char *body, int body_len)
 {
-	char header[256];
+	char header[METRICS_HDR_RESERVE];
 	int hlen, total;
-	int rc;
 
 	if (cln->xmit_buf)
 		return;	/* response already in flight */
 
-	hlen = snprintf(header, sizeof(header),
-			"HTTP/1.1 %d %s\r\n"
-			"Server: accel-ppp\r\n"
-			"Content-Type: %s\r\n"
-			"Content-Length: %d\r\n"
-			"Connection: close\r\n"
-			"\r\n",
-			status, reason, ctype, body_len);
-	if (hlen <= 0 || hlen >= (int)sizeof(header)) {
+	hlen = format_header(header, sizeof(header), status, reason, ctype,
+			     body_len > 0 ? (size_t)body_len : 0);
+	if (hlen < 0) {
 		cln->disconnect = 1;
 		return;
 	}
@@ -731,11 +973,7 @@ static void send_response(struct metrics_client_t *cln, int status, const char *
 	cln->xmit_pos = 0;
 	cln->xmit_len = total;
 
-	rc = xmit_flush(cln);
-	if (rc < 0)
-		cln->disconnect = 1;
-	else if (rc == 0)
-		cln->disconnect = 1;	/* fully flushed, ready to close */
+	start_xmit(cln);
 }
 
 static void send_simple(struct metrics_client_t *cln, int status, const char *reason)
@@ -747,9 +985,45 @@ static void send_simple(struct metrics_client_t *cln, int status, const char *re
 	send_response(cln, status, reason, "text/plain; charset=utf-8", body, len);
 }
 
+/* Sends a body rendered into sb and takes ownership of its buffer. The
+ * first METRICS_HDR_RESERVE bytes of sb are unused padding the header is
+ * written into, so a body that can be several megabytes with sessions=1
+ * is not copied a second time. */
+static void send_rendered(struct metrics_client_t *cln, const char *ctype,
+			  struct strbuf *sb)
+{
+	char header[METRICS_HDR_RESERVE];
+	size_t body_len = sb->len - METRICS_HDR_RESERVE;
+	int hlen;
+
+	if (cln->xmit_buf)
+		return;	/* response already in flight */
+
+	hlen = format_header(header, sizeof(header), 200, "OK", ctype, body_len);
+	if (hlen < 0 || sb->len > INT_MAX) {
+		send_simple(cln, 500, "Internal Server Error");
+		return;
+	}
+
+	memcpy(sb->data + METRICS_HDR_RESERVE - hlen, header, hlen);
+	cln->xmit_buf = sb->data;
+	cln->xmit_pos = METRICS_HDR_RESERVE - hlen;
+	cln->xmit_len = (int)sb->len;
+	sb->data = NULL;
+	sb->len = sb->cap = 0;
+
+	start_xmit(cln);
+}
+
 static void serve_metrics(struct metrics_client_t *cln)
 {
 	struct strbuf sb = {0};
+
+	/* Reserve room for the response header in front of the body so it
+	 * can be handed to the client without another copy. */
+	if (strbuf_reserve(&sb, METRICS_HDR_RESERVE))
+		goto err;
+	sb.len = METRICS_HDR_RESERVE;
 
 	switch (conf_format) {
 	case METRICS_FORMAT_PROMETHEUS:
@@ -760,13 +1034,15 @@ static void serve_metrics(struct metrics_client_t *cln)
 		break;
 	}
 
-	if (sb.oom || !sb.data) {
-		send_simple(cln, 500, "Internal Server Error");
-		goto out;
-	}
+	if (sb.oom || !sb.data)
+		goto err;
 
-	send_response(cln, 200, "OK", content_type(), sb.data, (int)sb.len);
-out:
+	send_rendered(cln, content_type(), &sb);
+	strbuf_free(&sb);
+	return;
+
+err:
+	send_simple(cln, 500, "Internal Server Error");
 	strbuf_free(&sb);
 }
 
@@ -1063,6 +1339,9 @@ err:
 
 static void init(void)
 {
+	/* TODO: Add optional HTTP authentication before exposing session_details;
+	 * allowed_ips limits network reachability but does not identify callers.
+	 */
 	if (load_config() < 0)
 		return;
 
