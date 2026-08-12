@@ -60,6 +60,26 @@ jobs:
         working-directory: ./build
         run: make && sudo make install
 
+      - name: Run standalone unit tests (with ${{ matrix.sanitizer }})
+        env:
+          ${{ matrix.env_name }}: ${{ matrix.env_value }}
+        run: |
+          gcc -O1 -g -Wall -fno-strict-aliasing -D_GNU_SOURCE \
+              -DOPENSSL_API_COMPAT=0x10100000L \
+              -fsanitize=${{ matrix.sanitizer }} -fno-sanitize-recover=all \
+              -I accel-pppd/include -I accel-pppd/ctrl/l2tp \
+              -o /tmp/l2tp_packet_test \
+              accel-pppd/ctrl/l2tp/packet_test.c accel-pppd/ctrl/l2tp/packet.c \
+              -lcrypto
+          /tmp/l2tp_packet_test
+          gcc -O2 -Wall -D_GNU_SOURCE -DAP_SESSIONID_LEN=16 \
+              -fsanitize=${{ matrix.sanitizer }} -fno-sanitize-recover=all \
+              -I accel-pppd/include -I accel-pppd/triton -I build \
+              -o /tmp/ipv6_dns_test accel-pppd/ipv6/ipv6_dns_test.c
+          /tmp/ipv6_dns_test
+          gcc -O2 -Wall -o /tmp/bitpool_test accel-pppd/extra/bitpool_test.c
+          /tmp/bitpool_test
+
       - name: Insert and check kernel modules (ipoe, vlan-mon, ppposeq)
         # if: ${{ false }}
         run: |

@@ -111,44 +111,80 @@ void l2tp_packet_free(struct l2tp_packet_t *pack)
 	mempool_free(pack);
 }
 
+/*
+ * AVPs are not aligned in any way inside the packet buffer: their offset
+ * depends on the length of every preceding AVP, which is peer chosen.
+ * Always go through memcpy() to read multi-byte fields out of them, both to
+ * stay portable on strict alignment architectures and to avoid tripping
+ * -fsanitize=alignment.
+ */
+static uint16_t unaligned_ntohs(const void *ptr)
+{
+	uint16_t val;
+
+	memcpy(&val, ptr, sizeof(val));
+
+	return ntohs(val);
+}
+
+static uint32_t unaligned_ntohl(const void *ptr)
+{
+	uint32_t val;
+
+	memcpy(&val, ptr, sizeof(val));
+
+	return ntohl(val);
+}
+
+static uint64_t unaligned_be64toh(const void *ptr)
+{
+	uint64_t val;
+
+	memcpy(&val, ptr, sizeof(val));
+
+	return be64toh(val);
+}
+
+static void unaligned_htons(void *ptr, uint16_t val)
+{
+	val = htons(val);
+	memcpy(ptr, &val, sizeof(val));
+}
+
+static void unaligned_htonl(void *ptr, uint32_t val)
+{
+	val = htonl(val);
+	memcpy(ptr, &val, sizeof(val));
+}
+
+static void unaligned_htobe64(void *ptr, uint64_t val)
+{
+	val = htobe64(val);
+	memcpy(ptr, &val, sizeof(val));
+}
+
 static void memxor(uint8_t *dst, const uint8_t *src, size_t sz)
 {
-	const uintmax_t *umax_src = (const uintmax_t *)src;
-	uintmax_t *umax_dst = (uintmax_t *)dst;
-	size_t left = sz % sizeof(uintmax_t);
 	size_t indx;
 
-	for (indx = 0; indx < sz / sizeof(uintmax_t); ++indx)
-		umax_dst[indx] ^= umax_src[indx];
-
-	src += sz - left;
-	dst += sz - left;
-	while (left) {
-		if (left >= sizeof(uint32_t)) {
-			*(uint32_t *)dst ^= *(uint32_t *)src;
-			src += sizeof(uint32_t);
-			dst += sizeof(uint32_t);
-			left -= sizeof(uint32_t);
-		} else if (left >= sizeof(uint16_t)) {
-			*(uint16_t *)dst ^= *(uint16_t *)src;
-			src += sizeof(uint16_t);
-			dst += sizeof(uint16_t);
-			left -= sizeof(uint16_t);
-		} else {
-			*dst ^= *src;
-			src += sizeof(uint8_t);
-			dst += sizeof(uint8_t);
-			left -= sizeof(uint8_t);
-		}
-	}
+	for (indx = 0; indx < sz; ++indx)
+		dst[indx] ^= src[indx];
 }
 
 /*
  * Decipher hidden AVPs, keeping the Hidden AVP Subformat (i.e. the attribute
  * value is prefixed by 2 bytes indicating its length in network byte order).
+ *
+ * On success the deciphered original attribute length is stored into
+ * *orig_attr_len, already validated against the size of the received AVP.
+ * Callers must never re-read that length from the AVP body themselves: it is
+ * the output of the cipher, so a peer using a mismatching secret (or an
+ * attacker blindly injecting hidden AVPs) makes it an essentially random
+ * 16 bits value.
  */
 static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
-		      const char *secret, size_t secret_len)
+		      const char *secret, size_t secret_len,
+		      uint16_t *orig_attr_len_out)
 {
 	MD5_CTX md5_ctx;
 	uint8_t md5[MD5_DIGEST_LENGTH];
@@ -162,7 +198,7 @@ static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
 	uint16_t last_block_len;
 
 	avp_len = avp->flags & L2TP_AVP_LEN_MASK;
-	if (avp_len < sizeof(struct l2tp_avp_t) + 2) {
+	if (avp_len < sizeof(struct l2tp_avp_t) + sizeof(uint16_t)) {
 		/* Hidden AVPs must contain at least two bytes
 		   for storing original attribute length */
 		log_warn("l2tp: incorrect hidden avp received (type %hu):"
@@ -180,20 +216,22 @@ static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
 	MD5_Final(p1, &md5_ctx);
 
 	if (attr_len <= MD5_DIGEST_LENGTH) {
+		/* The whole attribute fits in the first block: it is fully
+		   deciphered, nothing more to do but to check its length */
 		memxor(avp->val, p1, attr_len);
-		return 0;
+		goto out;
 	}
 
 	memxor(p1, avp->val, MD5_DIGEST_LENGTH);
-	orig_attr_len = ntohs(*(uint16_t *)p1);
+	orig_attr_len = unaligned_ntohs(p1);
 
-	if (orig_attr_len <= MD5_DIGEST_LENGTH - 2) {
+	if (orig_attr_len <= MD5_DIGEST_LENGTH - sizeof(uint16_t)) {
 		/* Enough bytes decoded already, no need to decode padding */
 		memcpy(avp->val, p1, MD5_DIGEST_LENGTH);
-		return 0;
+		goto out;
 	}
 
-	if (orig_attr_len > attr_len - 2) {
+	if (orig_attr_len > attr_len - sizeof(uint16_t)) {
 		log_warn("l2tp: incorrect hidden avp received (type %hu):"
 			 " original attribute length too big (ciphered"
 			 " attribute length: %hu bytes, advertised original"
@@ -204,7 +242,7 @@ static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
 
 	/* Decode remaining blocks. Start from the last block as
 	   preceding blocks must be kept hidden for computing MD5s */
-	bytes_left = orig_attr_len + 2 - MD5_DIGEST_LENGTH;
+	bytes_left = orig_attr_len + sizeof(uint16_t) - MD5_DIGEST_LENGTH;
 	last_block_len = bytes_left % MD5_DIGEST_LENGTH;
 	blocks_left = bytes_left / MD5_DIGEST_LENGTH;
 	if (last_block_len) {
@@ -228,6 +266,23 @@ static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
 	}
 	memcpy(avp->val, p1, MD5_DIGEST_LENGTH);
 
+out:
+	/* The length prefix comes out of the cipher, so it is only as
+	   trustworthy as the peer's knowledge of the shared secret. Bound it
+	   against the room actually available in the received AVP before
+	   letting it drive any read of the attribute value */
+	orig_attr_len = unaligned_ntohs(avp->val);
+	if (orig_attr_len > attr_len - sizeof(uint16_t)) {
+		log_warn("l2tp: incorrect hidden avp received (type %hu):"
+			 " deciphered attribute length too big (ciphered"
+			 " attribute length: %hu bytes, deciphered original"
+			 " attribute length: %hu bytes), wrong secret?\n",
+			 ntohs(avp->type), attr_len, orig_attr_len);
+		return -1;
+	}
+
+	*orig_attr_len_out = orig_attr_len;
+
 	return 0;
 }
 
@@ -241,6 +296,7 @@ int l2tp_recv(int fd, struct l2tp_packet_t **p, struct in_pktinfo *pkt_info,
 	struct sockaddr_in addr;
 	socklen_t addr_len;
 	uint16_t orig_avp_len;
+	uint16_t orig_attr_len;
 	void *orig_avp_val;
 	uint8_t *buf, *ptr;
 	int n, length;
@@ -420,10 +476,11 @@ int l2tp_recv(int fd, struct l2tp_packet_t **p, struct in_pktinfo *pkt_info,
 						  ntohs(avp->type));
 					goto out_err;
 				}
-				if (decode_avp(avp, RV, secret, secret_len) < 0)
+				if (decode_avp(avp, RV, secret, secret_len,
+					       &orig_attr_len) < 0)
 					goto out_err;
 
-				orig_avp_len = ntohs(*(uint16_t *)avp->val) + sizeof(*avp);
+				orig_avp_len = orig_attr_len + sizeof(*avp);
 				orig_avp_val = avp->val + sizeof(uint16_t);
 			} else {
 				orig_avp_len = avp_len;
@@ -445,17 +502,17 @@ int l2tp_recv(int fd, struct l2tp_packet_t **p, struct in_pktinfo *pkt_info,
 				case ATTR_TYPE_INT16:
 					if (orig_avp_len != sizeof(*avp) + 2)
 						goto out_err_len;
-					attr->val.uint16 = ntohs(*(uint16_t *)orig_avp_val);
+					attr->val.uint16 = unaligned_ntohs(orig_avp_val);
 					break;
 				case ATTR_TYPE_INT32:
 					if (orig_avp_len != sizeof(*avp) + 4)
 						goto out_err_len;
-					attr->val.uint32 = ntohl(*(uint32_t *)orig_avp_val);
+					attr->val.uint32 = unaligned_ntohl(orig_avp_val);
 					break;
 				case ATTR_TYPE_INT64:
 					if (orig_avp_len != sizeof(*avp) + 8)
 						goto out_err_len;
-					attr->val.uint64 = be64toh(*(uint64_t *)orig_avp_val);
+					attr->val.uint64 = unaligned_be64toh(orig_avp_val);
 					break;
 				case ATTR_TYPE_OCTETS:
 					attr->val.octets = _malloc(attr->length);
@@ -532,13 +589,13 @@ int l2tp_packet_send(int sock, struct l2tp_packet_t *pack)
 		else
 			switch (attr->attr->type) {
 			case ATTR_TYPE_INT16:
-				*(int16_t *)avp->val = htons(attr->val.int16);
+				unaligned_htons(avp->val, attr->val.int16);
 				break;
 			case ATTR_TYPE_INT32:
-				*(int32_t *)avp->val = htonl(attr->val.int32);
+				unaligned_htonl(avp->val, attr->val.int32);
 				break;
 			case ATTR_TYPE_INT64:
-				*(uint64_t *)avp->val = htobe64(attr->val.uint64);
+				unaligned_htobe64(avp->val, attr->val.uint64);
 				break;
 			case ATTR_TYPE_STRING:
 			case ATTR_TYPE_OCTETS:

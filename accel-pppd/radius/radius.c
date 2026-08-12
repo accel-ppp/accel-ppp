@@ -488,12 +488,31 @@ err:
 	return -1;
 }
 
+/*
+ * Number of IPv6 DNS servers kept per session. Matches the number of dns=
+ * options the ipv6_nd and ipv6_dhcp modules accept in [ipv6-dns], and keeps
+ * the RDNSS option of a router advertisement to a sane size.
+ */
+#define MAX_DNS6_COUNT 3
+
+static void free_ipv6_dns(struct radius_pd_t *rpd)
+{
+	struct ipv6db_addr_t *a;
+
+	while (!list_empty(&rpd->ipv6_dns.addr_list)) {
+		a = list_entry(rpd->ipv6_dns.addr_list.next, typeof(*a), entry);
+		list_del(&a->entry);
+		_free(a);
+	}
+}
+
 int rad_proc_attrs(struct rad_req_t *req)
 {
 	struct ev_wins_t wins = {};
 	struct ev_dns_t dns = {};
 	struct rad_attr_t *attr;
 	struct ipv6db_addr_t *a;
+	int dns6_count = -1;
 	int res = 0;
 	struct radius_pd_t *rpd = req->rpd;
 
@@ -602,6 +621,28 @@ int rad_proc_attrs(struct rad_req_t *req)
 				a->addr = attr->val.ipv6prefix.prefix;
 				list_add_tail(&a->entry, &rpd->ipv6_dp.prefix_list);
 				break;
+			case DNS_Server_IPv6_Address:
+				if (dns6_count < 0) {
+					/* This reply carries a DNS server list of
+					   its own, it replaces whatever a previous
+					   one assigned */
+					free_ipv6_dns(rpd);
+					dns6_count = 0;
+				}
+				if (dns6_count >= MAX_DNS6_COUNT) {
+					if (dns6_count == MAX_DNS6_COUNT)
+						log_ppp_warn("radius: ignoring DNS-Server-IPv6-Address"
+							     " beyond the first %i\n", MAX_DNS6_COUNT);
+					dns6_count++;
+					break;
+				}
+				a = _malloc(sizeof(*a));
+				memset(a, 0, sizeof(*a));
+				a->prefix_len = 128;
+				a->addr = attr->val.ipv6addr;
+				list_add_tail(&a->entry, &rpd->ipv6_dns.addr_list);
+				dns6_count++;
+				break;
 			case NAS_Port:
 				rpd->ses->unit_idx = attr->val.integer;
 				break;
@@ -634,6 +675,11 @@ int rad_proc_attrs(struct rad_req_t *req)
 
 	if (!rpd->ses->ipv6_dp && !list_empty(&rpd->ipv6_dp.prefix_list))
 		rpd->ses->ipv6_dp = &rpd->ipv6_dp;
+
+	/* Like the IPv4 DNS servers, absent attributes leave whatever a
+	   previous reply assigned in place */
+	if (!list_empty(&rpd->ipv6_dns.addr_list))
+		rpd->ses->ipv6_dns = &rpd->ipv6_dns;
 
 	return res;
 }
@@ -799,6 +845,7 @@ static void ses_starting(struct ap_session *ses)
 	INIT_LIST_HEAD(&rpd->plugin_list);
 	INIT_LIST_HEAD(&rpd->ipv6_addr.addr_list);
 	INIT_LIST_HEAD(&rpd->ipv6_dp.prefix_list);
+	INIT_LIST_HEAD(&rpd->ipv6_dns.addr_list);
 
 	rpd->ipv4_addr.owner = &ipdb;
 	rpd->ipv6_addr.owner = &ipdb;
@@ -980,6 +1027,9 @@ static void ses_finished(struct ap_session *ses)
 		list_del(&a->entry);
 		_free(a);
 	}
+
+	ses->ipv6_dns = NULL;
+	free_ipv6_dns(rpd);
 
 	fr6 = rpd->fr6;
 	while (fr6) {

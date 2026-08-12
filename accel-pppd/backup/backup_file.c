@@ -10,11 +10,12 @@
 #include <sys/uio.h>
 #include <sys/mman.h>
 
+#include <openssl/md5.h>
+
 #include "triton.h"
 #include "log.h"
 #include "ap_session.h"
 #include "backup.h"
-#include "crypto.h"
 #include "memdebug.h"
 
 #define VERSION 1
