@@ -13,12 +13,9 @@
 #include "ppp_lcp.h"
 #include "events.h"
 #include "iputils.h"
+#include "utils.h"
 
 #include "memdebug.h"
-
-#ifndef min
-#define min(x,y) ((x)<(y)?(x):(y))
-#endif
 
 struct recv_opt_t
 {

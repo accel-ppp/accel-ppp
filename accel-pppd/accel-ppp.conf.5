@@ -36,6 +36,7 @@ This is logging target which logs messages over TCP/IP.
 .TP
 .BI log_pgsql
 This is logging target which logs messages to PostgreSQL.
+Deprecated and scheduled for removal, see the [log-pgsql] section.
 .TP
 .BI pptp
 .br
@@ -1343,6 +1344,10 @@ log all messages including debug messages
 .SH [log-pgsql]
 .br
 Configuration of log_pgsql module.
+.br
+This module is deprecated and scheduled for removal. It is built only when
+accel-ppp is configured with LOG_PGSQL_DEPRECATED=TRUE. If you depend on it,
+please object at https://github.com/accel-ppp/accel-ppp/issues.
 .TP
 .BI "conninfo=" conninfo
 Conninfo to connect to PostgreSQL server.

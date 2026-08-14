@@ -50,9 +50,6 @@
 #include "sstp_prot.h"
 #include "if_ppposeq.h"
 
-#ifndef min
-#define min(x,y) ((x) < (y) ? (x) : (y))
-#endif
 #ifndef max
 #define max(x,y) ((x) > (y) ? (x) : (y))
 #endif

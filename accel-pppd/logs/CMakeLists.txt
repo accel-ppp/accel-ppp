@@ -33,7 +33,15 @@ IF(LOG_SYSLOG)
 	)
 ENDIF(LOG_SYSLOG)
 
+# log_pgsql is deprecated and scheduled for removal, the build flag was
+# renamed so that nobody keeps building it without noticing
 IF(LOG_PGSQL)
+	message(FATAL_ERROR "${Esc}[31mLOG_PGSQL is deprecated.\n The log_pgsql module is scheduled for removal in a future release.\n Build with -DLOG_PGSQL_DEPRECATED=TRUE if you still need it, and please say so at https://github.com/accel-ppp/accel-ppp/issues so that it is kept${Esc}[m")
+ENDIF(LOG_PGSQL)
+
+IF(LOG_PGSQL_DEPRECATED)
+	message(WARNING "${Esc}[33mBuilding deprecated module log_pgsql, it is scheduled for removal in a future release.\n Please say so at https://github.com/accel-ppp/accel-ppp/issues if you need it kept${Esc}[m")
+
 	find_library(PGSQL_LIBRARY pq
 					HINTS ${CMAKE_SOURCE_DIR}/lib/linux/gcc/${BIT}/lib
 					PATHS ${CMAKE_SOURCE_DIR}/lib/linux/gcc/${BIT}/lib
@@ -47,5 +55,5 @@ IF(LOG_PGSQL)
 	INSTALL(TARGETS log_pgsql
 		LIBRARY DESTINATION lib${LIB_SUFFIX}/accel-ppp
 	)
-ENDIF(LOG_PGSQL)
+ENDIF(LOG_PGSQL_DEPRECATED)
 

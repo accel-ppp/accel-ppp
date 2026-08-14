@@ -24,6 +24,7 @@
 #endif
 
 #include "iputils.h"
+#include "utils.h"
 #include "connlimit.h"
 #include "vlan_mon.h"
 
@@ -32,10 +33,6 @@
 #include "memdebug.h"
 
 #define SID_MAX 65536
-
-#ifndef min
-#define min(x,y) ((x)<(y)?(x):(y))
-#endif
 
 struct pppoe_conn_t {
 	struct list_head entry;
@@ -792,7 +789,7 @@ static int add_tag2(uint8_t *pack, size_t pack_size, const struct pppoe_tag *t)
 {
 	struct pppoe_hdr *hdr = (struct pppoe_hdr *)(pack + ETH_HLEN);
 	struct pppoe_tag *tag = (struct pppoe_tag *)(pack + ETH_HLEN + sizeof(*hdr) + ntohs(hdr->length));
-	if (pack_size <= ETH_HLEN + sizeof(*hdr) + ntohs(hdr->length) + ntohs(t->tag_len) || ntohs(t->tag_len) < 0)
+	if (pack_size <= ETH_HLEN + sizeof(*hdr) + ntohs(hdr->length) + sizeof(*t) + ntohs(t->tag_len))
 		return -1;
 
 	memcpy(tag, t, sizeof(*t) + ntohs(t->tag_len));
@@ -1043,6 +1040,8 @@ static void pppoe_recv_PADI(struct pppoe_serv_t *serv, uint8_t *pack, int size)
 	len = ntohs(hdr->length);
 	for (n = 0; n < len; n += sizeof(*tag) + ntohs(tag->tag_len)) {
 		tag = (struct pppoe_tag *)(pack + ETH_HLEN + sizeof(*hdr) + n);
+		if (n + sizeof(*tag) > len)
+			return;
 		if (n + sizeof(*tag) + ntohs(tag->tag_len) > len)
 			return;
 		switch (ntohs(tag->tag_type)) {

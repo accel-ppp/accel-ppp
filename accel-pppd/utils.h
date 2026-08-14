@@ -4,6 +4,10 @@
 #include <netinet/in.h>
 #include <stdint.h>
 
+#ifndef min
+#define min(x, y) ((x) < (y) ? (x) : (y))
+#endif
+
 char *u_ip6str(const struct in6_addr *addr, char *buf);
 char *u_ip4str(const struct in_addr *addr, char *buf);
 

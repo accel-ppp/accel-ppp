@@ -1,3 +1,13 @@
+/*
+ * DEPRECATED
+ *
+ * This module is scheduled for removal in a future release. It is built
+ * only when the deprecated LOG_PGSQL_DEPRECATED build flag is given.
+ * If you depend on it, please object at
+ * https://github.com/accel-ppp/accel-ppp/issues, otherwise it will be
+ * deleted.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,6 +19,7 @@
 #include "log.h"
 #include "list.h"
 #include "ap_session.h"
+#include "utils.h"
 
 #include "memdebug.h"
 
@@ -57,20 +68,28 @@ static void unpack_msg(struct log_msg_t *msg)
 
 static void set_hdr(struct log_msg_t *msg, struct ap_session *ses)
 {
+	const char *username = ses && ses->username ? ses->username : "";
+	const char *sessionid = ses && ses->username ? ses->sessionid : "";
 	struct tm tm;
+	int pos, len, avail;
 
 	localtime_r(&msg->timestamp.tv_sec, &tm);
 
 	strftime(msg->hdr->msg, LOG_CHUNK_SIZE, "%Y-%m-%d %H:%M:%S", &tm);
-	msg->hdr->len = strlen(msg->hdr->msg) + 1;
-	if (ses && ses->username) {
-		strcpy(msg->hdr->msg + msg->hdr->len, ses->username);
-		msg->hdr->len += strlen(ses->username) + 1;
-		strcpy(msg->hdr->msg + msg->hdr->len, ses->sessionid);
-		msg->hdr->len += strlen(ses->sessionid) + 1;
-	} else
-		memset(msg->hdr->msg + msg->hdr->len, 0, 2);
+	pos = strlen(msg->hdr->msg) + 1;
 
+	/* username is peer supplied and may be up to 255 bytes long,
+	 * truncate it to what is left of the chunk, keeping one byte
+	 * for the terminator of the sessionid */
+	avail = LOG_CHUNK_SIZE - pos - 1;
+	len = snprintf(msg->hdr->msg + pos, avail, "%s", username);
+	pos += min(len, avail - 1) + 1;
+
+	avail = LOG_CHUNK_SIZE - pos;
+	len = snprintf(msg->hdr->msg + pos, avail, "%s", sessionid);
+	pos += min(len, avail - 1) + 1;
+
+	msg->hdr->len = pos;
 }
 
 static void write_next_msg(void)
@@ -283,6 +302,9 @@ static struct log_target_t target = {
 static void init(void)
 {
 	char *opt;
+
+	log_warn("log_pgsql: this module is deprecated and is scheduled for removal,"
+		 " please object at https://github.com/accel-ppp/accel-ppp/issues if you need it\n");
 
 	spinlock_init(&queue_lock);
 

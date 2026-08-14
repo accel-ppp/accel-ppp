@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Deprecations
+- `log_pgsql` is deprecated and scheduled for removal. The `LOG_PGSQL` build
+  flag now fails the build; build with `LOG_PGSQL_DEPRECATED=TRUE` to keep it
+  for now, and the module logs a warning on startup. If you depend on it,
+  please object at https://github.com/accel-ppp/accel-ppp/issues, otherwise it
+  will be deleted.
+
 ### Features
 - New `metrics` module: HTTP endpoint exposing the same numbers as `accel-cmd show stat` at `/metrics`, in either Prometheus exposition or JSON format. Configurable listen address and optional IPv4 CIDR allow-list.
 

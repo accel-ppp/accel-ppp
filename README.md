@@ -48,7 +48,7 @@ monitoring kernel modules. Optional features require their corresponding
 development libraries:
 
 * Net-SNMP for NETSNMP=TRUE
-* PostgreSQL client libraries for LOG_PGSQL=TRUE
+* PostgreSQL client libraries for LOG_PGSQL_DEPRECATED=TRUE
 * Lua for LUA=TRUE or a specific Lua version such as LUA=5.3
 
 
@@ -74,7 +74,10 @@ Useful build options:
 * RADIUS=FALSE omits RADIUS support.
 * SHAPER=FALSE omits the traffic-shaping module.
 * NETSNMP=TRUE builds SNMP support.
-* LOG_PGSQL=TRUE builds PostgreSQL logging support.
+* LOG_PGSQL_DEPRECATED=TRUE builds PostgreSQL logging support. The module is
+  deprecated and scheduled for removal, the old LOG_PGSQL flag now fails the
+  build. If you depend on it, please say so at
+  https://github.com/accel-ppp/accel-ppp/issues.
 
 For example, to build the IPoE and VLAN monitoring modules for the running
 kernel:
