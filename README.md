@@ -65,7 +65,6 @@ Use an out-of-tree build directory:
 
 Useful build options:
 
-* BUILD_PPTP_DRIVER=TRUE builds the PPTP kernel module.
 * BUILD_IPOE_DRIVER=TRUE builds the IPoE kernel module.
 * BUILD_VLAN_MON_DRIVER=TRUE builds the VLAN monitoring kernel module.
 * BUILD_PPPOSEQ_DRIVER=TRUE builds the PPPoSEQ kernel module.
@@ -241,8 +240,8 @@ digest is stored as hexadecimal.
 Kernel module warning
 =====================
 
-The out-of-tree PPTP module conflicts with the kernel's ip_gre module. Do not
-build ip_gre into the kernel or load it at runtime when using that PPTP module.
+PPTP requires the kernel's PPTP PPPoX support (CONFIG_PPTP, available since
+Linux 2.6.37); ACCEL-PPP no longer ships an out-of-tree replacement.
 Do not mix ACCEL-PPP PPTP connections with poptop's pptpd; stop existing pptpd
 sessions before starting ACCEL-PPP.
 
