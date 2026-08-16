@@ -202,6 +202,7 @@ again:
 
 	if ( n<size ) {
 		memcpy(conn->out_buf, (uint8_t *)buf + n, size - n);
+		conn->out_size = size - n;
 		triton_md_enable_handler(&conn->hnd, MD_MODE_WRITE);
 	}
 
@@ -359,7 +360,10 @@ static int pptp_out_call_rqst(struct pptp_conn_t *conn)
 	src_addr.sa_protocol = PX_PROTO_PPTP;
 	src_addr.sa_addr.pptp.call_id = 0;
 	addrlen = sizeof(addr);
-	getsockname(conn->hnd.fd, (struct sockaddr*)&addr, &addrlen);
+	if (getsockname(conn->hnd.fd, (struct sockaddr*)&addr, &addrlen)) {
+		log_ppp_error("pptp: getsockname: %s\n", strerror(errno));
+		return -1;
+	}
 	src_addr.sa_addr.pptp.sin_addr = addr.sin_addr;
 
 	memset(&dst_addr, 0, sizeof(dst_addr));
@@ -367,7 +371,10 @@ static int pptp_out_call_rqst(struct pptp_conn_t *conn)
 	dst_addr.sa_protocol = PX_PROTO_PPTP;
 	dst_addr.sa_addr.pptp.call_id = htons(msg->call_id);
 	addrlen = sizeof(addr);
-	getpeername(conn->hnd.fd, (struct sockaddr*)&addr, &addrlen);
+	if (getpeername(conn->hnd.fd, (struct sockaddr*)&addr, &addrlen)) {
+		log_ppp_error("pptp: getpeername: %s\n", strerror(errno));
+		return -1;
+	}
 	dst_addr.sa_addr.pptp.sin_addr = addr.sin_addr;
 
 	pptp_sock = socket(AF_PPPOX, SOCK_STREAM, PX_PROTO_PPTP);
@@ -384,7 +391,11 @@ static int pptp_out_call_rqst(struct pptp_conn_t *conn)
 		return -1;
 	}
 	addrlen = sizeof(src_addr);
-	getsockname(pptp_sock, (struct sockaddr*)&src_addr, &addrlen);
+	if (getsockname(pptp_sock, (struct sockaddr*)&src_addr, &addrlen)) {
+		log_ppp_error("pptp: getsockname: %s\n", strerror(errno));
+		close(pptp_sock);
+		return -1;
+	}
 
 	if (connect(pptp_sock, (struct sockaddr*)&dst_addr, sizeof(dst_addr))) {
 		log_ppp_error("failed to connect PPTP socket (%s)\n", strerror(errno));
@@ -392,11 +403,13 @@ static int pptp_out_call_rqst(struct pptp_conn_t *conn)
 		return -1;
 	}
 
-	if (send_pptp_out_call_rply(conn, msg, src_addr.sa_addr.pptp.call_id, PPTP_CALL_RES_OK, 0))
+	if (send_pptp_out_call_rply(conn, msg, src_addr.sa_addr.pptp.call_id, PPTP_CALL_RES_OK, 0)) {
+		close(pptp_sock);
 		return -1;
+	}
 
 	conn->call_id = src_addr.sa_addr.pptp.call_id;
-	conn->peer_call_id = msg->call_id;
+	conn->peer_call_id = ntohs(msg->call_id);
 	conn->ppp.fd = pptp_sock;
 	conn->ppp.ses.chan_name = _strdup(inet_ntoa(dst_addr.sa_addr.pptp.sin_addr));
 
@@ -495,7 +508,7 @@ static void pptp_send_echo(struct triton_timer_t *t)
 		.header = PPTP_HEADER_CTRL(PPTP_ECHO_RQST),
 	};
 
-	if (++conn->echo_sent == conf_echo_failure) {
+	if (conf_echo_failure && ++conn->echo_sent >= conf_echo_failure) {
 		log_ppp_warn("pptp: no echo reply\n");
 		disconnect(conn);
 		return;
@@ -564,6 +577,10 @@ static int pptp_read(struct triton_md_handler_t *h)
 		if (conn->in_size >= sizeof(*hdr)) {
 			if (hdr->magic != htonl(PPTP_MAGIC)) {
 				log_ppp_error("pptp: invalid magic\n");
+				goto drop;
+			}
+			if (ntohs(hdr->length) < sizeof(*hdr)) {
+				log_ppp_error("pptp: message is too short\n");
 				goto drop;
 			}
 			if (ntohs(hdr->length) >= PPTP_CTRL_SIZE_MAX) {
@@ -680,12 +697,13 @@ static void ppp_finished(struct ap_session *ses)
 
 static int pptp_connect(struct triton_md_handler_t *h)
 {
-  struct sockaddr_in addr;
-	socklen_t size = sizeof(addr);
+  struct sockaddr_in addr, laddr;
+	socklen_t size;
 	int sock;
 	struct pptp_conn_t *conn;
 
 	while(1) {
+		size = sizeof(addr);
 		sock = accept(h->fd, (struct sockaddr *)&addr, &size);
 		if (sock < 0) {
 			if (errno == EAGAIN)
@@ -722,6 +740,13 @@ static int pptp_connect(struct triton_md_handler_t *h)
 			continue;
 		}
 
+		size = sizeof(laddr);
+		if (getsockname(sock, (struct sockaddr *)&laddr, &size)) {
+			log_error("pptp: getsockname: %s, closing connection...\n", strerror(errno));
+			close(sock);
+			continue;
+		}
+
 		if (fcntl(sock, F_SETFL, O_NONBLOCK)) {
 			log_error("pptp: failed to set nonblocking mode: %s, closing connection...\n", strerror(errno));
 			close(sock);
@@ -754,8 +779,7 @@ static int pptp_connect(struct triton_md_handler_t *h)
 		conn->ctrl.calling_station_id = _malloc(17);
 		conn->ctrl.called_station_id = _malloc(17);
 		u_inet_ntoa(addr.sin_addr.s_addr, conn->ctrl.calling_station_id);
-		getsockname(sock, (struct sockaddr*)&addr, &size);
-		u_inet_ntoa(addr.sin_addr.s_addr, conn->ctrl.called_station_id);
+		u_inet_ntoa(laddr.sin_addr.s_addr, conn->ctrl.called_station_id);
 
 		ppp_init(&conn->ppp);
 		conn->ppp.ses.ctrl = &conn->ctrl;
@@ -871,7 +895,7 @@ static void pptp_init(void)
 {
 	struct sockaddr_in addr;
 	char *opt;
-	int fd;
+	int fd, f = 1;
 
 	fd = socket(AF_PPPOX, SOCK_STREAM, PX_PROTO_PPTP);
 	if (fd >= 0)
@@ -887,12 +911,17 @@ static void pptp_init(void)
 
 	fcntl(serv.hnd.fd, F_SETFD, fcntl(serv.hnd.fd, F_GETFD) | FD_CLOEXEC);
 
+	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
 
 	opt = conf_get_opt("pptp", "bind");
-	if (opt)
-		addr.sin_addr.s_addr = inet_addr(opt);
-	else
+	if (opt) {
+		if (!inet_aton(opt, &addr.sin_addr)) {
+			log_emerg("pptp: failed to parse bind address '%s'\n", opt);
+			close(serv.hnd.fd);
+			return;
+		}
+	} else
 		addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
 	opt = conf_get_opt("pptp", "port");
@@ -901,7 +930,7 @@ static void pptp_init(void)
 	else
 		addr.sin_port = htons(PPTP_PORT);
 
-  setsockopt(serv.hnd.fd, SOL_SOCKET, SO_REUSEADDR, &serv.hnd.fd, 4);
+  setsockopt(serv.hnd.fd, SOL_SOCKET, SO_REUSEADDR, &f, sizeof(f));
   if (bind (serv.hnd.fd, (struct sockaddr *) &addr, sizeof (addr)) < 0) {
     log_emerg("pptp: failed to bind socket: %s\n", strerror(errno));
 		close(serv.hnd.fd);

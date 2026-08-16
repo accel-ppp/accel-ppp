@@ -716,7 +716,7 @@ If this option is given and greater than zero then pptp module will send echo-re
 seconds.
 .TP
 .BI "echo-failure=" n
-Specifies maximum number of echo-requests may be sent without valid echo-reply, if exceeds connection will be terminated.
+Specifies maximum number of echo-requests may be sent without valid echo-reply, if exceeds connection will be terminated. Zero disables the check: echo-requests are still sent, but missing replies never terminate the connection (default 3).
 .TP
 .BI "timeout=" n
 Timeout waiting reply from client in seconds (default 5).
