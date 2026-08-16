@@ -22,6 +22,7 @@
 #include <linux/version.h>
 
 #include <net/genetlink.h>
+#include <net/rtnetlink.h>
 #include <net/route.h>
 #include <net/sock.h>
 #include <net/ip.h>
@@ -103,6 +104,10 @@ struct ipoe_session {
 	struct net_device *link_dev;
 
 	atomic_t refs;
+
+	/* set under ipoe_wlock by whoever starts tearing the session down,
+	 * so that the genl and the rtnetlink path do not do it twice */
+	unsigned int dying:1;
 
 	struct ipoe_stats __percpu *rx_stats;
 	struct ipoe_stats __percpu *tx_stats;
@@ -1116,6 +1121,83 @@ static const struct header_ops ipoe_hard_header_ops = {
 	.cache_update	= eth_header_cache_update,
 };
 
+/* Is anybody subscribed to our packet group, i.e. is a control daemon
+ * running at all? */
+static int ipoe_ctrl_attached(void)
+{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,13,0) && RHEL_MAJOR < 7
+	return netlink_has_listeners(init_net.genl_sock, ipoe_nl_mcg.id);
+#else
+	return genl_has_listeners(&ipoe_nl_family, &init_net, 0);
+#endif
+}
+
+/* Sessions are created through IPOE_CMD_CREATE, which also sets up the
+ * private state.  A device made by rtnetlink would have none of it, so
+ * refuse 'ip link add ... type ipoe' explicitly. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,13,0)
+static int ipoe_newlink(struct net_device *dev,
+			struct rtnl_newlink_params *params,
+			struct netlink_ext_ack *extack)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
+static int ipoe_newlink(struct net *src_net, struct net_device *dev,
+			struct nlattr *tb[], struct nlattr *data[],
+			struct netlink_ext_ack *extack)
+#else
+static int ipoe_newlink(struct net *src_net, struct net_device *dev,
+			struct nlattr *tb[], struct nlattr *data[])
+#endif
+{
+	return -EOPNOTSUPP;
+}
+
+/* Called by rtnetlink with rtnl held, so the teardown ipoe_nl_cmd_delete()
+ * does after dropping ipoe_wlock has to happen here as well. */
+static void ipoe_dellink(struct net_device *dev, struct list_head *head)
+{
+	struct ipoe_session *ses = netdev_priv(dev);
+
+	down(&ipoe_wlock);
+
+	if (ses->dying) {
+		/* the genl path is already removing it, it will unregister
+		 * the device itself once it gets rtnl */
+		up(&ipoe_wlock);
+		return;
+	}
+
+	ses->dying = 1;
+
+	if (ses->peer_addr)
+		list_del_rcu(&ses->entry);
+	list_del(&ses->entry2);
+	if (ses->u.hwaddr_u)
+		list_del_rcu(&ses->entry3);
+
+	up(&ipoe_wlock);
+
+	/* A session left behind by a dead daemon looks exactly like one that
+	 * is still in use, so removing it can not be refused on state alone.
+	 * Complain only if somebody is still subscribed to our multicast
+	 * group, which means a daemon is around to be surprised by it. */
+	if (ses->peer_addr && ipoe_ctrl_attached())
+		pr_warn("ipoe: %s: removed through rtnetlink while bound to %pI4"
+			" and a control daemon is attached\n",
+			dev->name, &ses->peer_addr);
+
+	synchronize_rcu();
+
+	while (atomic_read(&ses->refs))
+		schedule_timeout_uninterruptible(1);
+
+	if (ses->link_dev) {
+		dev_put(ses->link_dev);
+		ses->link_dev = NULL;
+	}
+
+	unregister_netdevice_queue(dev, head);
+}
+
 static void ipoe_netdev_setup(struct net_device *dev)
 {
 	dev->netdev_ops = &ipoe_netdev_ops;
@@ -1144,6 +1226,14 @@ static void ipoe_netdev_setup(struct net_device *dev)
 	dev->header_ops	= &ipoe_hard_header_ops;
 	dev->priv_flags &= ~IFF_XMIT_DST_RELEASE;
 }
+
+static struct rtnl_link_ops ipoe_link_ops __read_mostly = {
+	.kind		= "ipoe",
+	.priv_size	= sizeof(struct ipoe_session),
+	.setup		= ipoe_netdev_setup,
+	.newlink	= ipoe_newlink,
+	.dellink	= ipoe_dellink,
+};
 
 static int ipoe_create(__be32 peer_addr, __be32 addr, __be32 gw, int ifindex, const __u8 *hwaddr)
 {
@@ -1220,6 +1310,7 @@ static int ipoe_create(__be32 peer_addr, __be32 addr, __be32 gw, int ifindex, co
 	}*/
 
 	dev->tx_queue_len = 100;
+	dev->rtnl_link_ops = &ipoe_link_ops;
 
 	rtnl_lock();
 	r = register_netdevice(dev);
@@ -1393,12 +1484,22 @@ static int ipoe_nl_cmd_delete(struct sk_buff *skb, struct genl_info *info)
 
 	//pr_info("ipoe: delete %08x\n", ses->peer_addr);
 
+	if (ses->dying) {
+		/* already on its way out through ipoe_dellink() or a flush */
+		ret = 0;
+		goto out_unlock;
+	}
+
+	ses->dying = 1;
+
 	if (ses->peer_addr)
 		list_del_rcu(&ses->entry);
 	list_del(&ses->entry2);
 	if (ses->u.hwaddr_u)
 		list_del_rcu(&ses->entry3);
 
+	/* drop the lock before sleeping in synchronize_rcu() and taking rtnl
+	 * in unregister_netdev() */
 	up(&ipoe_wlock);
 
 	synchronize_rcu();
@@ -1411,11 +1512,59 @@ static int ipoe_nl_cmd_delete(struct sk_buff *skb, struct genl_info *info)
 
 	unregister_netdev(ses->dev);
 
-	ret = 0;
+	return 0;
 
 out_unlock:
 	up(&ipoe_wlock);
 	return ret;
+}
+
+static int ipoe_nl_cmd_flush(struct sk_buff *skb, struct genl_info *info)
+{
+	struct ipoe_session *ses;
+	LIST_HEAD(list);
+	LIST_HEAD(kill_list);
+
+	down(&ipoe_wlock);
+
+	list_splice_init(&ipoe_list2, &list);
+
+	list_for_each_entry(ses, &list, entry2) {
+		ses->dying = 1;
+
+		if (ses->peer_addr)
+			list_del_rcu(&ses->entry);
+		if (ses->u.hwaddr_u)
+			list_del_rcu(&ses->entry3);
+	}
+
+	up(&ipoe_wlock);
+
+	if (list_empty(&list))
+		return 0;
+
+	/* a single grace period covers the whole batch */
+	synchronize_rcu();
+
+	list_for_each_entry(ses, &list, entry2) {
+		while (atomic_read(&ses->refs))
+			schedule_timeout_uninterruptible(1);
+
+		if (ses->link_dev) {
+			dev_put(ses->link_dev);
+			ses->link_dev = NULL;
+		}
+	}
+
+	rtnl_lock();
+	list_for_each_entry(ses, &list, entry2)
+		unregister_netdevice_queue(ses->dev, &kill_list);
+	unregister_netdevice_many(&kill_list);
+	rtnl_unlock();
+
+	/* the sessions are freed by now, do not touch 'list' again */
+
+	return 0;
 }
 
 static int ipoe_nl_cmd_modify(struct sk_buff *skb, struct genl_info *info)
@@ -1577,7 +1726,11 @@ static int ipoe_nl_cmd_dump_sessions(struct sk_buff *skb, struct netlink_callbac
 #else
 		if (fill_info(skb, ses, NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq) < 0)
 #endif
+		{
+			/* this one did not fit, resume from it next time */
+			idx--;
 			break;
+		}
 	}
 
 	up(&ipoe_wlock);
@@ -1890,6 +2043,14 @@ static const struct genl_ops ipoe_nl_ops[] = {
 		.policy = ipoe_nl_policy,
 #endif
 	},
+	{
+		.cmd = IPOE_CMD_FLUSH,
+		.doit = ipoe_nl_cmd_flush,
+		.flags = GENL_ADMIN_PERM,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		.policy = ipoe_nl_policy,
+#endif
+	},
 };
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,13,0) && RHEL_MAJOR < 7
@@ -1960,6 +2121,12 @@ static int __init ipoe_init(void)
 	skb_queue_head_init(&ipoe_queue);
 	INIT_WORK(&ipoe_queue_work, ipoe_process_queue);
 
+	err = rtnl_link_register(&ipoe_link_ops);
+	if (err < 0) {
+		printk(KERN_INFO "ipoe: can't register link operations\n");
+		return err;
+	}
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,13,0) && RHEL_MAJOR < 7
 	err = genl_register_family_with_ops(&ipoe_nl_family, ipoe_nl_ops, ARRAY_SIZE(ipoe_nl_ops));
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4,10,0)
@@ -1969,6 +2136,7 @@ static int __init ipoe_init(void)
 #endif
 	if (err < 0) {
 		printk(KERN_INFO "ipoe: can't register netlink interface\n");
+		rtnl_link_unregister(&ipoe_link_ops);
 		return err;
 	}
 
@@ -1977,6 +2145,7 @@ static int __init ipoe_init(void)
 	if (err < 0) {
 		printk(KERN_INFO "ipoe: can't register netlink multicast group\n");
 		genl_unregister_family(&ipoe_nl_family);
+		rtnl_link_unregister(&ipoe_link_ops);
 		return err;
 	}
 #endif
@@ -1995,6 +2164,10 @@ static void __exit ipoe_fini(void)
 	genl_unregister_mc_group(&ipoe_nl_family, &ipoe_nl_mcg);
 #endif
 	genl_unregister_family(&ipoe_nl_family);
+
+	/* takes down whatever sessions are left through ipoe_dellink() and
+	 * keeps rtnetlink from starting another one behind our back */
+	rtnl_link_unregister(&ipoe_link_ops);
 
 	down(&ipoe_wlock);
 	up(&ipoe_wlock);

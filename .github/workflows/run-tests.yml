@@ -145,6 +145,7 @@ jobs:
           sudo dmesg"
 
       - name: Insert ipoe kernel module
+        if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp &&
           sudo insmod build/drivers/ipoe/driver/ipoe.ko &&
@@ -163,12 +164,14 @@ jobs:
           sudo dmesg"
 
       - name: Insert vlan_mon kernel module
+        if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp &&
           sudo insmod build/drivers/vlan_mon/driver/vlan_mon.ko &&
           lsmod | grep vlan_mon"
 
       - name: Insert ppposeq kernel module
+        if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp &&
           sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko &&
@@ -290,6 +293,7 @@ jobs:
           doas dmesg"
 
       - name: Insert ipoe kernel module
+        if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
           doas insmod build/drivers/ipoe/driver/ipoe.ko &&
@@ -308,12 +312,14 @@ jobs:
           doas dmesg"
 
       - name: Insert vlan_mon kernel module
+        if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
           doas insmod build/drivers/vlan_mon/driver/vlan_mon.ko &&
           lsmod | grep vlan_mon"
 
       - name: Insert ppposeq kernel module
+        if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
           doas modprobe pppox && doas insmod build/drivers/ppposeq/driver/ppposeq.ko &&
@@ -478,9 +484,17 @@ jobs:
       - name: Generate coverage reports (default(txt), csv, html)
         run: |
           mkdir -p tests/report
-          gcovr --config=tests/gcovr.conf --output=tests/report/accel-ppp.txt
-          gcovr --config=tests/gcovr.conf --csv --output=tests/report/accel-ppp.csv
-          gcovr --config=tests/gcovr.conf --html --html-details --output=tests/report/accel-ppp.html
+          # gcov reports negative branch counters now and then (gcc bug 68080).
+          # gcovr 6 and later stop with a parse error unless told to carry on,
+          # older ones do not know the option at all, so ask before using it.
+          IGNORE=""
+          if gcovr --help 2>&1 | grep -q negative_hits; then
+            IGNORE="--gcov-ignore-parse-errors=negative_hits.warn_once_per_file"
+          fi
+          echo "gcovr `gcovr --version | head -1`, extra options: '$IGNORE'"
+          gcovr --config=tests/gcovr.conf $IGNORE --output=tests/report/accel-ppp.txt
+          gcovr --config=tests/gcovr.conf $IGNORE --csv --output=tests/report/accel-ppp.csv
+          gcovr --config=tests/gcovr.conf $IGNORE --html --html-details --output=tests/report/accel-ppp.html
 
       - name: Show default coverage report
         run: cat tests/report/accel-ppp.txt

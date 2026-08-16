@@ -46,6 +46,8 @@ int ipoe_nl_add_exclude(uint32_t addr, int mask)
 		return -1;
 	}
 
+	memset(&req, 0, sizeof(req));
+
 	nlh = &req.n;
 	nlh->nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
 	nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
@@ -82,6 +84,8 @@ void ipoe_nl_del_exclude(uint32_t addr)
 		return;
 	}
 
+	memset(&req, 0, sizeof(req));
+
 	nlh = &req.n;
 	nlh->nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
 	nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
@@ -113,6 +117,8 @@ int ipoe_nl_add_net(uint32_t addr, int mask)
 		log_ppp_error("ipoe: cannot open generic netlink socket\n");
 		return -1;
 	}
+
+	memset(&req, 0, sizeof(req));
 
 	nlh = &req.n;
 	nlh->nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
@@ -150,6 +156,8 @@ void ipoe_nl_del_net(uint32_t addr)
 		return;
 	}
 
+	memset(&req, 0, sizeof(req));
+
 	nlh = &req.n;
 	nlh->nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
 	nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
@@ -180,6 +188,8 @@ void ipoe_nl_add_interface(int ifindex, uint8_t mode)
 		log_ppp_error("ipoe: cannot open generic netlink socket\n");
 		return;
 	}
+
+	memset(&req, 0, sizeof(req));
 
 	nlh = &req.n;
 	nlh->nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
@@ -212,6 +222,8 @@ void ipoe_nl_del_interface(int ifindex)
 		log_ppp_error("ipoe: cannot open generic netlink socket\n");
 		return;
 	}
+
+	memset(&req, 0, sizeof(req));
 
 	nlh = &req.n;
 	nlh->nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
@@ -252,6 +264,8 @@ int ipoe_nl_create()
 		log_ppp_error("ipoe: cannot open generic netlink socket\n");
 		return -1;
 	}
+
+	memset(&req, 0, sizeof(req));
 
 	nlh = &req.n;
 	nlh->nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
@@ -316,6 +330,8 @@ int ipoe_nl_modify(int ifindex, uint32_t peer_addr, uint32_t addr, uint32_t gw, 
 		log_ppp_error("ipoe: cannot open generic netlink socket\n");
 		return -1;
 	}
+
+	memset(&req, 0, sizeof(req));
 
 	nlh = &req.n;
 	nlh->nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
@@ -394,17 +410,25 @@ static int dump_session(const struct sockaddr_nl *addr, struct nlmsghdr *n, void
 	return 0;
 }
 
-void ipoe_nl_get_sessions(struct list_head *list)
+int ipoe_nl_get_sessions(struct list_head *list)
 {
+	struct rtnl_handle rth;
 	struct nlmsghdr *nlh;
 	struct genlmsghdr *ghdr;
 	struct {
 		struct nlmsghdr n;
 		char buf[1024];
 	} req;
+	int ret;
 
-	if (rth.fd == -1)
-		return;
+	/* a private socket, so that the dump does not have to compete with
+	 * the packet notifications delivered to the multicast one */
+	if (rtnl_open_byproto(&rth, 0, NETLINK_GENERIC)) {
+		log_error("ipoe: cannot open generic netlink socket\n");
+		return -1;
+	}
+
+	memset(&req, 0, sizeof(req));
 
 	nlh = &req.n;
 	nlh->nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
@@ -416,11 +440,51 @@ void ipoe_nl_get_sessions(struct list_head *list)
 	ghdr->cmd = IPOE_CMD_GET;
 
 	if (rtnl_send(&rth, (char *)nlh, nlh->nlmsg_len) < 0) {
-		log_emerg("ipoe: failed to send dump request: %s\n", strerror(errno));
-		return;
+		log_error("ipoe: failed to send dump request: %s\n", strerror(errno));
+		rtnl_close(&rth);
+		return -1;
 	}
 
-	rtnl_dump_filter(&rth, dump_session, list, NULL, NULL);
+	ret = rtnl_dump_filter(&rth, dump_session, list, NULL, NULL);
+
+	rtnl_close(&rth);
+
+	return ret;
+}
+
+int ipoe_nl_flush_sessions(void)
+{
+	struct rtnl_handle rth;
+	struct nlmsghdr *nlh;
+	struct genlmsghdr *ghdr;
+	struct {
+		struct nlmsghdr n;
+		char buf[128];
+	} req;
+	int ret = 0;
+
+	if (rtnl_open_byproto(&rth, 0, NETLINK_GENERIC)) {
+		log_error("ipoe: cannot open generic netlink socket\n");
+		return -EIO;
+	}
+
+	memset(&req, 0, sizeof(req));
+
+	nlh = &req.n;
+	nlh->nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
+	nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+	nlh->nlmsg_type = ipoe_genl_id;
+
+	ghdr = NLMSG_DATA(&req.n);
+	ghdr->cmd = IPOE_CMD_FLUSH;
+
+	errno = 0;
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0)
+		ret = errno ? -errno : -EIO;
+
+	rtnl_close(&rth);
+
+	return ret;
 }
 
 void ipoe_nl_delete(int ifindex)
@@ -437,6 +501,8 @@ void ipoe_nl_delete(int ifindex)
 		log_ppp_error("ipoe: cannot open generic netlink socket\n");
 		return;
 	}
+
+	memset(&req, 0, sizeof(req));
 
 	nlh = &req.n;
 	nlh->nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
@@ -459,7 +525,10 @@ static void delete_sessions()
 	struct ipoe_session_info *info;
 
 	LIST_HEAD(ds_list);
-	ipoe_nl_get_sessions(&ds_list);
+
+	if (ipoe_nl_get_sessions(&ds_list))
+		log_error("ipoe: failed to enumerate sessions left by a previous"
+			  " instance, some of them are not removed\n");
 
 	while (!list_empty(&ds_list)) {
 		info = list_entry(ds_list.next, typeof(*info), entry);
@@ -467,6 +536,24 @@ static void delete_sessions()
 		list_del(&info->entry);
 		_free(info);
 	}
+}
+
+static void flush_sessions()
+{
+	int r = ipoe_nl_flush_sessions();
+
+	if (!r)
+		return;
+
+	if (r == -EOPNOTSUPP) {
+		log_warn("ipoe: loaded ipoe module does not support IPOE_CMD_FLUSH,"
+			 " removing sessions one by one, reload the module to fix\n");
+		delete_sessions();
+		return;
+	}
+
+	log_error("ipoe: failed to remove sessions left by a previous instance:"
+		  " %s\n", strerror(-r));
 }
 
 static void ipoe_up_handler(const struct sockaddr_nl *addr, struct nlmsghdr *h)
@@ -628,22 +715,31 @@ static void init(void)
 		log_warn("failed to load ipoe module\n");
 
 	mcg_id = genl_resolve_mcg(IPOE_GENL_NAME, IPOE_GENL_MCG_PKT, &ipoe_genl_id);
+
+	if (!ipoe_genl_id) {
+		log_error("ipoe: cannot resolve netlink family, state left by a"
+			  " previous instance is not removed\n");
+		return;
+	}
+
+	/* Drop everything a previous instance may have left in the kernel.
+	 * The interfaces go first: while their rx handlers are still attached
+	 * the module keeps reporting unclassified packets, and once we join
+	 * the multicast group that traffic competes with our own replies. */
+	ipoe_nl_delete_interfaces();
+	flush_sessions();
+	ipoe_nl_del_exclude(0);
+	ipoe_nl_del_net(0);
+
 	if (mcg_id == -1) {
 		log_warn("ipoe: unclassified packet handling is disabled\n");
-		rth.fd = -1;
 		return;
 	}
 
 	if (rtnl_open_byproto(&rth, 1 << (mcg_id - 1), NETLINK_GENERIC)) {
 		log_error("ipoe: cannot open generic netlink socket\n");
-		rth.fd = -1;
 		return;
 	}
-
-	delete_sessions();
-	ipoe_nl_del_exclude(0);
-	ipoe_nl_del_net(0);
-	ipoe_nl_delete_interfaces();
 
 	fcntl(rth.fd, F_SETFL, O_NONBLOCK);
 	fcntl(rth.fd, F_SETFD, fcntl(rth.fd, F_GETFD) | FD_CLOEXEC);

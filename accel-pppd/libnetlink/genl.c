@@ -82,11 +82,13 @@ int __export genl_resolve_mcg(const char *family, const char *name, int *fam_id)
 		goto out;
 	}
 
-	if (!tb[CTRL_ATTR_MCAST_GROUPS])
-		goto out;
-
+	/* report the family id even if the group lookup below fails, the
+	 * caller may still have use for it */
 	if (fam_id)
 		*fam_id =	*(uint16_t *)(RTA_DATA(tb[CTRL_ATTR_FAMILY_ID]));
+
+	if (!tb[CTRL_ATTR_MCAST_GROUPS])
+		goto out;
 
 	parse_rtattr_nested(tb2, GENL_MAX_FAM_GRPS, tb[CTRL_ATTR_MCAST_GROUPS]);
 
