@@ -3814,6 +3814,7 @@ static void parse_local_net(const char *opt)
 	char str[17];
 	in_addr_t addr;
 	int mask;
+	unsigned long val;
 	char *endptr;
 	struct local_net *n;
 
@@ -3824,9 +3825,10 @@ static void parse_local_net(const char *opt)
 		addr = inet_addr(str);
 		if (addr == INADDR_NONE)
 			goto out_err;
-		mask = strtoul(ptr + 1, &endptr, 10);
-		if (mask > 32)
+		val = strtoul(ptr + 1, &endptr, 10);
+		if (*endptr || val > 32)
 			goto out_err;
+		mask = val;
 	} else {
 		addr = inet_addr(opt);
 		if (addr == INADDR_NONE)
@@ -3834,7 +3836,7 @@ static void parse_local_net(const char *opt)
 		mask = 24;
 	}
 
-	mask = htonl(mask ? ~0 << (32 - mask) : 0);
+	mask = htonl(mask ? UINT32_MAX << (32 - mask) : 0);
 	addr = addr & mask;
 
 	list_for_each_entry(n, &local_nets, entry) {

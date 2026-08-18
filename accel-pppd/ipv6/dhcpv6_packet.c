@@ -133,6 +133,8 @@ struct dhcpv6_packet *dhcpv6_packet_parse(const void *buf, size_t size)
 	endptr = ((void *)pkt->hdr) + size;
 
 	while (pkt->hdr->type == D6_RELAY_FORW) {
+		struct dhcpv6_msg_hdr *prev_hdr = pkt->hdr;
+
 		rhdr = (struct dhcpv6_relay_hdr *)pkt->hdr;
 		if (((void *)rhdr) + sizeof(*rhdr) > endptr) {
 			log_warn("dhcpv6: invalid packet received\n");
@@ -162,10 +164,15 @@ struct dhcpv6_packet *dhcpv6_packet_parse(const void *buf, size_t size)
 
 			if (opth->code == htons(D6_OPTION_RELAY_MSG)) {
 				pkt->hdr = (struct dhcpv6_msg_hdr *)opth->data;
-				endptr = opth->data + sizeof(*opth) + ntohs(opth->len);
+				endptr = opth->data + ntohs(opth->len);
 			}
 
 			ptr += sizeof(*opth) + ntohs(opth->len);
+		}
+
+		if (pkt->hdr == prev_hdr) {
+			log_warn("dhcpv6: invalid packet received\n");
+			goto error;
 		}
 	}
 
@@ -491,12 +498,21 @@ static void print_hex_array(struct dhcpv6_option *opt, void (*print)(const char 
 
 static void print_uint8(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))
 {
+	if (ntohs(opt->hdr->len) < sizeof(uint8_t))
+		return;
+
 	print(" %i", *(uint8_t *)opt->hdr->data);
 }
 
 static void print_time(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))
 {
-	print(" %u", *(uint32_t *)opt->hdr->data);
+	uint16_t val;
+
+	if (ntohs(opt->hdr->len) < sizeof(val))
+		return;
+
+	memcpy(&val, opt->hdr->data, sizeof(val));
+	print(" %u", ntohs(val));
 }
 
 static void print_ipv6addr(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))
@@ -531,14 +547,20 @@ static void print_status(struct dhcpv6_option *opt, void (*print)(const char *fm
 		"NoAddrsAvail",
 		"NoBindings",
 		"NotOnLink",
-		"UseMulticast"
+		"UseMulticast",
 		"NoPrefixAvail"
 	};
+	unsigned int code;
 
-	if (ntohs(o->code) < 0 || ntohs(o->code) > sizeof(status_name))
-		print(" %u", ntohs(o->code));
+	if ((unsigned int)ntohs(opt->hdr->len) < sizeof(o->code))
+		return;
+
+	code = ntohs(o->code);
+
+	if (code >= sizeof(status_name) / sizeof(status_name[0]))
+		print(" %u", code);
 	else
-		print(" %s", status_name[ntohs(o->code)]);
+		print(" %s", status_name[code]);
 }
 
 static void print_reconf(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))

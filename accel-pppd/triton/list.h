@@ -1,6 +1,8 @@
 #ifndef _LINUX_LIST_H
 #define _LINUX_LIST_H
 
+#include <stddef.h>
+
 //#if defined(__KERNEL__) || defined(_LVM_H_INCLUDE)
 
 //#include <linux/prefetch.h>
@@ -211,7 +213,7 @@ static inline void list_splice_init(struct list_head *list,
  * @member:	the name of the list_struct within the struct.
  */
 #define list_entry(ptr, type, member) \
-	((type *)((char *)(ptr)-(unsigned long)(&((type *)0)->member)))
+	((type *)((char *)(ptr)-offsetof(type, member)))
 
 /**
  * list_first_entry - get the first element from a list

@@ -265,7 +265,9 @@ static void print_classless_route(const struct dhcpv4_option *opt, int elem_size
 {
 	const uint8_t *ptr = opt->data;
 	const uint8_t *endptr = ptr + opt->len;
-	int mask, i, mask1 = 0;
+	unsigned int prefix_len, i;
+	int mask;
+	uint32_t mask1;
 	uint32_t ip;
 	uint32_t gw;
 
@@ -274,20 +276,23 @@ static void print_classless_route(const struct dhcpv4_option *opt, int elem_size
 			print(",");
 
 		mask = *ptr++;
-		ip = ntohl(*(uint32_t *)ptr);
-		for (i = 0; i < mask; i++)
-			mask1 |= (1 << (32 - i));
+		if (mask > 32)
+			return;
+
+		prefix_len = (mask + 7) / 8;
+		if ((size_t)(endptr - ptr) < prefix_len + sizeof(gw))
+			return;
+
+		ip = 0;
+		for (i = 0; i < prefix_len; i++)
+			ip |= (uint32_t)ptr[i] << (24 - i * 8);
+		mask1 = mask ? UINT32_MAX << (32 - mask) : 0;
 		ip &= mask1;
-		if (mask <= 8)
-			ptr++;
-		else if (mask <= 16)
-			ptr += 2;
-		else if (mask <= 24)
-			ptr += 3;
-		else
-			ptr += 4;
-		gw = ntohl(*(uint32_t *)ptr);
-		ptr += 4;
+		ptr += prefix_len;
+
+		memcpy(&gw, ptr, sizeof(gw));
+		gw = ntohl(gw);
+		ptr += sizeof(gw);
 
 		print("%i.%i.%i.%i/%i via %i.%i.%i.%i",
 				(ip >> 24) & 0xff,
