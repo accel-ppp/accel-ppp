@@ -1085,45 +1085,76 @@ void dhcpv4_relay_free(struct dhcpv4_relay *r, struct triton_context_t *ctx)
 
 int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request, uint32_t server_id, const char *agent_circuit_id, const char *agent_remote_id, const char *link_selection)
 {
-	int n;
-	int len = request->ptr - request->data;
-	uint32_t giaddr = request->hdr->giaddr;
-	struct dhcpv4_option *opt = NULL;
-	uint32_t _server_id;
+	int len, n;
+	struct dhcpv4_option *opt;
+	struct dhcpv4_packet *pack;
+	uint8_t *data;
 
-	if (!request->relay_agent && (agent_remote_id || link_selection) &&
-	    dhcpv4_packet_insert_opt82(request, agent_circuit_id, agent_remote_id, link_selection))
-		return -1;
+	if (request->msg_type == DHCPDISCOVER && request->server_id)
+		/* DHCPDISCOVER MUST have NO server ID*/
+		server_id = 0;
 
-	request->hdr->giaddr = relay->giaddr;
 
-	if (server_id) {
-		opt = dhcpv4_packet_find_opt(request, 54);
-		if (opt) {
-			_server_id = *(uint32_t *)opt->data;
-			*(uint32_t *)opt->data = server_id;
+	if (request->msg_type == DHCPREQUEST && request->hdr->ciaddr)
+		/* RFC2031 section 4.3.6 - server IP MUST NOT be set with DHCPREQUEST
+		 * RENEWING and REBINDING.
+		 *
+		 * ---------------------------------------------------------------------
+		 * |              |INIT-REBOOT  |SELECTING    |RENEWING     |REBINDING |
+		 * ---------------------------------------------------------------------
+		 * |broad/unicast |broadcast    |broadcast    |unicast      |broadcast |
+		 * |server-ip     |MUST NOT     |MUST         |MUST NOT     |MUST NOT  |
+		 * |requested-ip  |MUST         |MUST         |MUST NOT     |MUST NOT  |
+		 * |ciaddr        |zero         |zero         |IP address   |IP address|
+		 * ---------------------------------------------------------------------
+		 *               Table 4: Client messages from different states
+		 */
+		server_id = 0;
+
+	/* Build a relay packet from the client request */
+	pack = dhcpv4_packet_alloc();
+	memcpy(pack->hdr, request->hdr, sizeof(struct dhcpv4_hdr));
+	pack->hdr->giaddr = relay->giaddr;
+	pack->msg_type = request->msg_type;
+	list_for_each_entry(opt, &request->options, entry) {
+		if (opt->type == 54) {
+			if (server_id)
+				data = (void *) &server_id;
+			else
+				continue;
+		} else
+			data = opt->data;
+		/* copy client option */
+		if (dhcpv4_packet_add_opt(pack, opt->type, data, opt->len) < 0) {
+			dhcpv4_packet_free(pack);
+			return -1;
 		}
 	}
 
-	len = request->ptr - request->data;
+	/* add end option 255 */
+	*pack->ptr++ = 255;
+
+	/* Insert "Agent information" option 82 if not already set */
+	if (!request->relay_agent && (agent_remote_id || link_selection) &&
+	    dhcpv4_packet_insert_opt82(pack, agent_circuit_id, agent_remote_id, link_selection))
+		return -1;
+
+	len = pack->ptr - pack->data;
 
 	// pad packet to minimal bootp length
 	if (len < 300) {
-		memset(request->ptr, 0, 300 - len);
+		memset(pack->ptr, 0, 300 - len);
 		len = 300;
 	}
 
 	if (conf_verbose) {
 		log_ppp_info2("send ");
-		dhcpv4_print_packet(request, 1, log_ppp_info2);
+		dhcpv4_print_packet(pack, 1, log_ppp_info2);
 	}
 
-	n = write(relay->hnd.fd, request->data, len);
+	n = write(relay->hnd.fd, pack->data, len);
 
-	request->hdr->giaddr = giaddr;
-
-	if (opt)
-		*(uint32_t *)opt->data = _server_id;
+	dhcpv4_packet_free(pack);
 
 	if (n != len)
 		return -1;
@@ -1133,7 +1164,7 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 
 int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint32_t xid, uint32_t ciaddr,
 	struct dhcpv4_option *client_id, struct dhcpv4_option *relay_agent,
-        const char *agent_circuit_id, const char *agent_remote_id,
+        uint32_t server_id, const char *agent_circuit_id, const char *agent_remote_id,
         const char *link_selection)
 {
 	struct dhcpv4_packet *pack;
@@ -1158,6 +1189,9 @@ int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint3
 	memcpy(pack->hdr->chaddr, chaddr, 6);
 
 	if (dhcpv4_packet_add_opt(pack, 53, &pack->msg_type, 1))
+		goto out_err;
+
+	if (server_id && dhcpv4_packet_add_opt(pack, 54, &server_id, 4))
 		goto out_err;
 
 	if (client_id && dhcpv4_packet_add_opt(pack, 61, client_id->data, client_id->len))
