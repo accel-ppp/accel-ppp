@@ -44,15 +44,14 @@ static int is(const struct in6_addr *addr, const char *str)
 static struct ap_session *session_with(const char **str, int count)
 {
 	struct ap_session *ses = calloc(1, sizeof(*ses));
-	struct ipv6db_item_t *item = calloc(1, sizeof(*item));
+	struct ipv6_dns_t *item = calloc(1, sizeof(*item));
 	int i;
 
 	INIT_LIST_HEAD(&item->addr_list);
 	for (i = 0; i < count; i++) {
-		struct ipv6db_addr_t *a = calloc(1, sizeof(*a));
+		struct ipv6_dns_addr_t *a = calloc(1, sizeof(*a));
 
 		a->addr = a6(str[i]);
-		a->prefix_len = 128;
 		list_add_tail(&a->entry, &item->addr_list);
 	}
 
@@ -65,7 +64,7 @@ static void session_free(struct ap_session *ses)
 {
 	if (ses->ipv6_dns) {
 		while (!list_empty(&ses->ipv6_dns->addr_list)) {
-			struct ipv6db_addr_t *a = list_entry(ses->ipv6_dns->addr_list.next,
+			struct ipv6_dns_addr_t *a = list_entry(ses->ipv6_dns->addr_list.next,
 							     typeof(*a), entry);
 
 			list_del(&a->entry);

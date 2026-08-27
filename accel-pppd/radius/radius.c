@@ -497,7 +497,7 @@ err:
 
 static void free_ipv6_dns(struct radius_pd_t *rpd)
 {
-	struct ipv6db_addr_t *a;
+	struct ipv6_dns_addr_t *a;
 
 	while (!list_empty(&rpd->ipv6_dns.addr_list)) {
 		a = list_entry(rpd->ipv6_dns.addr_list.next, typeof(*a), entry);
@@ -512,6 +512,7 @@ int rad_proc_attrs(struct rad_req_t *req)
 	struct ev_dns_t dns = {};
 	struct rad_attr_t *attr;
 	struct ipv6db_addr_t *a;
+	struct ipv6_dns_addr_t *dns6;
 	int dns6_count = -1;
 	int res = 0;
 	struct radius_pd_t *rpd = req->rpd;
@@ -643,11 +644,9 @@ int rad_proc_attrs(struct rad_req_t *req)
 					dns6_count++;
 					break;
 				}
-				a = _malloc(sizeof(*a));
-				memset(a, 0, sizeof(*a));
-				a->prefix_len = 128;
-				a->addr = attr->val.ipv6addr;
-				list_add_tail(&a->entry, &rpd->ipv6_dns.addr_list);
+				dns6 = _malloc(sizeof(*dns6));
+				dns6->addr = attr->val.ipv6addr;
+				list_add_tail(&dns6->entry, &rpd->ipv6_dns.addr_list);
 				dns6_count++;
 				break;
 			case NAS_Port:

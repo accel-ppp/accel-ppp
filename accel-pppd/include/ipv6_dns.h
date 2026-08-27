@@ -4,8 +4,16 @@
 #include <netinet/in.h>
 
 #include "list.h"
-#include "ipdb.h"
 #include "ap_session.h"
+
+struct ipv6_dns_addr_t {
+	struct list_head entry;
+	struct in6_addr addr;
+};
+
+struct ipv6_dns_t {
+	struct list_head addr_list;
+};
 
 /*
  * Pick the IPv6 DNS servers to advertise to a session.
@@ -22,7 +30,7 @@ static inline int ipv6_dns_get(const struct ap_session *ses,
 			       const struct in6_addr *conf_dns, int conf_dns_count,
 			       struct in6_addr *dns, int max)
 {
-	struct ipv6db_addr_t *a;
+	struct ipv6_dns_addr_t *a;
 	int count = 0;
 
 	if (ses && ses->ipv6_dns) {
