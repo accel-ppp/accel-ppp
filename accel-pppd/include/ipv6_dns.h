@@ -3,17 +3,17 @@
 
 #include <netinet/in.h>
 
-#include "list.h"
 #include "ap_session.h"
 
-struct ipv6_dns_addr_t {
-	struct list_head entry;
-	struct in6_addr addr;
-};
+#define IPV6_DNS_INITIAL_CAPACITY 4
 
 struct ipv6_dns_t {
-	struct list_head addr_list;
+	struct in6_addr *addr;
+	unsigned int count;
+	unsigned int capacity;
 };
+
+int ipv6_dns_reserve(struct ipv6_dns_t *dns, unsigned int count);
 
 /*
  * Pick the IPv6 DNS servers to advertise to a session.
@@ -23,34 +23,20 @@ struct ipv6_dns_t {
  * precedence. Sessions without any fall back to the globally configured ones,
  * which is what every session got before per session servers existed.
  *
- * Up to 'max' addresses are written to 'dns', the number written is returned.
- * Callers advertise nothing when that is 0.
+ * The selected array is returned and its length is written to 'count'.
+ * Callers advertise nothing when the returned count is 0.
  */
-static inline int ipv6_dns_get(const struct ap_session *ses,
-			       const struct in6_addr *conf_dns, int conf_dns_count,
-			       struct in6_addr *dns, int max)
+static inline const struct in6_addr *ipv6_dns_get(const struct ap_session *ses,
+					  const struct in6_addr *conf_dns,
+					  int conf_dns_count, int *count)
 {
-	struct ipv6_dns_addr_t *a;
-	int count = 0;
-
-	if (ses && ses->ipv6_dns) {
-		list_for_each_entry(a, &ses->ipv6_dns->addr_list, entry) {
-			if (count == max)
-				break;
-			dns[count++] = a->addr;
-		}
-
-		/* An empty list means "nothing assigned", not "no DNS at all" */
-		if (count)
-			return count;
+	if (ses && ses->ipv6_dns && ses->ipv6_dns->count) {
+		*count = ses->ipv6_dns->count;
+		return ses->ipv6_dns->addr;
 	}
 
-	while (count < conf_dns_count && count < max) {
-		dns[count] = conf_dns[count];
-		count++;
-	}
-
-	return count;
+	*count = conf_dns_count;
+	return conf_dns;
 }
 
 #endif
