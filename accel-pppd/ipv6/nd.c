@@ -109,6 +109,8 @@ static void ipv6_nd_send_ra(struct ipv6_nd_handler_t *h, struct sockaddr_in6 *ds
 	struct ipv6db_addr_t *a;
 	struct in6_addr addr, peer_addr;
 	struct in6_addr dns[MAX_DNS_COUNT];
+	char str[INET6_ADDRSTRLEN];
+	void *bufend;
 	int i, prefix_len, dns_count;
 
 	if (!buf) {
@@ -132,20 +134,31 @@ static void ipv6_nd_send_ra(struct ipv6_nd_handler_t *h, struct sockaddr_in6 *ds
 	adv->nd_ra_retransmit = htonl(conf_AdvRetransTimer);
 
 	pinfo = (struct nd_opt_prefix_info *)(adv + 1);
+	bufend = (uint8_t *)buf + BUF_SIZE;
 	list_for_each_entry(a, &ses->ipv6->addr_list, entry) {
 		prefix_len = a->prefix_len == 128 ? 64 : a->prefix_len;
-		memset(pinfo, 0, sizeof(*pinfo));
-		pinfo->nd_opt_pi_type = ND_OPT_PREFIX_INFORMATION;
-		pinfo->nd_opt_pi_len = 4;
-		pinfo->nd_opt_pi_prefix_len = prefix_len;
-		pinfo->nd_opt_pi_flags_reserved =
-			((a->flag_onlink || conf_AdvPrefixOnLinkFlag) ? ND_OPT_PI_FLAG_ONLINK : 0) |
-			((a->flag_auto || (conf_AdvPrefixAutonomousFlag && prefix_len == 64)) ? ND_OPT_PI_FLAG_AUTO : 0);
-		pinfo->nd_opt_pi_valid_time = htonl(conf_AdvPrefixValidLifetime);
-		pinfo->nd_opt_pi_preferred_time = htonl(conf_AdvPrefixPreferredLifetime);
-		memcpy(&pinfo->nd_opt_pi_prefix, &a->addr, (prefix_len + 7) / 8);
-		pinfo->nd_opt_pi_prefix.s6_addr[prefix_len / 8] &= ~(0xff >> (prefix_len % 8));
-		pinfo++;
+
+		/* Addresses are installed even when the advertisement is
+		   already full, only their prefix information is dropped */
+		if ((void *)(pinfo + 1) > bufend) {
+			log_ppp_warn("ipv6_nd: prefix %s/%i does not fit into the"
+				     " router advertisement, not advertising it\n",
+				     inet_ntop(AF_INET6, &a->addr, str, sizeof(str)),
+				     prefix_len);
+		} else {
+			memset(pinfo, 0, sizeof(*pinfo));
+			pinfo->nd_opt_pi_type = ND_OPT_PREFIX_INFORMATION;
+			pinfo->nd_opt_pi_len = 4;
+			pinfo->nd_opt_pi_prefix_len = prefix_len;
+			pinfo->nd_opt_pi_flags_reserved =
+				((a->flag_onlink || conf_AdvPrefixOnLinkFlag) ? ND_OPT_PI_FLAG_ONLINK : 0) |
+				((a->flag_auto || (conf_AdvPrefixAutonomousFlag && prefix_len == 64)) ? ND_OPT_PI_FLAG_AUTO : 0);
+			pinfo->nd_opt_pi_valid_time = htonl(conf_AdvPrefixValidLifetime);
+			pinfo->nd_opt_pi_preferred_time = htonl(conf_AdvPrefixPreferredLifetime);
+			memcpy(&pinfo->nd_opt_pi_prefix, &a->addr, (prefix_len + 7) / 8);
+			pinfo->nd_opt_pi_prefix.s6_addr[prefix_len / 8] &= ~(0xff >> (prefix_len % 8));
+			pinfo++;
+		}
 
 		if (!a->installed) {
 			if (a->prefix_len == 128) {
