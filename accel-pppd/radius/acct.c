@@ -14,14 +14,11 @@
 #include "backup.h"
 #include "ap_session_backup.h"
 #include "iputils.h"
+#include "utils.h"
 
 #include "radius_p.h"
 
 #include "memdebug.h"
-
-#ifndef max
-#define max(x,y) ((x) > (y) ? (x) : (y))
-#endif
 
 #define INTERIM_SAFE_TIME 10
 

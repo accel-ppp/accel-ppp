@@ -50,10 +50,6 @@
 #include "sstp_prot.h"
 #include "if_ppposeq.h"
 
-#ifndef max
-#define max(x,y) ((x) > (y) ? (x) : (y))
-#endif
-
 #define PPP_BUF_SIZE	8192
 #define PPP_BUF_IOVEC	256
 #define PPP_F_ESCAPE	1

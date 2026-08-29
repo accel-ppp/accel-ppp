@@ -24,14 +24,11 @@
 #include "ipdb.h"
 #include "radius.h"
 #include "dhcp_attr_defs.h"
+#include "utils.h"
 
 #include "dhcpv4.h"
 
 #define BUF_SIZE 4096
-
-#ifndef max
-#define max(x,y) ((x) > (y) ? (x) : (y))
-#endif
 
 struct dhcpv4_relay_ctx {
 	struct list_head entry;
