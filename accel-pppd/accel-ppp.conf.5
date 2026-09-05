@@ -673,14 +673,16 @@ Specifies primary NBNS to be sent to peer.
 Specifies secondary NBNS to be sent to peer.
 .SH [ipv6-dns]
 These options apply to sessions which were not assigned DNS servers of their
-own. A RADIUS server may assign per session ones by returning up to 3
+own. A RADIUS server may assign per session ones by returning
 DNS-Server-IPv6-Address attributes (RFC 6911) in the Access-Accept; those
 replace, rather than extend, the servers configured here, for that session
 only. Both the ipv6_nd module (RDNSS option of the router advertisements) and
 the ipv6_dhcp module (DNS_SERVERS option) honour them.
 .TP
 .BI "dns=" IPv6_address
-Specifies IPv6 DNS to be sent to peer. You may specify up to 3 dns options.
+Specifies IPv6 DNS to be sent to peer. You may specify multiple dns options.
+Servers which do not fit into a router advertisement or a DHCPv6 reply are
+dropped from it and a warning is logged.
 .TP
 .BI "dnssl=" name
 Specify DNS Search List. You may specify multiple dns and dnssl options.

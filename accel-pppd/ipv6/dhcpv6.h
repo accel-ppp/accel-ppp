@@ -195,6 +195,7 @@ void dhcpv6_packet_free(struct dhcpv6_packet *pkt);
 void dhcpv6_packet_print(struct dhcpv6_packet *pkt, void (*print)(const char *fmt, ...));
 struct dhcpv6_packet *dhcpv6_packet_alloc_reply(struct dhcpv6_packet *req, int type);
 struct dhcpv6_option *dhcpv6_option_alloc(struct dhcpv6_packet *pkt, int code, int len);
+size_t dhcpv6_option_space(const struct dhcpv6_packet *pkt);
 struct dhcpv6_option *dhcpv6_nested_option_alloc(struct dhcpv6_packet *pkt, struct dhcpv6_option *opt, int code, int len);
 void dhcpv6_fill_relay_info(struct dhcpv6_packet *pkt);
 

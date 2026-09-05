@@ -75,7 +75,8 @@ jobs:
           gcc -O2 -Wall -D_GNU_SOURCE -DAP_SESSIONID_LEN=16 \
               -fsanitize=${{ matrix.sanitizer }} -fno-sanitize-recover=all \
               -I accel-pppd/include -I accel-pppd/triton -I build \
-              -o /tmp/ipv6_dns_test accel-pppd/ipv6/ipv6_dns_test.c
+              -o /tmp/ipv6_dns_test \
+              accel-pppd/ipv6/ipv6_dns_test.c accel-pppd/ipv6_dns.c
           /tmp/ipv6_dns_test
           gcc -O2 -Wall -o /tmp/bitpool_test accel-pppd/extra/bitpool_test.c
           /tmp/bitpool_test

@@ -22,13 +22,10 @@
 
 #include "memdebug.h"
 
-#define MAX_DNS_COUNT 3
-
 static int conf_init_ra = 5;
 static int conf_init_ra_interval = 3;
 static int conf_rdnss_lifetime;
-static struct in6_addr conf_dns[MAX_DNS_COUNT];
-static int conf_dns_count;
+static struct ipv6_dns_t conf_dns;
 static uint8_t *conf_dnssl;
 static int conf_dnssl_size;
 
@@ -107,9 +104,12 @@ static void ipv6_nd_send_ra(struct ipv6_nd_handler_t *h, struct sockaddr_in6 *ds
 	struct nd_opt_dnssl_info_local *dnsslinfo;
 	//struct nd_opt_mtu *mtu;
 	struct ipv6db_addr_t *a;
+	const struct in6_addr *dns;
 	struct in6_addr addr, peer_addr;
-	struct in6_addr dns[MAX_DNS_COUNT];
+	char str[INET6_ADDRSTRLEN];
+	void *bufend;
 	int i, prefix_len, dns_count;
+	size_t avail, dnssl_size, max_dns;
 
 	if (!buf) {
 		log_emerg("out of memory\n");
@@ -132,20 +132,31 @@ static void ipv6_nd_send_ra(struct ipv6_nd_handler_t *h, struct sockaddr_in6 *ds
 	adv->nd_ra_retransmit = htonl(conf_AdvRetransTimer);
 
 	pinfo = (struct nd_opt_prefix_info *)(adv + 1);
+	bufend = (uint8_t *)buf + BUF_SIZE;
 	list_for_each_entry(a, &ses->ipv6->addr_list, entry) {
 		prefix_len = a->prefix_len == 128 ? 64 : a->prefix_len;
-		memset(pinfo, 0, sizeof(*pinfo));
-		pinfo->nd_opt_pi_type = ND_OPT_PREFIX_INFORMATION;
-		pinfo->nd_opt_pi_len = 4;
-		pinfo->nd_opt_pi_prefix_len = prefix_len;
-		pinfo->nd_opt_pi_flags_reserved =
-			((a->flag_onlink || conf_AdvPrefixOnLinkFlag) ? ND_OPT_PI_FLAG_ONLINK : 0) |
-			((a->flag_auto || (conf_AdvPrefixAutonomousFlag && prefix_len == 64)) ? ND_OPT_PI_FLAG_AUTO : 0);
-		pinfo->nd_opt_pi_valid_time = htonl(conf_AdvPrefixValidLifetime);
-		pinfo->nd_opt_pi_preferred_time = htonl(conf_AdvPrefixPreferredLifetime);
-		memcpy(&pinfo->nd_opt_pi_prefix, &a->addr, (prefix_len + 7) / 8);
-		pinfo->nd_opt_pi_prefix.s6_addr[prefix_len / 8] &= ~(0xff >> (prefix_len % 8));
-		pinfo++;
+
+		/* Addresses are installed even when the advertisement is
+		   already full, only their prefix information is dropped */
+		if ((void *)(pinfo + 1) > bufend) {
+			log_ppp_warn("ipv6_nd: prefix %s/%i does not fit into the"
+				     " router advertisement, not advertising it\n",
+				     inet_ntop(AF_INET6, &a->addr, str, sizeof(str)),
+				     prefix_len);
+		} else {
+			memset(pinfo, 0, sizeof(*pinfo));
+			pinfo->nd_opt_pi_type = ND_OPT_PREFIX_INFORMATION;
+			pinfo->nd_opt_pi_len = 4;
+			pinfo->nd_opt_pi_prefix_len = prefix_len;
+			pinfo->nd_opt_pi_flags_reserved =
+				((a->flag_onlink || conf_AdvPrefixOnLinkFlag) ? ND_OPT_PI_FLAG_ONLINK : 0) |
+				((a->flag_auto || (conf_AdvPrefixAutonomousFlag && prefix_len == 64)) ? ND_OPT_PI_FLAG_AUTO : 0);
+			pinfo->nd_opt_pi_valid_time = htonl(conf_AdvPrefixValidLifetime);
+			pinfo->nd_opt_pi_preferred_time = htonl(conf_AdvPrefixPreferredLifetime);
+			memcpy(&pinfo->nd_opt_pi_prefix, &a->addr, (prefix_len + 7) / 8);
+			pinfo->nd_opt_pi_prefix.s6_addr[prefix_len / 8] &= ~(0xff >> (prefix_len % 8));
+			pinfo++;
+		}
 
 		if (!a->installed) {
 			if (a->prefix_len == 128) {
@@ -176,7 +187,31 @@ static void ipv6_nd_send_ra(struct ipv6_nd_handler_t *h, struct sockaddr_in6 *ds
 		rinfo++;
 	}*/
 
-	dns_count = ipv6_dns_get(ses, conf_dns, conf_dns_count, dns, MAX_DNS_COUNT);
+	dns = ipv6_dns_get(ses, conf_dns.addr, conf_dns.count, &dns_count);
+
+	/* Room left behind the prefix information options, shared by the RDNSS
+	   and DNSSL options which follow. The search list is sized by the
+	   configuration alone, so give it its share first */
+	avail = (uint8_t *)bufend - (uint8_t *)pinfo;
+	dnssl_size = conf_dnssl ? (1 + (conf_dnssl_size - 1) / 8 + 1) * 8 : 0;
+	if (dnssl_size > avail) {
+		log_ppp_warn("ipv6_nd: DNS search list does not fit into the router"
+			     " advertisement, not advertising it\n");
+		dnssl_size = 0;
+	}
+	avail -= dnssl_size;
+
+	/* nd_opt_rdnssi_len counts 8 byte units in a single octet, so an
+	   advertisement carries at most 127 addresses however large it is */
+	max_dns = avail > sizeof(*rdnssinfo) ? (avail - sizeof(*rdnssinfo)) / sizeof(*dns) : 0;
+	if (max_dns > 127)
+		max_dns = 127;
+	if ((size_t)dns_count > max_dns) {
+		log_ppp_warn("ipv6_nd: advertising %zu of %i DNS servers, the rest"
+			     " does not fit into the router advertisement\n",
+			     max_dns, dns_count);
+		dns_count = (int)max_dns;
+	}
 
 	if (dns_count) {
 		rdnssinfo = (struct nd_opt_rdnss_info_local *)pinfo;
@@ -186,13 +221,13 @@ static void ipv6_nd_send_ra(struct ipv6_nd_handler_t *h, struct sockaddr_in6 *ds
 		rdnssinfo->nd_opt_rdnssi_lifetime = htonl(conf_rdnss_lifetime);
 		rdnss_addr = (struct in6_addr *)rdnssinfo->nd_opt_rdnssi;
 		for (i = 0; i < dns_count; i++) {
-			memcpy(rdnss_addr, &dns[i], sizeof(*rdnss_addr));
+			memcpy(rdnss_addr, dns + i, sizeof(*rdnss_addr));
 			rdnss_addr++;
 		}
 	} else
 		rdnss_addr = (struct in6_addr *)pinfo;
 
-	if (conf_dnssl) {
+	if (dnssl_size) {
 		dnsslinfo = (struct nd_opt_dnssl_info_local *)rdnss_addr;
 		memset(dnsslinfo, 0, sizeof(*dnsslinfo));
 		dnsslinfo->nd_opt_dnssli_type = ND_OPT_DNSSL_INFORMATION;
@@ -471,7 +506,7 @@ static void load_dns(void)
 	if (!s)
 		return;
 
-	conf_dns_count = 0;
+	conf_dns.count = 0;
 
 	if (conf_dnssl)
 		_free(conf_dnssl);
@@ -491,14 +526,17 @@ static void load_dns(void)
 		}
 
 		if (!strcmp(opt->name, "dns") || !opt->val) {
-			if (conf_dns_count == MAX_DNS_COUNT)
-				continue;
+			if (ipv6_dns_reserve(&conf_dns, conf_dns.count + 1)) {
+				log_emerg("ipv6_nd: out of memory allocating IPv6 DNS servers\n");
+				break;
+			}
 
-			if (inet_pton(AF_INET6, opt->val ? opt->val : opt->name, &conf_dns[conf_dns_count]) == 0) {
+			if (inet_pton(AF_INET6, opt->val ? opt->val : opt->name,
+				      &conf_dns.addr[conf_dns.count]) == 0) {
 				log_error("dnsv6: failed to parse '%s'\n", opt->name);
 				continue;
 			}
-			conf_dns_count++;
+			conf_dns.count++;
 		}
 	}
 }

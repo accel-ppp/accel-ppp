@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 #include <arpa/inet.h>
 
@@ -204,11 +205,31 @@ error:
 	return NULL;
 }
 
+static size_t dhcpv6_packet_tailroom(const struct dhcpv6_packet *pkt)
+{
+	/* The message, preceded by the relay headers when there are any, lives
+	   in the BUF_SIZE bytes allocated right behind the packet. Note that
+	   pkt->hdr is not the start of that buffer once relays are involved */
+	ptrdiff_t room = (uint8_t *)(pkt + 1) + BUF_SIZE - (uint8_t *)pkt->endptr;
+
+	return room > 0 ? (size_t)room : 0;
+}
+
+size_t dhcpv6_option_space(const struct dhcpv6_packet *pkt)
+{
+	size_t room = dhcpv6_packet_tailroom(pkt);
+
+	if (room <= sizeof(struct dhcpv6_opt_hdr))
+		return 0;
+
+	return room - sizeof(struct dhcpv6_opt_hdr);
+}
+
 struct dhcpv6_option *dhcpv6_option_alloc(struct dhcpv6_packet *pkt, int code, int len)
 {
 	struct dhcpv6_option *opt;
 
-	if ((void *)pkt->hdr->data + BUF_SIZE - pkt->endptr < sizeof(struct dhcpv6_opt_hdr) + len)
+	if (len < 0 || dhcpv6_packet_tailroom(pkt) < sizeof(struct dhcpv6_opt_hdr) + (size_t)len)
 		return NULL;
 
 	opt = _malloc(sizeof(*opt));
@@ -235,7 +256,7 @@ struct dhcpv6_option *dhcpv6_nested_option_alloc(struct dhcpv6_packet *pkt, stru
 {
 	struct dhcpv6_option *opt;
 
-	if ((void *)pkt->hdr->data + BUF_SIZE - pkt->endptr < sizeof(struct dhcpv6_opt_hdr) + len)
+	if (len < 0 || dhcpv6_packet_tailroom(pkt) < sizeof(struct dhcpv6_opt_hdr) + (size_t)len)
 		return NULL;
 
 	opt = _malloc(sizeof(*opt));

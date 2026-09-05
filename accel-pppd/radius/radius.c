@@ -488,36 +488,29 @@ err:
 	return -1;
 }
 
-/*
- * Number of IPv6 DNS servers kept per session. Matches the number of dns=
- * options the ipv6_nd and ipv6_dhcp modules accept in [ipv6-dns], and keeps
- * the RDNSS option of a router advertisement to a sane size.
- */
-#define MAX_DNS6_COUNT 3
-
-static void free_ipv6_dns(struct radius_pd_t *rpd)
-{
-	struct ipv6db_addr_t *a;
-
-	while (!list_empty(&rpd->ipv6_dns.addr_list)) {
-		a = list_entry(rpd->ipv6_dns.addr_list.next, typeof(*a), entry);
-		list_del(&a->entry);
-		_free(a);
-	}
-}
-
 int rad_proc_attrs(struct rad_req_t *req)
 {
 	struct ev_wins_t wins = {};
 	struct ev_dns_t dns = {};
 	struct rad_attr_t *attr;
 	struct ipv6db_addr_t *a;
-	int dns6_count = -1;
+	unsigned int dns6_count = 0;
+	unsigned int dns6_index = 0;
 	int res = 0;
 	struct radius_pd_t *rpd = req->rpd;
 
 	req->rpd->acct_interim_interval = conf_acct_interim_interval;
 	req->rpd->acct_interim_jitter = conf_acct_interim_jitter;
+
+	list_for_each_entry(attr, &req->reply->attrs, entry) {
+		if (!attr->vendor && attr->attr->id == DNS_Server_IPv6_Address)
+			dns6_count++;
+	}
+
+	if (dns6_count && ipv6_dns_reserve(&rpd->ipv6_dns, dns6_count)) {
+		log_emerg("radius: out of memory allocating IPv6 DNS servers\n");
+		return -1;
+	}
 
 	list_for_each_entry(attr, &req->reply->attrs, entry) {
 		if (attr->vendor) {
@@ -622,26 +615,7 @@ int rad_proc_attrs(struct rad_req_t *req)
 				list_add_tail(&a->entry, &rpd->ipv6_dp.prefix_list);
 				break;
 			case DNS_Server_IPv6_Address:
-				if (dns6_count < 0) {
-					/* This reply carries a DNS server list of
-					   its own, it replaces whatever a previous
-					   one assigned */
-					free_ipv6_dns(rpd);
-					dns6_count = 0;
-				}
-				if (dns6_count >= MAX_DNS6_COUNT) {
-					if (dns6_count == MAX_DNS6_COUNT)
-						log_ppp_warn("radius: ignoring DNS-Server-IPv6-Address"
-							     " beyond the first %i\n", MAX_DNS6_COUNT);
-					dns6_count++;
-					break;
-				}
-				a = _malloc(sizeof(*a));
-				memset(a, 0, sizeof(*a));
-				a->prefix_len = 128;
-				a->addr = attr->val.ipv6addr;
-				list_add_tail(&a->entry, &rpd->ipv6_dns.addr_list);
-				dns6_count++;
+				rpd->ipv6_dns.addr[dns6_index++] = attr->val.ipv6addr;
 				break;
 			case NAS_Port:
 				rpd->ses->unit_idx = attr->val.integer;
@@ -678,7 +652,9 @@ int rad_proc_attrs(struct rad_req_t *req)
 
 	/* Like the IPv4 DNS servers, absent attributes leave whatever a
 	   previous reply assigned in place */
-	if (!list_empty(&rpd->ipv6_dns.addr_list))
+	if (dns6_count)
+		rpd->ipv6_dns.count = dns6_count;
+	if (rpd->ipv6_dns.count)
 		rpd->ses->ipv6_dns = &rpd->ipv6_dns;
 
 	return res;
@@ -845,7 +821,6 @@ static void ses_starting(struct ap_session *ses)
 	INIT_LIST_HEAD(&rpd->plugin_list);
 	INIT_LIST_HEAD(&rpd->ipv6_addr.addr_list);
 	INIT_LIST_HEAD(&rpd->ipv6_dp.prefix_list);
-	INIT_LIST_HEAD(&rpd->ipv6_dns.addr_list);
 
 	rpd->ipv4_addr.owner = &ipdb;
 	rpd->ipv6_addr.owner = &ipdb;
@@ -1029,7 +1004,10 @@ static void ses_finished(struct ap_session *ses)
 	}
 
 	ses->ipv6_dns = NULL;
-	free_ipv6_dns(rpd);
+	_free(rpd->ipv6_dns.addr);
+	rpd->ipv6_dns.addr = NULL;
+	rpd->ipv6_dns.count = 0;
+	rpd->ipv6_dns.capacity = 0;
 
 	fr6 = rpd->fr6;
 	while (fr6) {

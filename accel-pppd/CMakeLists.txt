@@ -90,6 +90,7 @@ int main(void)
 
 ADD_EXECUTABLE(accel-pppd
 	memdebug.c
+	ipv6_dns.c
 	session.c
 	session_backup.c
 	ifcfg.c
@@ -165,4 +166,3 @@ IF (NOT DEFINED CPACK_TYPE)
 	INSTALL(DIRECTORY DESTINATION "${CMAKE_INSTALL_LOCALSTATEDIR}/log/accel-ppp")
 	INSTALL(DIRECTORY DESTINATION "${CMAKE_INSTALL_LOCALSTATEDIR}/lib/accel-ppp")
 ENDIF (NOT DEFINED CPACK_TYPE)
-

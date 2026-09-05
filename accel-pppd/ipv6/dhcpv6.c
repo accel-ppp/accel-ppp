@@ -29,7 +29,6 @@
 #include "memdebug.h"
 
 #define BUF_SIZE 65536
-#define MAX_DNS_COUNT 3
 
 static struct {
 	struct dhcpv6_opt_serverid hdr;
@@ -45,8 +44,7 @@ static uint8_t *conf_aftr_gw;
 static int conf_aftr_gw_size;
 
 
-static struct in6_addr conf_dns[MAX_DNS_COUNT];
-static int conf_dns_count;
+static struct ipv6_dns_t conf_dns;
 static uint8_t *conf_dnssl;
 static int conf_dnssl_size;
 
@@ -221,29 +219,39 @@ static void insert_status(struct dhcpv6_packet *pkt, struct dhcpv6_option *opt, 
 static void insert_oro(struct dhcpv6_packet *reply, struct dhcpv6_option *opt)
 {
 	struct dhcpv6_option *opt1;
-	int i, j, dns_count;
+	int i, dns_count;
 	uint16_t *ptr;
-	struct in6_addr addr, *addr_ptr;
-	struct in6_addr dns[MAX_DNS_COUNT];
+	const struct in6_addr *dns;
+	size_t max_dns_count;
 
 	for (i = ntohs(opt->hdr->len) / 2, ptr = (uint16_t *)opt->hdr->data; i; i--, ptr++) {
 		if (ntohs(*ptr) == D6_OPTION_DNS_SERVERS) {
-			dns_count = ipv6_dns_get(reply->ses, conf_dns, conf_dns_count,
-						 dns, MAX_DNS_COUNT);
+			dns = ipv6_dns_get(reply->ses, conf_dns.addr, conf_dns.count,
+					   &dns_count);
+			max_dns_count = dhcpv6_option_space(reply) / sizeof(*dns);
+			if ((size_t)dns_count > max_dns_count) {
+				log_ppp_warn("dhcpv6: sending %zu of %i DNS servers,"
+					     " the rest does not fit into the reply\n",
+					     max_dns_count, dns_count);
+				dns_count = (int)max_dns_count;
+			}
 			if (dns_count) {
-				opt1 = dhcpv6_option_alloc(reply, D6_OPTION_DNS_SERVERS, dns_count * sizeof(addr));
-				for (j = 0, addr_ptr = (struct in6_addr *)opt1->hdr->data; j < dns_count; j++, addr_ptr++)
-					memcpy(addr_ptr, dns + j, sizeof(addr));
+				opt1 = dhcpv6_option_alloc(reply, D6_OPTION_DNS_SERVERS,
+							   dns_count * sizeof(*dns));
+				if (opt1)
+					memcpy(opt1->hdr->data, dns, dns_count * sizeof(*dns));
 			}
 		} else if (ntohs(*ptr) == D6_OPTION_DOMAIN_LIST) {
 			if (conf_dnssl_size) {
 				opt1 = dhcpv6_option_alloc(reply, D6_OPTION_DOMAIN_LIST, conf_dnssl_size);
-				memcpy(opt1->hdr->data, conf_dnssl, conf_dnssl_size);
+				if (opt1)
+					memcpy(opt1->hdr->data, conf_dnssl, conf_dnssl_size);
 			}
 		} else if (ntohs(*ptr) == D6_OPTION_AFTR_NAME) {
 			if (conf_aftr_gw_size) {
 				opt1 = dhcpv6_option_alloc(reply, D6_OPTION_AFTR_NAME, conf_aftr_gw_size);
-				memcpy(opt1->hdr->data, conf_aftr_gw, conf_aftr_gw_size);
+				if (opt1)
+					memcpy(opt1->hdr->data, conf_aftr_gw, conf_aftr_gw_size);
 			}
 		}
 	}
@@ -978,7 +986,7 @@ static void load_dns(void)
 	if (!s)
 		return;
 
-	conf_dns_count = 0;
+	conf_dns.count = 0;
 
 	if (conf_dnssl)
 		_free(conf_dnssl);
@@ -992,14 +1000,17 @@ static void load_dns(void)
 		}
 
 		if (!strcmp(opt->name, "dns") || !opt->val) {
-			if (conf_dns_count == MAX_DNS_COUNT)
-				continue;
+			if (ipv6_dns_reserve(&conf_dns, conf_dns.count + 1)) {
+				log_emerg("dhcpv6: out of memory allocating IPv6 DNS servers\n");
+				break;
+			}
 
-			if (inet_pton(AF_INET6, opt->val ? opt->val : opt->name, &conf_dns[conf_dns_count]) == 0) {
+			if (inet_pton(AF_INET6, opt->val ? opt->val : opt->name,
+				      &conf_dns.addr[conf_dns.count]) == 0) {
 				log_error("dnsv6: failed to parse '%s'\n", opt->name);
 				continue;
 			}
-			conf_dns_count++;
+			conf_dns.count++;
 		}
 	}
 }
