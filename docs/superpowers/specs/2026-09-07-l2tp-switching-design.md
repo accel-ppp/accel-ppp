@@ -76,7 +76,7 @@ New `[l2tp-switch]` section, sibling to `[l2tp]`:
 
 ```
 [l2tp-switch]
-match-attr=Calling-Number
+attr=Calling-Number
 target=simon-vm,203.0.113.50,1701,<secret>
 line=472913,simon-vm
 target=acme-router,198.51.100.9,1701,<secret2>
@@ -84,7 +84,7 @@ line=550021,acme-router
 line=550022,acme-router
 ```
 
-- `match-attr=<name>` — the L2TP AVP used to identify a line, by its exact
+- `attr=<name>` — the L2TP AVP used to identify a line, by its exact
   name in accel-ppp's own AVP dictionary (`dict/dictionary.rfc2661`, resolved
   via the existing `l2tp_dict_find_attr_by_name()`). Any string-typed AVP
   already known to the dictionary is valid — `Calling-Number`,
@@ -93,7 +93,7 @@ line=550022,acme-router
   Default: `Calling-Number`. Which AVP MK actually populates stably and
   uniquely per line needs an empirical check (see §9) before onboarding the
   first real customer — the config shape does not change based on the
-  answer, only the value of `match-attr`.
+  answer, only the value of `attr`.
 - `target=<name>,<peer-addr>,<peer-port>,<secret>` — one downstream LNS.
   One persistent outbound tunnel per target (see below).
 - `line=<value>,<target-name>` — maps one raw AVP value to exactly one
@@ -132,7 +132,7 @@ rare one (add/change a downstream LNS's connection details) is not.
 
 1. **ICRQ from MK** — `l2tp_recv_ICRQ` runs unchanged through AVP parsing
    (Calling-Number/Called-Number are already captured here today). New: look
-   up the configured `match-attr`'s value against the switch table. On a
+   up the configured `attr`'s value against the switch table. On a
    match, set `sess->switch_target` on the newly allocated session. ICRP is
    sent as normal — MK sees no difference at this stage.
 2. **ICCN from MK** — `l2tp_recv_ICCN`'s AVP walk currently has explicit
@@ -204,14 +204,14 @@ spot given this deployment's reliance on `accel_exporter` scraping
 
 ## 9. Open question: which AVP is actually stable
 
-`match-attr` defaults to `Calling-Number`, the AVP conventionally used for
+`attr` defaults to `Calling-Number`, the AVP conventionally used for
 this exact purpose (line/circuit identity) in wholesale DSL/FTTH L2TP
 handoffs. This needs verifying against what MK actually sends for one of the
 lines being switched — accel-ppp already logs every incoming call's
 Calling-Number at `log_info1` (`l2tp_recv_ICRQ`, "new session ... with
 calling num %s..."), so this is a log-grep on the LNS host, not new
 instrumentation. If Called-Number (or another dictionary AVP) turns out to
-be the stable per-line identifier instead, only the `match-attr` config
+be the stable per-line identifier instead, only the `attr` config
 value changes — no code or schema change required. This check should happen
 before or during early implementation, not block writing the code.
 
