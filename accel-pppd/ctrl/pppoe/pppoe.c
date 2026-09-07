@@ -1156,6 +1156,7 @@ static void pppoe_recv_PADR(struct pppoe_serv_t *serv, uint8_t *pack, int size)
 	struct pppoe_tag *service_name_tag = NULL;
 	struct pppoe_tag *tr101_tag = NULL;
 	int n, service_match = 0;
+	int service_name_count = 0;
 	struct pppoe_conn_t *conn;
 	int vendor_id;
 	uint16_t ppp_max_payload = 0;
@@ -1204,6 +1205,7 @@ static void pppoe_recv_PADR(struct pppoe_serv_t *serv, uint8_t *pack, int size)
 				goto padr_tags_done;
 			case TAG_SERVICE_NAME:
 				service_name_tag = tag;
+				service_name_count++;
 				if (tag->tag_len == 0)
 					service_match = 1;
 				else if (conf_service_name[0]) {
@@ -1251,9 +1253,9 @@ padr_tags_done:
 		return;
 	}
 
-	if (!service_name_tag) {
+	if (service_name_count != 1) {
 		if (conf_verbose)
-			log_warn("pppoe: discard PADR packet (no Service-Name tag present)\n");
+			log_warn("pppoe: discard PADR packet (expected exactly one Service-Name tag)\n");
 		return;
 	}
 

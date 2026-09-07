@@ -162,6 +162,8 @@ void __export mempool_free(void *ptr)
 	it->magic1 = 0;
 #endif
 
+	memset(it->ptr, 0, p->size);
+
 	spin_lock(&p->lock);
 #ifdef MEMDEBUG
 	list_del(&it->entry);
