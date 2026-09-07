@@ -96,11 +96,18 @@ line=550022,acme-router
   answer, only the value of `match-attr`.
 - `target=<name>,<peer-addr>,<peer-port>,<secret>` — one downstream LNS.
   One persistent outbound tunnel per target (see below).
-- `line=<value>,<target-name>` — maps one raw AVP value to a target.
-  Repeatable; multiple lines can point at the same target (one customer,
-  several lines) or different targets (several customers). Follows the same
-  repeated-key style as `[ip-pool]`/`[ipv6-pool]` ranges elsewhere in
-  accel-ppp.conf.
+- `line=<value>,<target-name>` — maps one raw AVP value to exactly one
+  target; a value must not appear in more than one `line=` entry (fatal
+  config-load error if it does — see §11). This is a many-to-one mapping
+  across the whole table, not one-to-many per line: several different
+  `line=` entries (several different values) can each point at the same
+  target (one customer, several lines, all going to that customer's one
+  LNS), and other entries point at other targets (other customers) — but a
+  single value/line is only ever switched to one target, because a single
+  subscriber's PPP session is placed into exactly one outbound call toward
+  exactly one downstream LNS; there's no notion of one session terminating
+  at two LNS's at once. Repeatable key, following the same style as
+  `[ip-pool]`/`[ipv6-pool]` ranges elsewhere in accel-ppp.conf.
 
 This mirrors two existing precedents in accel-ppp rather than inventing new
 conventions: `ipoe`'s `calling-sid=mac|ip` (a config knob that selects which
