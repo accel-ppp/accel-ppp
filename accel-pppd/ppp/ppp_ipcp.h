@@ -92,12 +92,15 @@ struct ppp_ipcp_t
 	struct list_head ropt_list; // last received ConfReq
 	int ropt_len;
 
+	void *delay_ack_buf; // ConfAck withheld until CCP finishes
+
 	int conf_req_len;
 	unsigned int starting:1;
 	unsigned int started:1;
 	unsigned int delay_ack:1;
 };
 
+void ipcp_ccp_started(struct ppp_t *ppp);
 int ipcp_option_register(struct ipcp_option_handler_t *h);
 struct ipcp_option_t *ipcp_find_option(struct ppp_t *ppp, struct ipcp_option_handler_t *h);
 

@@ -173,6 +173,9 @@ void ipv6cp_layer_free(struct ppp_layer_data_t *ld)
 	if (ipv6cp->timeout.tpd)
 		triton_timer_del(&ipv6cp->timeout);
 
+	if (ipv6cp->delay_ack_buf)
+		_free(ipv6cp->delay_ack_buf);
+
 	_free(ipv6cp);
 }
 
@@ -296,7 +299,11 @@ static void send_conf_ack(struct ppp_fsm_t *fsm)
 	struct ipv6cp_hdr_t *hdr = (struct ipv6cp_hdr_t*)ipv6cp->ppp->buf;
 
 	if (ipv6cp->delay_ack) {
-		send_term_ack(fsm);
+		/* CCP is still negotiating, withhold the ack until it settles */
+		if (ipv6cp->delay_ack_buf)
+			_free(ipv6cp->delay_ack_buf);
+		ipv6cp->delay_ack_buf = _malloc(ntohs(hdr->len) + 2);
+		memcpy(ipv6cp->delay_ack_buf, hdr, ntohs(hdr->len) + 2);
 		return;
 	}
 
@@ -819,6 +826,40 @@ int ipv6cp_option_register(struct ipv6cp_option_handler_t *h)
 	list_add_tail(&h->entry, &option_handlers);
 
 	return 0;
+}
+
+void ipv6cp_ccp_started(struct ppp_t *ppp)
+{
+	struct ppp_layer_data_t *ld = ppp_find_layer_data(ppp, &ipv6cp_layer);
+	struct ppp_ipv6cp_t *ipv6cp;
+	struct ipv6cp_hdr_t *hdr;
+
+	if (!ld)
+		return;
+
+	ipv6cp = container_of(ld, typeof(*ipv6cp), ld);
+
+	if (!ipv6cp->delay_ack)
+		return;
+
+	ipv6cp->delay_ack = 0;
+
+	if (ipv6cp->fsm.fsm_state == FSM_Opened)
+		__ipv6cp_layer_up(ipv6cp);
+
+	if (!ipv6cp->delay_ack_buf)
+		return;
+
+	hdr = (struct ipv6cp_hdr_t *)ipv6cp->delay_ack_buf;
+	hdr->code = CONFACK;
+
+	if (conf_ppp_verbose)
+		log_ppp_info2("send [IPV6CP ConfAck id=%x]\n", hdr->id);
+
+	ppp_unit_send(ipv6cp->ppp, hdr, ntohs(hdr->len) + 2);
+
+	_free(ipv6cp->delay_ack_buf);
+	ipv6cp->delay_ack_buf = NULL;
 }
 
 struct ipv6cp_option_t *ipv6cp_find_option(struct ppp_t *ppp, struct ipv6cp_option_handler_t *h)

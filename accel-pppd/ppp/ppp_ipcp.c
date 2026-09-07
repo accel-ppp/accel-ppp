@@ -173,6 +173,9 @@ void ipcp_layer_free(struct ppp_layer_data_t *ld)
 	if (ipcp->timeout.tpd)
 		triton_timer_del(&ipcp->timeout);
 
+	if (ipcp->delay_ack_buf)
+		_free(ipcp->delay_ack_buf);
+
 	_free(ipcp);
 }
 
@@ -292,7 +295,11 @@ static void send_conf_ack(struct ppp_fsm_t *fsm)
 	struct ipcp_hdr_t *hdr = (struct ipcp_hdr_t*)ipcp->ppp->buf;
 
 	if (ipcp->delay_ack) {
-		send_term_ack(fsm);
+		/* CCP is still negotiating, withhold the ack until it settles */
+		if (ipcp->delay_ack_buf)
+			_free(ipcp->delay_ack_buf);
+		ipcp->delay_ack_buf = _malloc(ntohs(hdr->len) + 2);
+		memcpy(ipcp->delay_ack_buf, hdr, ntohs(hdr->len) + 2);
 		return;
 	}
 
@@ -810,6 +817,40 @@ int ipcp_option_register(struct ipcp_option_handler_t *h)
 	list_add_tail(&h->entry, &option_handlers);
 
 	return 0;
+}
+
+void ipcp_ccp_started(struct ppp_t *ppp)
+{
+	struct ppp_layer_data_t *ld = ppp_find_layer_data(ppp, &ipcp_layer);
+	struct ppp_ipcp_t *ipcp;
+	struct ipcp_hdr_t *hdr;
+
+	if (!ld)
+		return;
+
+	ipcp = container_of(ld, typeof(*ipcp), ld);
+
+	if (!ipcp->delay_ack)
+		return;
+
+	ipcp->delay_ack = 0;
+
+	if (ipcp->fsm.fsm_state == FSM_Opened)
+		__ipcp_layer_up(ipcp);
+
+	if (!ipcp->delay_ack_buf)
+		return;
+
+	hdr = (struct ipcp_hdr_t *)ipcp->delay_ack_buf;
+	hdr->code = CONFACK;
+
+	if (conf_ppp_verbose)
+		log_ppp_info2("send [IPCP ConfAck id=%x]\n", hdr->id);
+
+	ppp_unit_send(ipcp->ppp, hdr, ntohs(hdr->len) + 2);
+
+	_free(ipcp->delay_ack_buf);
+	ipcp->delay_ack_buf = NULL;
 }
 
 struct ipcp_option_t *ipcp_find_option(struct ppp_t *ppp, struct ipcp_option_handler_t *h)

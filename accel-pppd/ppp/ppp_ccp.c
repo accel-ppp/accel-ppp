@@ -13,6 +13,8 @@
 
 #include "ppp.h"
 #include "ppp_ccp.h"
+#include "ppp_ipcp.h"
+#include "ppp_ipv6cp.h"
 
 #include "memdebug.h"
 
@@ -202,6 +204,9 @@ static void ccp_layer_up(struct ppp_fsm_t *fsm)
 			return;
 		}
 		ppp_layer_started(ccp->ppp, &ccp->ld);
+
+		ipcp_ccp_started(ccp->ppp);
+		ipv6cp_ccp_started(ccp->ppp);
 	}
 }
 
@@ -211,9 +216,12 @@ static void ccp_layer_finished(struct ppp_fsm_t *fsm)
 
 	log_ppp_debug("ccp_layer_finished\n");
 
-	if (!ccp->started)
+	if (!ccp->started) {
 		ppp_layer_passive(ccp->ppp, &ccp->ld);
-	else if (!ccp->ppp->ses.terminating)
+
+		ipcp_ccp_started(ccp->ppp);
+		ipv6cp_ccp_started(ccp->ppp);
+	} else if (!ccp->ppp->ses.terminating)
 		ap_session_terminate(&ccp->ppp->ses, TERM_USER_ERROR, 0);
 
 	fsm->fsm_state = FSM_Closed;

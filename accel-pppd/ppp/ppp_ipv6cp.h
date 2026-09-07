@@ -98,12 +98,15 @@ struct ppp_ipv6cp_t
 	struct list_head ropt_list; // last received ConfReq
 	int ropt_len;
 
+	void *delay_ack_buf; // ConfAck withheld until CCP finishes
+
 	int conf_req_len;
 	unsigned int starting:1;
 	unsigned int started:1;
 	unsigned int delay_ack:1;
 };
 
+void ipv6cp_ccp_started(struct ppp_t *ppp);
 int ipv6cp_option_register(struct ipv6cp_option_handler_t *h);
 
 #endif
