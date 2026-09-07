@@ -4,7 +4,7 @@
  * Not part of the cmake build. Compile and run with:
  *   gcc -O1 -g -Wall -fno-strict-aliasing -D_GNU_SOURCE \
  *       -fsanitize=address,undefined -fno-sanitize-recover=all \
- *       -I accel-pppd/include -I accel-pppd/ctrl/l2tp \
+ *       -I accel-pppd -I accel-pppd/include -I accel-pppd/ctrl/l2tp \
  *       -o /tmp/l2tp_packet_test \
  *       accel-pppd/ctrl/l2tp/packet_test.c accel-pppd/ctrl/l2tp/packet.c \
  *       -lcrypto && /tmp/l2tp_packet_test

@@ -1835,6 +1835,7 @@ static int check_notify(struct ipoe_serv *serv, struct dhcpv4_packet *pack)
 	struct dhcpv4_option *opt = dhcpv4_packet_find_opt(pack, 43);
 	struct ipoe_session *ses;
 	unsigned int w;
+	uint32_t value;
 
 	if (!opt)
 		return 0;
@@ -1842,10 +1843,12 @@ static int check_notify(struct ipoe_serv *serv, struct dhcpv4_packet *pack)
 	if (opt->len != 8 + ETH_ALEN)
 		return 0;
 
-	if (*(uint32_t *)opt->data != htonl(ACCEL_PPP_MAGIC))
+	memcpy(&value, opt->data, sizeof(value));
+	if (value != htonl(ACCEL_PPP_MAGIC))
 		return 0;
 
-	w = htonl(*(uint32_t *)(opt->data + 4));
+	memcpy(&value, opt->data + sizeof(value), sizeof(value));
+	w = ntohl(value);
 
 	list_for_each_entry(ses, &serv->sessions, entry) {
 		if (ses->xid == pack->hdr->xid && memcmp(pack->hdr->chaddr, ses->hwaddr, ETH_ALEN) == 0) {
@@ -2029,6 +2032,7 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 {
 	struct ipoe_session *ses = container_of(triton_context_self(), typeof(*ses), ctx);
 	struct dhcpv4_option *opt;
+	uint32_t value;
 
 	if (ses->dhcpv4_relay_reply)
 		dhcpv4_packet_free(ses->dhcpv4_relay_reply);
@@ -2047,24 +2051,32 @@ static void ipoe_ses_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 	}
 
 	opt = dhcpv4_packet_find_opt(pack, 51);
-	if (opt)
-		ses->lease_time = ntohl(*(uint32_t *)opt->data);
+	if (opt) {
+		memcpy(&value, opt->data, sizeof(value));
+		ses->lease_time = ntohl(value);
+	}
 
 	opt = dhcpv4_packet_find_opt(pack, 58);
-	if (opt)
-		ses->renew_time = ntohl(*(uint32_t *)opt->data);
+	if (opt) {
+		memcpy(&value, opt->data, sizeof(value));
+		ses->renew_time = ntohl(value);
+	}
 
 	opt = dhcpv4_packet_find_opt(pack, 59);
-	if (opt)
-		ses->rebind_time = ntohl(*(uint32_t *)opt->data);
+	if (opt) {
+		memcpy(&value, opt->data, sizeof(value));
+		ses->rebind_time = ntohl(value);
+	}
 
 	opt = dhcpv4_packet_find_opt(pack, 1);
-	if (opt)
-		ses->mask = parse_dhcpv4_mask(ntohl(*(uint32_t *)opt->data));
+	if (opt) {
+		memcpy(&value, opt->data, sizeof(value));
+		ses->mask = parse_dhcpv4_mask(ntohl(value));
+	}
 
 	opt = dhcpv4_packet_find_opt(pack, 3);
 	if (opt)
-		ses->router = *(uint32_t *)opt->data;
+		memcpy(&ses->router, opt->data, sizeof(ses->router));
 
 	if (pack->msg_type == DHCPOFFER) {
 		if (ses->ses.state == AP_STATE_STARTING) {
@@ -2409,7 +2421,7 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
 					ses->siaddr = attr->val.ipaddr;
 					break;
 				case DHCP_Router_Address:
-					ses->router = *(in_addr_t *)attr->raw;
+					memcpy(&ses->router, attr->raw, sizeof(ses->router));
 					break;
 				case DHCP_Subnet_Mask:
 					ses->mask = ipaddr_to_prefix(attr->val.ipaddr);
@@ -2977,32 +2989,38 @@ static void ipoe_serv_timeout(struct triton_timer_t *t)
 static void ipoe_ipv6_enable(struct ipoe_serv *serv)
 {
 	struct ifreq ifr;
+	uint32_t addr;
 
 	strcpy(ifr.ifr_name, serv->ifname);
 
 	ifr.ifr_hwaddr.sa_family = AF_UNSPEC;
 	ifr.ifr_hwaddr.sa_data[0] = 0x33;
 	ifr.ifr_hwaddr.sa_data[1] = 0x33;
-	*(uint32_t *)(ifr.ifr_hwaddr.sa_data + 2) = htonl(0x02);
+	addr = htonl(0x02);
+	memcpy(ifr.ifr_hwaddr.sa_data + 2, &addr, sizeof(addr));
 	ioctl(sock_fd, SIOCADDMULTI, &ifr);
 
-	*(uint32_t *)(ifr.ifr_hwaddr.sa_data + 2) = htonl(0x010002);
+	addr = htonl(0x010002);
+	memcpy(ifr.ifr_hwaddr.sa_data + 2, &addr, sizeof(addr));
 	ioctl(sock_fd, SIOCADDMULTI, &ifr);
 }
 
 static void ipoe_ipv6_disable(struct ipoe_serv *serv)
 {
 	struct ifreq ifr;
+	uint32_t addr;
 
 	strcpy(ifr.ifr_name, serv->ifname);
 
 	ifr.ifr_hwaddr.sa_family = AF_UNSPEC;
 	ifr.ifr_hwaddr.sa_data[0] = 0x33;
 	ifr.ifr_hwaddr.sa_data[1] = 0x33;
-	*(uint32_t *)(ifr.ifr_hwaddr.sa_data + 2) = htonl(0x02);
+	addr = htonl(0x02);
+	memcpy(ifr.ifr_hwaddr.sa_data + 2, &addr, sizeof(addr));
 	ioctl(sock_fd, SIOCDELMULTI, &ifr);
 
-	*(uint32_t *)(ifr.ifr_hwaddr.sa_data + 2) = htonl(0x010002);
+	addr = htonl(0x010002);
+	memcpy(ifr.ifr_hwaddr.sa_data + 2, &addr, sizeof(addr));
 	ioctl(sock_fd, SIOCDELMULTI, &ifr);
 }
 

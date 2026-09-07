@@ -111,58 +111,6 @@ void l2tp_packet_free(struct l2tp_packet_t *pack)
 	mempool_free(pack);
 }
 
-/*
- * AVPs are not aligned in any way inside the packet buffer: their offset
- * depends on the length of every preceding AVP, which is peer chosen.
- * Always go through memcpy() to read multi-byte fields out of them, both to
- * stay portable on strict alignment architectures and to avoid tripping
- * -fsanitize=alignment.
- */
-static uint16_t unaligned_ntohs(const void *ptr)
-{
-	uint16_t val;
-
-	memcpy(&val, ptr, sizeof(val));
-
-	return ntohs(val);
-}
-
-static uint32_t unaligned_ntohl(const void *ptr)
-{
-	uint32_t val;
-
-	memcpy(&val, ptr, sizeof(val));
-
-	return ntohl(val);
-}
-
-static uint64_t unaligned_be64toh(const void *ptr)
-{
-	uint64_t val;
-
-	memcpy(&val, ptr, sizeof(val));
-
-	return be64toh(val);
-}
-
-static void unaligned_htons(void *ptr, uint16_t val)
-{
-	val = htons(val);
-	memcpy(ptr, &val, sizeof(val));
-}
-
-static void unaligned_htonl(void *ptr, uint32_t val)
-{
-	val = htonl(val);
-	memcpy(ptr, &val, sizeof(val));
-}
-
-static void unaligned_htobe64(void *ptr, uint64_t val)
-{
-	val = htobe64(val);
-	memcpy(ptr, &val, sizeof(val));
-}
-
 static void memxor(uint8_t *dst, const uint8_t *src, size_t sz)
 {
 	size_t indx;
@@ -223,7 +171,7 @@ static int decode_avp(struct l2tp_avp_t *avp, const struct l2tp_attr_t *RV,
 	}
 
 	memxor(p1, avp->val, MD5_DIGEST_LENGTH);
-	orig_attr_len = unaligned_ntohs(p1);
+	orig_attr_len = u_read_be16(p1);
 
 	if (orig_attr_len <= MD5_DIGEST_LENGTH - sizeof(uint16_t)) {
 		/* Enough bytes decoded already, no need to decode padding */
@@ -271,7 +219,7 @@ out:
 	   trustworthy as the peer's knowledge of the shared secret. Bound it
 	   against the room actually available in the received AVP before
 	   letting it drive any read of the attribute value */
-	orig_attr_len = unaligned_ntohs(avp->val);
+	orig_attr_len = u_read_be16(avp->val);
 	if (orig_attr_len > attr_len - sizeof(uint16_t)) {
 		log_warn("l2tp: incorrect hidden avp received (type %hu):"
 			 " deciphered attribute length too big (ciphered"
@@ -502,17 +450,17 @@ int l2tp_recv(int fd, struct l2tp_packet_t **p, struct in_pktinfo *pkt_info,
 				case ATTR_TYPE_INT16:
 					if (orig_avp_len != sizeof(*avp) + 2)
 						goto out_err_len;
-					attr->val.uint16 = unaligned_ntohs(orig_avp_val);
+					attr->val.uint16 = u_read_be16(orig_avp_val);
 					break;
 				case ATTR_TYPE_INT32:
 					if (orig_avp_len != sizeof(*avp) + 4)
 						goto out_err_len;
-					attr->val.uint32 = unaligned_ntohl(orig_avp_val);
+					attr->val.uint32 = u_read_be32(orig_avp_val);
 					break;
 				case ATTR_TYPE_INT64:
 					if (orig_avp_len != sizeof(*avp) + 8)
 						goto out_err_len;
-					attr->val.uint64 = unaligned_be64toh(orig_avp_val);
+					attr->val.uint64 = u_read_be64(orig_avp_val);
 					break;
 				case ATTR_TYPE_OCTETS:
 					attr->val.octets = _malloc(attr->length);
@@ -589,13 +537,13 @@ int l2tp_packet_send(int sock, struct l2tp_packet_t *pack)
 		else
 			switch (attr->attr->type) {
 			case ATTR_TYPE_INT16:
-				unaligned_htons(avp->val, attr->val.int16);
+				u_write_be16(avp->val, attr->val.int16);
 				break;
 			case ATTR_TYPE_INT32:
-				unaligned_htonl(avp->val, attr->val.int32);
+				u_write_be32(avp->val, attr->val.int32);
 				break;
 			case ATTR_TYPE_INT64:
-				unaligned_htobe64(avp->val, attr->val.uint64);
+				u_write_be64(avp->val, attr->val.uint64);
 				break;
 			case ATTR_TYPE_STRING:
 			case ATTR_TYPE_OCTETS:

@@ -59,6 +59,8 @@ static int session_save(struct ap_session *ses, struct backup_mod *m)
 static int session_restore(struct ap_session *ses, struct backup_mod *m)
 {
 	struct backup_tag *t;
+	time_t start_time;
+	uint32_t ifindex;
 
 	list_for_each_entry(t, &m->tag_list, entry) {
 		switch(t->id) {
@@ -79,11 +81,14 @@ static int session_restore(struct ap_session *ses, struct backup_mod *m)
 				ses->ifname[t->size] = 0;
 				break;
 			case SES_TAG_START_TIME:
-				ses->start_time = *(time_t *)t->data;
+				memcpy(&start_time, t->data, sizeof(start_time));
+				ses->start_time = start_time;
 				break;
 			case SES_TAG_IFINDEX:
-				if (ses->backup->internal)
-					ses->ifindex = *(uint32_t *)t->data;
+				if (ses->backup->internal) {
+					memcpy(&ifindex, t->data, sizeof(ifindex));
+					ses->ifindex = ifindex;
+				}
 				break;
 			/*case PPP_TAG_FD:
 				ses->fd = *(int *)t->data;

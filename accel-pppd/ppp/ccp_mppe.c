@@ -10,6 +10,7 @@
 #include "ppp_ccp.h"
 #include "log.h"
 #include "events.h"
+#include "utils.h"
 
 #include "memdebug.h"
 
@@ -106,7 +107,7 @@ static int setup_mppe_key(int fd, int transmit, uint8_t *key)
 	memset(buf, 0, sizeof(buf));
 	buf[0] = CI_MPPE;
 	buf[1] = 6;
-	*(uint32_t*)(buf + 2) = htonl(MPPE_S | MPPE_H);
+	u_write_be32(buf + 2, MPPE_S | MPPE_H);
 	if (key)
 		memcpy(buf + 6, key, 16);
 

@@ -96,7 +96,7 @@ static int fs_commit(struct backup_data *d)
 			ptr = (uint8_t *)(tag + 1);
 			*ptr = tag->id; ptr++;
 			*ptr = tag->internal ? 1 : 0; ptr++;
-			*(uint16_t *)ptr = tag->size;
+			memcpy(ptr, &tag->size, sizeof(tag->size));
 			MD5_Update(&md5, tag + 1, 4 + tag->size);
 			iov[i].iov_base = tag + 1;
 			iov[i].iov_len = 4 + tag->size;
@@ -278,14 +278,16 @@ static void restore_session(const char *fn, int internal)
 			}
 
 			if (!internal && ptr[1]) {
-				ptr += 4 + *(uint16_t *)(ptr + 2);
+				uint16_t tag_size;
+				memcpy(&tag_size, ptr + 2, sizeof(tag_size));
+				ptr += 4 + tag_size;
 				continue;
 			}
 
 			tag = fs_alloc_tag(d, 0);
 			tag->id = *ptr; ptr++;
 			tag->internal = (*ptr & 0x01) ? 1 : 0; ptr ++;
-			tag->size = *(uint16_t *)ptr; ptr += 2;
+			memcpy(&tag->size, ptr, sizeof(tag->size)); ptr += 2;
 			tag->data = ptr; ptr += tag->size;
 
 			list_add_tail(&tag->entry, &mod->tag_list);

@@ -42,6 +42,19 @@ struct mem_t
 static LIST_HEAD(mem_list);
 static spinlock_t mem_list_lock;
 
+static uint64_t get_tail_magic(const struct mem_t *mem)
+{
+	uint64_t magic;
+
+	memcpy(&magic, mem->data + mem->size, sizeof(magic));
+	return magic;
+}
+
+static void set_tail_magic(struct mem_t *mem)
+{
+	memcpy(mem->data + mem->size, &mem->magic2, sizeof(mem->magic2));
+}
+
 static struct mem_t *_md_malloc(size_t size, const char *fname, int line)
 {
 	struct mem_t *mem = malloc(sizeof(*mem) + size + 8);
@@ -54,7 +67,7 @@ static struct mem_t *_md_malloc(size_t size, const char *fname, int line)
 	mem->size = size;
 	mem->magic1 = MAGIC1;
 	mem->magic2 = (uint64_t)random() * (uint64_t)random();
-	*(uint64_t*)(mem->data + size) = mem->magic2;
+	set_tail_magic(mem);
 
 	spin_lock(&mem_list_lock);
 	list_add_tail(&mem->entry, &mem_list);
@@ -84,7 +97,7 @@ void __export md_free(void *ptr, const char *fname, int line)
 		abort();
 	}
 
-	if (mem->magic2 != *(uint64_t*)(mem->data + mem->size)) {
+	if (mem->magic2 != get_tail_magic(mem)) {
 		printf("memory corruption:\nmalloc(%zu) at %s:%i\nfree at %s:%i\n",
 		       mem->size, mem->fname, mem->line, fname, line);
 		abort();
@@ -113,7 +126,7 @@ void __export *md_realloc(void *ptr, size_t size, const char *fname, int line)
 			abort();
 		}
 
-		if (mem->magic2 != *(uint64_t*)(mem->data + mem->size)) {
+		if (mem->magic2 != get_tail_magic(mem)) {
 			printf("memory corruption:\nmalloc(%zu) at %s:%i\nfree at %s:%i\n",
 			       mem->size, mem->fname, mem->line, fname, line);
 			abort();
@@ -217,7 +230,7 @@ static void siginfo2(int num)
 
 	spin_lock(&mem_list_lock);
 	list_for_each_entry(mem, &mem_list, entry) {
-		if (mem->magic1 != MAGIC1 || mem->magic2 != *(uint64_t*)(mem->data + mem->size))
+		if (mem->magic1 != MAGIC1 || mem->magic2 != get_tail_magic(mem))
 			printf("%s:%i %lu\n", mem->fname, mem->line, (long unsigned)mem->size);
 	}
 	spin_unlock(&mem_list_lock);
@@ -233,7 +246,7 @@ void __export md_check(void *ptr)
 	if (mem->magic1 != MAGIC1)
 		abort();
 
-	if (mem->magic2 != *(uint64_t*)(mem->data + mem->size))
+	if (mem->magic2 != get_tail_magic(mem))
 		abort();
 }
 

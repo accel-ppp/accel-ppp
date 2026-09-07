@@ -284,12 +284,14 @@ static void ipaddr_print(void (*print)(const char *fmt,...), struct ipv6cp_optio
 {
 	struct ipaddr_option_t *ipaddr_opt = container_of(opt, typeof(*ipaddr_opt), opt);
 	struct ipv6cp_opt64_t *opt64 = (struct ipv6cp_opt64_t *)ptr;
-	struct in6_addr a;
+	struct in6_addr a = {};
+	uint64_t intf_id;
 
 	if (ptr)
-		*(uint64_t *)(a.s6_addr + 8) = opt64->val;
+		intf_id = opt64->val;
 	else
-		*(uint64_t *)(a.s6_addr + 8) = ipaddr_opt->ppp->ses.ipv6->intf_id;
+		intf_id = ipaddr_opt->ppp->ses.ipv6->intf_id;
+	memcpy(a.s6_addr + 8, &intf_id, sizeof(intf_id));
 
 	print("<addr %x:%x:%x:%x>", ntohs(a.s6_addr16[4]), ntohs(a.s6_addr16[5]), ntohs(a.s6_addr16[6]), ntohs(a.s6_addr16[7]));
 }
@@ -376,4 +378,3 @@ static void init()
 }
 
 DEFINE_INIT(5, init);
-

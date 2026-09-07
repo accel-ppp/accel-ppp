@@ -293,11 +293,18 @@ static void add_prefix(struct ip6_pool *pool, const char *_val)
 
 	/* end = start | hostmask(mask) (matches the original generator) */
 	memcpy(&end, &start, sizeof(end));
-	if (mask > 64)
-		*(uint64_t *)(end.s6_addr + 8) = htobe64(be64toh(*(uint64_t *)(end.s6_addr + 8)) | ((1llu << (128 - mask)) - 1));
+	if (mask > 64) {
+		uint64_t value;
+		memcpy(&value, end.s6_addr + 8, sizeof(value));
+		value = htobe64(be64toh(value) | ((1llu << (128 - mask)) - 1));
+		memcpy(end.s6_addr + 8, &value, sizeof(value));
+	}
 	else {
+		uint64_t value;
 		memset(end.s6_addr + 8, 0xff, 8);
-		*(uint64_t *)end.s6_addr = htobe64(be64toh(*(uint64_t *)end.s6_addr) | ((1llu << (64 - mask)) - 1));
+		memcpy(&value, end.s6_addr, sizeof(value));
+		value = htobe64(be64toh(value) | ((1llu << (64 - mask)) - 1));
+		memcpy(end.s6_addr, &value, sizeof(value));
 	}
 
 	{

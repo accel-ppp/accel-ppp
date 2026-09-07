@@ -75,18 +75,23 @@ void __export ipdb_put_ipv6_prefix(struct ap_session *ses, struct ipv6db_prefix_
 
 void __export build_ip6_addr(struct ipv6db_addr_t *a, uint64_t intf_id, struct in6_addr *addr)
 {
+	uint64_t value;
+
 	memcpy(addr, &a->addr, sizeof(*addr));
 
 	if (a->prefix_len == 128)
 		return;
 
 	if (a->prefix_len <= 64)
-		*(uint64_t *)(addr->s6_addr + 8) = intf_id;
-	else
+		memcpy(addr->s6_addr + 8, &intf_id, sizeof(intf_id));
+	else {
 		/* prefix_len 65..127 means a shift of up to 63 bits: a plain
 		 * int literal 1 is undefined behavior for shifts >= 31, so the
 		 * host bits mask must be built from a 64-bit constant */
-		*(uint64_t *)(addr->s6_addr + 8) |= intf_id & htobe64((UINT64_C(1) << (128 - a->prefix_len)) - 1);
+		memcpy(&value, addr->s6_addr + 8, sizeof(value));
+		value |= intf_id & htobe64((UINT64_C(1) << (128 - a->prefix_len)) - 1);
+		memcpy(addr->s6_addr + 8, &value, sizeof(value));
+	}
 
 }
 

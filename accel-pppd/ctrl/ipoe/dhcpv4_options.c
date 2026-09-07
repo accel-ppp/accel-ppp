@@ -205,7 +205,10 @@ static void print_message_type(const struct dhcpv4_option *opt, int elem_size, v
 {
 	const char *msg_name[] = {"", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform"};
 
-	print("%s", msg_name[opt->data[0]]);
+	if (opt->data[0] < sizeof(msg_name) / sizeof(msg_name[0]))
+		print("%s", msg_name[opt->data[0]]);
+	else
+		print("%u", opt->data[0]);
 }
 
 static void print_request_list(const struct dhcpv4_option *opt, int elem_size, void (*print)(const char *fmt, ...))
@@ -232,14 +235,19 @@ static void print_relay_agent(const struct dhcpv4_option *opt, int elem_size, vo
 	int type, len;
 
 	while (ptr < endptr) {
+		if (endptr - ptr < 2) {
+			print("invalid");
+			return;
+		}
+
 		if (ptr != opt->data)
 			print(" ");
 		type = *ptr++;
 		len = *ptr++;
-		/*if (ptr + len > endptr) {
+		if (endptr - ptr < len) {
 			print(" invalid");
 			return;
-		}*/
+		}
 		if (type == 1)
 			print("{Agent-Circuit-ID ");
 		else if (type == 2)

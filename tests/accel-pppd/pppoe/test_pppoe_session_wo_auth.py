@@ -26,6 +26,9 @@ def accel_pppd_config(veth_pair_netns):
     [auth]
     any-login=1
 
+    [ppp]
+    mppe=prefer
+
     [ip-pool]
     gw-ip-address=192.0.2.1
     192.0.2.2-255

@@ -349,6 +349,12 @@ static int dhcpv4_parse_packet(struct dhcpv4_packet *pack, int len)
 
 		list_add_tail(&opt->entry, &pack->options);
 
+	}
+
+	if (dhcpv4_check_options(pack))
+		return -1;
+
+	list_for_each_entry(opt, &pack->options, entry) {
 		if (opt->type == 53)
 			pack->msg_type = opt->data[0];
 		else if (opt->type == 82)
@@ -356,15 +362,12 @@ static int dhcpv4_parse_packet(struct dhcpv4_packet *pack, int len)
 		else if (opt->type == 62)
 			pack->client_id = opt;
 		else if (opt->type == 50)
-			memcpy(&pack->request_ip, opt->data, 4);
+			memcpy(&pack->request_ip, opt->data, sizeof(pack->request_ip));
 		else if (opt->type == 54)
-			memcpy(&pack->server_id, opt->data, 4);
+			memcpy(&pack->server_id, opt->data, sizeof(pack->server_id));
 	}
 
 	if (pack->msg_type == 0 || pack->msg_type > 8)
-		return -1;
-
-	if (dhcpv4_check_options(pack))
 		return -1;
 
 	pack->ptr = ptr;
@@ -933,6 +936,7 @@ void dhcpv4_send_notify(struct dhcpv4_serv *serv, struct dhcpv4_packet *req, uns
 {
 	struct dhcpv4_packet *pack = dhcpv4_packet_alloc();
 	uint8_t opt[8 + ETH_ALEN];
+	uint32_t value;
 
 	if (!pack) {
 		log_emerg("out of memory\n");
@@ -946,8 +950,10 @@ void dhcpv4_send_notify(struct dhcpv4_serv *serv, struct dhcpv4_packet *req, uns
 	pack->hdr->siaddr = 0;
 	pack->hdr->giaddr = 0;
 
-	*(uint32_t *)opt = htonl(ACCEL_PPP_MAGIC);
-	*(uint32_t *)(opt + 4) = htonl(weight);
+	value = htonl(ACCEL_PPP_MAGIC);
+	memcpy(opt, &value, sizeof(value));
+	value = htonl(weight);
+	memcpy(opt + sizeof(value), &value, sizeof(value));
 	memcpy(opt + 8, serv->hwaddr, ETH_ALEN);
 
 	dhcpv4_packet_add_opt_u8(pack, 53, DHCPDISCOVER);
@@ -1100,8 +1106,8 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 	if (server_id) {
 		opt = dhcpv4_packet_find_opt(request, 54);
 		if (opt) {
-			_server_id = *(uint32_t *)opt->data;
-			*(uint32_t *)opt->data = server_id;
+			memcpy(&_server_id, opt->data, sizeof(_server_id));
+			memcpy(opt->data, &server_id, sizeof(server_id));
 		}
 	}
 
@@ -1123,7 +1129,7 @@ int dhcpv4_relay_send(struct dhcpv4_relay *relay, struct dhcpv4_packet *request,
 	request->hdr->giaddr = giaddr;
 
 	if (opt)
-		*(uint32_t *)opt->data = _server_id;
+		memcpy(opt->data, &_server_id, sizeof(_server_id));
 
 	if (n != len)
 		return -1;

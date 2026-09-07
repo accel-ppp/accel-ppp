@@ -736,10 +736,10 @@ static int session_restore(struct ap_session *ses, struct backup_mod *m)
 	list_for_each_entry(tag, &m->tag_list, entry) {
 		switch (tag->id) {
 			case SES_TAG_IPV4_ADDR:
-				addr = *(in_addr_t *)tag->data;
+				memcpy(&addr, tag->data, sizeof(addr));
 				break;
 			case SES_TAG_IPV4_PEER_ADDR:
-				peer_addr = *(in_addr_t *)tag->data;
+				memcpy(&peer_addr, tag->data, sizeof(peer_addr));
 				break;
 		}
 	}

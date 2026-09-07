@@ -23,6 +23,7 @@
 #include "ipv6_dns.h"
 #include "events.h"
 #include "iputils.h"
+#include "utils.h"
 
 #include "dhcpv6.h"
 
@@ -222,25 +223,28 @@ static void insert_oro(struct dhcpv6_packet *reply, struct dhcpv6_option *opt)
 {
 	struct dhcpv6_option *opt1;
 	int i, j, dns_count;
-	uint16_t *ptr;
-	struct in6_addr addr, *addr_ptr;
+	uint8_t *ptr;
+	uint16_t code;
+	struct in6_addr addr;
+	uint8_t *addr_ptr;
 	struct in6_addr dns[MAX_DNS_COUNT];
 
-	for (i = ntohs(opt->hdr->len) / 2, ptr = (uint16_t *)opt->hdr->data; i; i--, ptr++) {
-		if (ntohs(*ptr) == D6_OPTION_DNS_SERVERS) {
+	for (i = ntohs(opt->hdr->len) / 2, ptr = opt->hdr->data; i; i--, ptr += sizeof(code)) {
+		code = u_read_be16(ptr);
+		if (code == D6_OPTION_DNS_SERVERS) {
 			dns_count = ipv6_dns_get(reply->ses, conf_dns, conf_dns_count,
 						 dns, MAX_DNS_COUNT);
 			if (dns_count) {
 				opt1 = dhcpv6_option_alloc(reply, D6_OPTION_DNS_SERVERS, dns_count * sizeof(addr));
-				for (j = 0, addr_ptr = (struct in6_addr *)opt1->hdr->data; j < dns_count; j++, addr_ptr++)
+				for (j = 0, addr_ptr = opt1->hdr->data; j < dns_count; j++, addr_ptr += sizeof(addr))
 					memcpy(addr_ptr, dns + j, sizeof(addr));
 			}
-		} else if (ntohs(*ptr) == D6_OPTION_DOMAIN_LIST) {
+		} else if (code == D6_OPTION_DOMAIN_LIST) {
 			if (conf_dnssl_size) {
 				opt1 = dhcpv6_option_alloc(reply, D6_OPTION_DOMAIN_LIST, conf_dnssl_size);
 				memcpy(opt1->hdr->data, conf_dnssl, conf_dnssl_size);
 			}
-		} else if (ntohs(*ptr) == D6_OPTION_AFTR_NAME) {
+		} else if (code == D6_OPTION_AFTR_NAME) {
 			if (conf_aftr_gw_size) {
 				opt1 = dhcpv6_option_alloc(reply, D6_OPTION_AFTR_NAME, conf_aftr_gw_size);
 				memcpy(opt1->hdr->data, conf_aftr_gw, conf_aftr_gw_size);

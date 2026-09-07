@@ -4,6 +4,7 @@
 
 #include "log.h"
 #include "memdebug.h"
+#include "utils.h"
 
 #include "dhcpv6.h"
 
@@ -13,7 +14,8 @@ struct dict_option {
 	int code;
 	const char *name;
 	int recv;
-	int len;
+	int min_len;
+	int nested;
 	void (*print)(struct dhcpv6_option *, void (*)(const char *fmt, ...));
 };
 
@@ -34,30 +36,30 @@ static void print_ia_prefix(struct dhcpv6_option *opt, void (*print)(const char 
 static void print_aftr_gw(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...));
 
 static struct dict_option known_options[] = {
-	{ D6_OPTION_CLIENTID, "Client-ID", 1, 0, print_clientid },
-	{ D6_OPTION_SERVERID, "Server-ID", 0, 0, print_clientid },
-	{ D6_OPTION_IA_NA, "IA-NA", 1, sizeof(struct dhcpv6_opt_ia_na), print_ia_na },
-	{ D6_OPTION_IA_TA, "IA-TA", 1, sizeof(struct dhcpv6_opt_ia_ta), print_ia_ta },
-	{ D6_OPTION_IAADDR, "IA-Addr", 1, sizeof(struct dhcpv6_opt_ia_addr), print_ia_addr },
-	{ D6_OPTION_ORO, "Option-Request", 1, 0, print_oro },
-	{ D6_OPTION_PREFERENCE, "Preference", 0, 0, print_uint8 },
-	{ D6_OPTION_ELAPSED_TIME, "Elapsed-Time", 1, 0, print_time },
-	{ D6_OPTION_RELAY_MSG, "Relay-Message", 1, 0 },
-	{ D6_OPTION_AUTH, "Auth", 1, 0 },
-	{ D6_OPTION_PREFERENCE, "Server-Unicast", 0, 0, print_ipv6addr },
-	{ D6_OPTION_STATUS_CODE, "Status", 0, 0, print_status },
-	{ D6_OPTION_RAPID_COMMIT, "Rapid-Commit", 1, 0 },
-	{ D6_OPTION_USER_CLASS, "User-Class", 1, 0 },
-	{ D6_OPTION_VENDOR_CLASS, "Vendor-Class", 1, 0, print_hex_array },
-	{ D6_OPTION_VENDOR_SPECIFIC, "Vendor-Specific", 1, 0, print_hex_array },
-	{ D6_OPTION_INTERFACE_ID, "Interface-ID", 1, 0, print_hex_array },
-	{ D6_OPTION_RECONF_MSG, "Reconfigure", 0, 0, print_reconf },
-	{ D6_OPTION_RECONF_ACCEPT, "Reconfigure-Accept", 1, 0 },
-	{ D6_OPTION_DNS_SERVERS, "DNS", 1, 0, print_ipv6addr_array },
-	{ D6_OPTION_DOMAIN_LIST, "DNSSL", 1, 0, print_dnssl },
-	{ D6_OPTION_IA_PD, "IA-PD", 1, sizeof(struct dhcpv6_opt_ia_na), print_ia_na },
-	{ D6_OPTION_IAPREFIX, "IA-Prefix", 1, sizeof(struct dhcpv6_opt_ia_prefix), print_ia_prefix },
-	{ D6_OPTION_AFTR_NAME, "AFTR-Name", 1, 0, print_aftr_gw },
+	{ D6_OPTION_CLIENTID, "Client-ID", 1, sizeof(uint16_t), 0, print_clientid },
+	{ D6_OPTION_SERVERID, "Server-ID", 0, sizeof(uint16_t), 0, print_clientid },
+	{ D6_OPTION_IA_NA, "IA-NA", 1, sizeof(struct dhcpv6_opt_ia_na) - sizeof(struct dhcpv6_opt_hdr), 1, print_ia_na },
+	{ D6_OPTION_IA_TA, "IA-TA", 1, sizeof(struct dhcpv6_opt_ia_ta) - sizeof(struct dhcpv6_opt_hdr), 1, print_ia_ta },
+	{ D6_OPTION_IAADDR, "IA-Addr", 1, sizeof(struct dhcpv6_opt_ia_addr) - sizeof(struct dhcpv6_opt_hdr), 1, print_ia_addr },
+	{ D6_OPTION_ORO, "Option-Request", 1, 0, 0, print_oro },
+	{ D6_OPTION_PREFERENCE, "Preference", 0, sizeof(uint8_t), 0, print_uint8 },
+	{ D6_OPTION_ELAPSED_TIME, "Elapsed-Time", 1, sizeof(uint16_t), 0, print_time },
+	{ D6_OPTION_RELAY_MSG, "Relay-Message", 1, sizeof(struct dhcpv6_msg_hdr), 0 },
+	{ D6_OPTION_AUTH, "Auth", 1, 0, 0 },
+	{ D6_OPTION_UNICAST, "Server-Unicast", 0, sizeof(struct in6_addr), 0, print_ipv6addr },
+	{ D6_OPTION_STATUS_CODE, "Status", 0, sizeof(uint16_t), 0, print_status },
+	{ D6_OPTION_RAPID_COMMIT, "Rapid-Commit", 1, 0, 0 },
+	{ D6_OPTION_USER_CLASS, "User-Class", 1, 0, 0 },
+	{ D6_OPTION_VENDOR_CLASS, "Vendor-Class", 1, 0, 0, print_hex_array },
+	{ D6_OPTION_VENDOR_SPECIFIC, "Vendor-Specific", 1, 0, 0, print_hex_array },
+	{ D6_OPTION_INTERFACE_ID, "Interface-ID", 1, 0, 0, print_hex_array },
+	{ D6_OPTION_RECONF_MSG, "Reconfigure", 0, sizeof(uint8_t), 0, print_reconf },
+	{ D6_OPTION_RECONF_ACCEPT, "Reconfigure-Accept", 1, 0, 0 },
+	{ D6_OPTION_DNS_SERVERS, "DNS", 1, 0, 0, print_ipv6addr_array },
+	{ D6_OPTION_DOMAIN_LIST, "DNSSL", 1, 0, 0, print_dnssl },
+	{ D6_OPTION_IA_PD, "IA-PD", 1, sizeof(struct dhcpv6_opt_ia_na) - sizeof(struct dhcpv6_opt_hdr), 1, print_ia_na },
+	{ D6_OPTION_IAPREFIX, "IA-Prefix", 1, sizeof(struct dhcpv6_opt_ia_prefix) - sizeof(struct dhcpv6_opt_hdr), 1, print_ia_prefix },
+	{ D6_OPTION_AFTR_NAME, "AFTR-Name", 1, 0, 0, print_aftr_gw },
 	{ 0 }
 };
 
@@ -89,9 +91,14 @@ static void *parse_option(void *ptr, void *endptr, struct list_head *opt_list)
 			break;
 	}
 
-	if (dopt->len) {
+	if (ntohs(opth->len) < dopt->min_len) {
+		log_warn("dhcpv6: invalid packet received\n");
+		return NULL;
+	}
+
+	if (dopt->nested) {
 		endptr = ptr + sizeof(*opth) + ntohs(opth->len);
-		ptr += dopt->len;
+		ptr += sizeof(*opth) + dopt->min_len;
 		while (ptr < endptr) {
 			ptr = parse_option(ptr, endptr, &opt->opt_list);
 			if (!ptr)
@@ -109,7 +116,8 @@ struct dhcpv6_packet *dhcpv6_packet_parse(const void *buf, size_t size)
 	struct dhcpv6_opt_hdr *opth;
 	struct dhcpv6_relay *rel;
 	struct dhcpv6_relay_hdr *rhdr;
-	void *ptr, *endptr;
+	struct dhcpv6_msg_hdr *inner_hdr;
+	void *ptr, *endptr, *relay_end, *inner_end;
 
 	if (size < sizeof(struct dhcpv6_msg_hdr)) {
 		if (conf_verbose)
@@ -133,8 +141,6 @@ struct dhcpv6_packet *dhcpv6_packet_parse(const void *buf, size_t size)
 	endptr = ((void *)pkt->hdr) + size;
 
 	while (pkt->hdr->type == D6_RELAY_FORW) {
-		struct dhcpv6_msg_hdr *prev_hdr = pkt->hdr;
-
 		rhdr = (struct dhcpv6_relay_hdr *)pkt->hdr;
 		if (((void *)rhdr) + sizeof(*rhdr) > endptr) {
 			log_warn("dhcpv6: invalid packet received\n");
@@ -153,27 +159,37 @@ struct dhcpv6_packet *dhcpv6_packet_parse(const void *buf, size_t size)
 
 		list_add_tail(&rel->entry, &pkt->relay_list);
 
+		inner_hdr = NULL;
+		inner_end = NULL;
+		relay_end = endptr;
 		ptr = rhdr->data;
-		while (ptr < endptr) {
+		while (ptr < relay_end) {
 			opth = ptr;
-			if (ptr + sizeof(*opth) > endptr ||
-			    ptr + sizeof(*opth) + ntohs(opth->len) > endptr) {
+			if (ptr + sizeof(*opth) > relay_end ||
+			    ptr + sizeof(*opth) + ntohs(opth->len) > relay_end) {
 				log_warn("dhcpv6: invalid packet received\n");
 				goto error;
 			}
 
 			if (opth->code == htons(D6_OPTION_RELAY_MSG)) {
-				pkt->hdr = (struct dhcpv6_msg_hdr *)opth->data;
-				endptr = opth->data + ntohs(opth->len);
+				if (inner_hdr || ntohs(opth->len) < sizeof(*inner_hdr)) {
+					log_warn("dhcpv6: invalid packet received\n");
+					goto error;
+				}
+				inner_hdr = (struct dhcpv6_msg_hdr *)opth->data;
+				inner_end = opth->data + ntohs(opth->len);
 			}
 
 			ptr += sizeof(*opth) + ntohs(opth->len);
 		}
 
-		if (pkt->hdr == prev_hdr) {
+		if (!inner_hdr) {
 			log_warn("dhcpv6: invalid packet received\n");
 			goto error;
 		}
+
+		pkt->hdr = inner_hdr;
+		endptr = inner_end;
 	}
 
 	ptr = pkt->hdr->data;
@@ -462,26 +478,28 @@ static void print_ia_addr(struct dhcpv6_option *opt, void (*print)(const char *f
 
 static void print_oro(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))
 {
-	uint16_t *ptr = (uint16_t *)opt->hdr->data;
-	uint16_t *end_ptr = ptr + ntohs(opt->hdr->len)/2;
+	uint8_t *ptr = opt->hdr->data;
+	uint8_t *end_ptr = ptr + ntohs(opt->hdr->len) / 2 * sizeof(uint16_t);
 	struct dict_option *dopt;
+	uint16_t code;
 	int f = 0;
 
-	for (; ptr < end_ptr; ptr++) {
+	for (; ptr < end_ptr; ptr += sizeof(uint16_t)) {
 		if (f)
 			print(",");
 		else
 			print(" ");
 
+		code = u_read_be16(ptr);
 		for (dopt = known_options; dopt->code; dopt++) {
-			if (ntohs(*ptr) == dopt->code)
+			if (code == dopt->code)
 				break;
 		}
 
 		if (dopt->code)
 			print("%s", dopt->name);
 		else
-			print("%i", ntohs(*ptr));
+			print("%i", code);
 
 		f = 1;
 	}
@@ -506,13 +524,10 @@ static void print_uint8(struct dhcpv6_option *opt, void (*print)(const char *fmt
 
 static void print_time(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))
 {
-	uint16_t val;
-
-	if (ntohs(opt->hdr->len) < sizeof(val))
+	if (ntohs(opt->hdr->len) < sizeof(uint16_t))
 		return;
 
-	memcpy(&val, opt->hdr->data, sizeof(val));
-	print(" %u", ntohs(val));
+	print(" %u", u_read_be16(opt->hdr->data));
 }
 
 static void print_ipv6addr(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))
@@ -529,9 +544,9 @@ static void print_ipv6addr_array(struct dhcpv6_option *opt, void (*print)(const 
 	char str[INET6_ADDRSTRLEN];
 	int i;
 	int f = 0;
-	struct in6_addr *addr = (struct in6_addr *)opt->hdr->data;
+	uint8_t *addr = opt->hdr->data;
 
-	for (i = ntohs(opt->hdr->len) / sizeof(*addr); i; i--, addr++) {
+	for (i = ntohs(opt->hdr->len) / sizeof(struct in6_addr); i; i--, addr += sizeof(struct in6_addr)) {
 		inet_ntop(AF_INET6, addr, str, sizeof(str));
 		print("%c%s", f ? ',' : ' ', str);
 		f = 1;

@@ -391,10 +391,18 @@ static int ipcp_recv_conf_req(struct ppp_ipcp_t *ipcp, uint8_t *data, int size)
 	ipcp->ropt_len = size;
 
 	while (size > 0) {
+		if (size < sizeof(*hdr)) {
+			log_ppp_warn("IPCP: ConfReq: truncated option header (%i bytes left)\n", size);
+			return IPCP_OPT_FAIL;
+		}
+
 		hdr = (struct ipcp_opt_hdr_t *)data;
 
-		if (!hdr->len || hdr->len > size)
-			break;
+		if (hdr->len < sizeof(*hdr) || hdr->len > size) {
+			log_ppp_warn("IPCP: ConfReq: invalid length %i of option %i (%i bytes left)\n",
+				     hdr->len, hdr->id, size);
+			return IPCP_OPT_FAIL;
+		}
 
 		ropt = _malloc(sizeof(*ropt));
 		memset(ropt, 0, sizeof(*ropt));
@@ -503,10 +511,17 @@ static int ipcp_recv_conf_rej(struct ppp_ipcp_t *ipcp, uint8_t *data, int size)
 	}*/
 
 	while (size > 0) {
+		if (size < sizeof(*hdr)) {
+			res = -1;
+			break;
+		}
+
 		hdr = (struct ipcp_opt_hdr_t *)data;
 
-		if (!hdr->len || hdr->len > size)
+		if (hdr->len < sizeof(*hdr) || hdr->len > size) {
+			res = -1;
 			break;
+		}
 
 		list_for_each_entry(lopt, &ipcp->options, entry) {
 			if (lopt->id == hdr->id) {
@@ -544,10 +559,17 @@ static int ipcp_recv_conf_nak(struct ppp_ipcp_t *ipcp, uint8_t *data, int size)
 	}*/
 
 	while (size > 0) {
+		if (size < sizeof(*hdr)) {
+			res = -1;
+			break;
+		}
+
 		hdr = (struct ipcp_opt_hdr_t *)data;
 
-		if (!hdr->len || hdr->len > size)
+		if (hdr->len < sizeof(*hdr) || hdr->len > size) {
+			res = -1;
 			break;
+		}
 
 		list_for_each_entry(lopt, &ipcp->options, entry) {
 			if (lopt->id == hdr->id) {
@@ -587,10 +609,17 @@ static int ipcp_recv_conf_ack(struct ppp_ipcp_t *ipcp, uint8_t *data, int size)
 	}*/
 
 	while (size > 0) {
+		if (size < sizeof(*hdr)) {
+			res = -1;
+			break;
+		}
+
 		hdr = (struct ipcp_opt_hdr_t *)data;
 
-		if (!hdr->len || hdr->len > size)
+		if (hdr->len < sizeof(*hdr) || hdr->len > size) {
+			res = -1;
 			break;
+		}
 
 		list_for_each_entry(lopt, &ipcp->options, entry) {
 			if (lopt->id == hdr->id) {
@@ -671,7 +700,7 @@ static void ipcp_recv(struct ppp_handler_t*h)
 	}
 
 	hdr = (struct ipcp_hdr_t *)ipcp->ppp->buf;
-	if (ntohs(hdr->len) < PPP_HEADERLEN) {
+	if (ntohs(hdr->len) < PPP_HEADERLEN || ntohs(hdr->len) > ipcp->ppp->buf_size - 2) {
 		log_ppp_warn("IPCP: short packet received\n");
 		return;
 	}
@@ -725,8 +754,10 @@ static void ipcp_recv(struct ppp_handler_t*h)
 				ppp_fsm_recv_conf_ack(&ipcp->fsm);
 			break;
 		case CONFNAK:
-			ipcp_recv_conf_nak(ipcp,(uint8_t*)(hdr + 1), ntohs(hdr->len) - PPP_HDRLEN);
-			ppp_fsm_recv_conf_rej(&ipcp->fsm);
+			if (ipcp_recv_conf_nak(ipcp,(uint8_t*)(hdr + 1), ntohs(hdr->len) - PPP_HDRLEN))
+				ap_session_terminate(&ipcp->ppp->ses, TERM_USER_ERROR, 0);
+			else
+				ppp_fsm_recv_conf_rej(&ipcp->fsm);
 			break;
 		case CONFREJ:
 			if (ipcp_recv_conf_rej(ipcp, (uint8_t*)(hdr + 1), ntohs(hdr->len) - PPP_HDRLEN))
