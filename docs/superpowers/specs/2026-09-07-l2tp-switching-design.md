@@ -286,21 +286,49 @@ starting from scratch:
   the real `l2tp_packet_send()`/`l2tp_recv()` and asserts the raw octets
   captured into `l2tp_switch_avps` are byte-identical, and that the extended
   `l2tp_send_ICCN` reproduces them exactly in the outbound packet.
-- **Integration**: a pytest test under `tests/accel-pppd/`, built on the same
-  fixtures `tests/accel-pppd/general/test_basic.py` and the PPPoE tests
-  already use — `tests/common/netns.py` + `veth.py` for network namespaces,
-  `accel_pppd_process.py` to launch real `accel-pppd` instances,
-  `pppd_process.py` for a real PPP client. Three `accel-pppd` instances
-  linked by veth pairs: one in LAC mode (simulating MK) running real local
-  PPP against a real `pppd` client — genuine LCP/PAP negotiation, so the
-  ICCN it sends carries genuine Proxy AVPs, not hand-crafted ones; the switch
-  build in the middle, configured with a `[l2tp-switch]` rule matching the
-  LAC instance's calling-number; a third instance in plain LNS mode
-  (simulating the customer's downstream LNS) with its own `chap-secrets`/IP
-  pool. Assertions: the `pppd` client's negotiated username and IP address
-  come from the *downstream* (third) instance's config, not the switch's;
-  `l2tp switch show` on the middle instance lists the session; the switch
-  instance's own RADIUS/PPP accounting shows no activity for it.
+- **Integration**: a pytest test under a new `tests/accel-pppd/l2tp_switch/`
+  directory, with its own `conftest.py` mirroring the exact structure of
+  `accel-pppd/pppoe/conftest.py` and `accel-pppd/ipoe/conftest.py` (each adds
+  scenario-specific fixtures on top of the shared ones in the top-level
+  `conftest.py`, rather than reinventing process/config management).
+  Deliberately does **not** reuse `veth_pair_netns`/`netns.py` — every
+  existing integration test uses that fixture for one `accel_pppd_instance`
+  plus one client tool (`pppd`, `dhclient`) across one link, and there is no
+  existing precedent for chaining multiple `accel-pppd` instances over a
+  simulated link. L2TP is plain UDP between IP endpoints, so introducing a
+  new multi-node veth topology isn't needed and wouldn't match how any
+  existing test in this suite is built:
+  - **Downstream/customer-LNS leg**: reuses `accel_pppd_instance` exactly as
+    written today — a second, ordinary instance in plain LNS mode, bound to
+    a different loopback port, with its own `chap-secrets`/IP pool config,
+    no code changes to the fixture at all.
+  - **MK leg**: accel-ppp's own LAC-mode path can't stand in for MK, because
+    it always terminates PPP locally itself today (confirmed against
+    `l2tp_session_connect()`, which calls `l2tp_session_start_data_channel()`
+    regardless of `lns_mode`) — it has no Proxy-AVP-forwarding behavior to
+    borrow; that behavior is what's being built on the LNS-facing side of
+    the switch, not something available on the LAC side already. Simulating
+    MK therefore needs a scriptable peer that sends SCCRQ/ICRQ/ICCN with
+    specific, controlled Proxy LCP/Auth AVPs. Rather than re-implementing
+    L2TP AVP framing a second time in Python, this reuses the one existing
+    precedent for this shape of tool in this module:
+    `accel-pppd/ctrl/l2tp/packet_test.c`, a standalone, non-cmake, manually
+    compiled C harness that already drives the real `packet.c` encode/decode
+    through a real socket. A second small standalone binary in that same
+    style (or a scripted-exchange mode added to `packet_test.c` itself)
+    plays the MK peer, driven from pytest by a new
+    `tests/common/l2tp_peer_process.py` — structurally identical to
+    `pppd_process.py`/`dhclient_process.py` (`start()`/`end()`, a `Popen`, a
+    reader thread), not a new kind of test wrapper.
+  - **Assertions**: same style as `test_pppoe_session_chap_secrets.py` — a
+    sleep-loop polling `accel-cmd show ...`/`l2tp switch show` up to a
+    `max_wait_time`, plain `assert`, liberal `print()` diagnostics. Checks:
+    the downstream instance shows the session with the identity carried in
+    the scripted Proxy Auth AVPs; `l2tp switch show` on the switch instance
+    lists it; the switch instance's own RADIUS/PPP accounting shows no
+    activity for it. A new `l2tp_switch` pytest marker is added to the
+    top-level `conftest.py`, alongside the existing `ipoe_driver`/
+    `vlan_mon_driver`/`chap_secrets` markers.
 - **`accel-cmd` tests**: `l2tp switch show/add/del` get coverage alongside
   the existing command tests in `tests/accel-cmd/test_cmd_basic.py` and
   `test_real_commands.py`, following those files' existing assertion style
