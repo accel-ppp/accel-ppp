@@ -5139,6 +5139,40 @@ static int l2tp_switch_show_exec(const char *cmd, char * const *fields,
 	return CLI_CMD_OK;
 }
 
+static int l2tp_switch_add_exec(const char *cmd, char * const *fields,
+				int fields_cnt, void *client)
+{
+	if (fields_cnt != 5) {
+		cli_send(client, "usage: l2tp switch add <value> <target>\r\n");
+		return CLI_CMD_SYNTAX;
+	}
+
+	if (l2tp_switch_line_add((const uint8_t *)fields[3], strlen(fields[3]),
+				 fields[4]) < 0) {
+		cli_send(client, "failed: unknown target or duplicate value\r\n");
+		return CLI_CMD_FAILED;
+	}
+
+	return CLI_CMD_OK;
+}
+
+static int l2tp_switch_del_exec(const char *cmd, char * const *fields,
+				int fields_cnt, void *client)
+{
+	if (fields_cnt != 4) {
+		cli_send(client, "usage: l2tp switch del <value>\r\n");
+		return CLI_CMD_SYNTAX;
+	}
+
+	if (l2tp_switch_line_del((const uint8_t *)fields[3],
+				 strlen(fields[3])) < 0) {
+		cli_send(client, "failed: no such value\r\n");
+		return CLI_CMD_FAILED;
+	}
+
+	return CLI_CMD_OK;
+}
+
 static void l2tp_init(void)
 {
 	int fd;
@@ -5174,6 +5208,10 @@ static void l2tp_init(void)
 				 "l2tp", "create", "session");
 	cli_register_simple_cmd2(l2tp_switch_show_exec, NULL, 2,
 				 "l2tp", "switch");
+	cli_register_simple_cmd2(l2tp_switch_add_exec, NULL, 3,
+				 "l2tp", "switch", "add");
+	cli_register_simple_cmd2(l2tp_switch_del_exec, NULL, 3,
+				 "l2tp", "switch", "del");
 
 	if (triton_event_register_handler(EV_CONFIG_RELOAD,
 					  (triton_event_func)load_config) < 0)
