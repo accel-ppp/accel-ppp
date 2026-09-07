@@ -746,14 +746,22 @@ def test_l2tp_switch_add_del(accel_pppd_instance, accel_cmd):
     (exit, out, err) = process.run(
         [accel_cmd, "l2tp switch add 472913 acme"]
     )
-    # no target named "acme" configured in this test's base config -> fails
-    assert exit != 0
+    # accel-cmd's own exit code reflects only local/connection errors, never
+    # whether the remote CLI command succeeded (confirmed against a real
+    # accel-pppd/accel-cmd on a VM while writing this plan -- it is always
+    # 0 here, same "# accel-cmd fails" convention already used elsewhere in
+    # this test suite, e.g. test_pppoe_session_wo_auth.py). A failed command
+    # is signaled by "command failed" appended to the response text instead
+    # -- no target named "acme" is configured in this test's base config, so
+    # that's what should appear here.
+    assert exit == 0
+    assert "failed" in out
 ```
 
 - [ ] **Step 2: Run, verify it fails**
 
 Run: `sudo python3 -m pytest -v accel-pppd/l2tp_switch/test_switch_cli.py`
-Expected: FAIL — `l2tp switch add` is not a recognized command yet (`CLI_CMD_SYNTAX`/unknown command from the CLI framework).
+Expected: FAIL — `l2tp switch add` is not a recognized command yet. `cli_process_simple_cmd()` matches simple commands by header *prefix*, so typing `l2tp switch add ...` still matches Task 1's already-registered 2-word `l2tp switch` (show) handler and runs it, returning `CLI_CMD_OK` with no error text — the assertion looking for `"failed"` in the output fails because that text was never produced, not because the command was rejected outright.
 
 - [ ] **Step 3: Implement `l2tp switch add`/`del`**
 
@@ -819,7 +827,8 @@ def test_l2tp_switch_add_unknown_target(accel_pppd_instance, accel_cmd):
     assert accel_pppd_instance
 
     (exit, out, err) = process.run([accel_cmd, "l2tp switch add 472913 acme"])
-    assert exit != 0
+    assert exit == 0
+    assert "failed" in out
 
 
 class TestWithTarget:
@@ -837,27 +846,34 @@ class TestWithTarget:
             [accel_cmd, "l2tp switch add 472913 acme"]
         )
         assert exit == 0
+        assert "failed" not in out
 
         (exit, out, err) = process.run([accel_cmd, "l2tp switch del 472913"])
         assert exit == 0
+        assert "failed" not in out
 
         (exit, out, err) = process.run([accel_cmd, "l2tp switch del 472913"])
-        assert exit != 0  # already removed
+        assert exit == 0
+        assert "failed" in out  # already removed
 
     def test_l2tp_switch_add_duplicate_rejected(self, accel_pppd_instance, accel_cmd):
         assert accel_pppd_instance
 
         (exit, out, err) = process.run([accel_cmd, "l2tp switch add 472913 acme"])
         assert exit == 0
+        assert "failed" not in out
 
         # same value again, even naming a valid target -- l2tp_switch_line_add()'s
         # own line_find() check (Task 1) must reject this, not silently overwrite it
         (exit, out, err) = process.run([accel_cmd, "l2tp switch add 472913 acme"])
-        assert exit != 0
+        assert exit == 0
+        assert "failed" in out
 ```
 
 Run: `sudo python3 -m pytest -v accel-pppd/l2tp_switch/test_switch_cli.py`
 Expected: all PASS.
+
+**Bug found verifying this against a real accel-pppd/accel-cmd on a VM:** the original version of this test used `assert exit != 0` for every failure case. `accel-cmd`'s process exit code reflects only local/connection-level errors (bad params, connection failure, timeout) — never whether the remote CLI command itself succeeded (see `accel-cmd/accel_cmd.c`'s `XSTATUS_*` enum, none of which correspond to a remote failure). This is why the existing test suite already carries `# accel-cmd fails` comments next to `assert exit == 0` in several places (e.g. `tests/accel-pppd/pppoe/test_pppoe_session_wo_auth.py`). A remote failure is signaled only by `"command failed"` (`CLI_CMD_FAILED`) or `"syntax error"` (`CLI_CMD_SYNTAX`) appended to the response text (`accel-pppd/cli/cli.c`'s `MSG_FAILURE_ERROR`/`MSG_SYNTAX_ERROR`). Every `assert exit != 0` above fails outright against the real daemon (`accel-cmd`'s exit code is always 0 here) — confirmed by actually running this test against a real accel-pppd/accel-cmd on a VM. Fixed to assert on `"failed" in out`/`"failed" not in out` instead.
 
 - [ ] **Step 5: Commit**
 
