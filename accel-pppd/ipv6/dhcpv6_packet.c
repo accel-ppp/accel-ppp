@@ -63,6 +63,26 @@ static struct dict_option known_options[] = {
 	{ 0 }
 };
 
+/* RFC 6334: one uncompressed, terminated DNS name. */
+static int validate_aftr_name(const uint8_t *data, unsigned int len)
+{
+	unsigned int offset = 0, label_len;
+
+	if (len <= 3 || len > 255)
+		return 0;
+
+	while (offset < len) {
+		label_len = data[offset++];
+		if (!label_len)
+			return offset > 1 && offset == len;
+		if (label_len > 63 || label_len > len - offset)
+			return 0;
+		offset += label_len;
+	}
+
+	return 0;
+}
+
 static void *parse_option(void *ptr, void *endptr, struct list_head *opt_list)
 {
 	struct dict_option *dopt;
@@ -72,6 +92,12 @@ static void *parse_option(void *ptr, void *endptr, struct list_head *opt_list)
 	if (ptr + sizeof(*opth) > endptr ||
 	    ptr + sizeof(*opth) + ntohs(opth->len) > endptr) {
 		log_warn("dhcpv6: invalid packet received\n");
+		return NULL;
+	}
+
+	if (opth->code == htons(D6_OPTION_AFTR_NAME) &&
+	    !validate_aftr_name(opth->data, ntohs(opth->len))) {
+		log_warn("dhcpv6: invalid AFTR-Name option\n");
 		return NULL;
 	}
 
@@ -117,6 +143,7 @@ struct dhcpv6_packet *dhcpv6_packet_parse(const void *buf, size_t size)
 	struct dhcpv6_relay *rel;
 	struct dhcpv6_relay_hdr *rhdr;
 	struct dhcpv6_msg_hdr *inner_hdr;
+	int aftr_name_seen = 0, relay_depth = 0;
 	void *ptr, *endptr, *relay_end, *inner_end;
 
 	if (size < sizeof(struct dhcpv6_msg_hdr)) {
@@ -141,6 +168,10 @@ struct dhcpv6_packet *dhcpv6_packet_parse(const void *buf, size_t size)
 	endptr = ((void *)pkt->hdr) + size;
 
 	while (pkt->hdr->type == D6_RELAY_FORW) {
+		if (relay_depth++ >= DHCPV6_HOP_COUNT_LIMIT) {
+			log_warn("dhcpv6: relay nesting limit exceeded\n");
+			goto error;
+		}
 		rhdr = (struct dhcpv6_relay_hdr *)pkt->hdr;
 		if (((void *)rhdr) + sizeof(*rhdr) > endptr) {
 			log_warn("dhcpv6: invalid packet received\n");
@@ -205,8 +236,18 @@ struct dhcpv6_packet *dhcpv6_packet_parse(const void *buf, size_t size)
 			pkt->clientid = ptr;
 		else if (opth->code == htons(D6_OPTION_SERVERID))
 			pkt->serverid = ptr;
-		else if (opth->code == htons(D6_OPTION_RAPID_COMMIT))
+		else if (opth->code == htons(D6_OPTION_AFTR_NAME)) {
+			if (aftr_name_seen++) {
+				log_warn("dhcpv6: duplicate AFTR-Name option\n");
+				goto error;
+			}
+		} else if (opth->code == htons(D6_OPTION_RAPID_COMMIT)) {
+			if (pkt->rapid_commit || opth->len) {
+				log_warn("dhcpv6: invalid or duplicate Rapid-Commit option\n");
+				goto error;
+			}
 			pkt->rapid_commit = 1;
+		}
 
 		ptr = parse_option(ptr, endptr, &pkt->opt_list);
 		if (!ptr)
@@ -224,7 +265,8 @@ struct dhcpv6_option *dhcpv6_option_alloc(struct dhcpv6_packet *pkt, int code, i
 {
 	struct dhcpv6_option *opt;
 
-	if ((void *)pkt->hdr->data + BUF_SIZE - pkt->endptr < sizeof(struct dhcpv6_opt_hdr) + len)
+	if (len < 0 || len > BUF_SIZE ||
+	    (char *)(pkt + 1) + BUF_SIZE - (char *)pkt->endptr < sizeof(struct dhcpv6_opt_hdr) + (size_t)len)
 		return NULL;
 
 	opt = _malloc(sizeof(*opt));
@@ -251,7 +293,8 @@ struct dhcpv6_option *dhcpv6_nested_option_alloc(struct dhcpv6_packet *pkt, stru
 {
 	struct dhcpv6_option *opt;
 
-	if ((void *)pkt->hdr->data + BUF_SIZE - pkt->endptr < sizeof(struct dhcpv6_opt_hdr) + len)
+	if (len < 0 || len > BUF_SIZE ||
+	    (char *)(pkt + 1) + BUF_SIZE - (char *)pkt->endptr < sizeof(struct dhcpv6_opt_hdr) + (size_t)len)
 		return NULL;
 
 	opt = _malloc(sizeof(*opt));
@@ -297,7 +340,7 @@ void dhcpv6_fill_relay_info(struct dhcpv6_packet *pkt)
 		memcpy(&rhdr->peer_addr, &rel->peer_addr, sizeof(rhdr->peer_addr));
 		opt = (struct dhcpv6_opt_hdr *)rhdr->data;
 		opt->code = htons(D6_OPTION_RELAY_MSG);
-		opt->len = (uint8_t *)pkt->endptr - rhdr->data;
+		opt->len = htons((uint8_t *)pkt->endptr - opt->data);
 	}
 
 	rel = list_entry(pkt->relay_list.next, typeof(*rel), entry);
@@ -325,6 +368,9 @@ struct dhcpv6_packet *dhcpv6_packet_alloc_reply(struct dhcpv6_packet *req, int t
 
 	while (!list_empty(&req->relay_list)) {
 		rel = list_entry(req->relay_list.next, typeof(*rel), entry);
+		if ((char *)(pkt + 1) + BUF_SIZE - (char *)pkt->hdr <
+		    sizeof(struct dhcpv6_relay_hdr) + sizeof(struct dhcpv6_opt_hdr) + sizeof(*pkt->hdr))
+			goto error;
 		rel->hdr = (void *)pkt->hdr;
 		pkt->hdr = (void *)rel->hdr + sizeof(struct dhcpv6_relay_hdr) + sizeof(struct dhcpv6_opt_hdr);
 		list_move_tail(&rel->entry, &pkt->relay_list);

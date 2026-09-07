@@ -10,6 +10,7 @@
 
 #define DHCPV6_CLIENT_PORT 546
 #define DHCPV6_SERV_PORT 547
+#define DHCPV6_HOP_COUNT_LIMIT 8
 
 #define D6_OPTION_CLIENTID         1
 #define D6_OPTION_SERVERID         2
