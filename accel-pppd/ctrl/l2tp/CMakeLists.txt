@@ -4,6 +4,7 @@ ADD_DEFINITIONS(-DDICTIONARY="${CMAKE_INSTALL_PREFIX}/share/accel-ppp/l2tp/dicti
 
 ADD_LIBRARY(l2tp SHARED
 	l2tp.c
+	l2tp_switch_conf.c
 	dict.c
 	packet.c
 	#	netlink.c

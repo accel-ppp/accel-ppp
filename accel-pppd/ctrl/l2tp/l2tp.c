@@ -33,6 +33,7 @@
 
 #include "l2tp.h"
 #include "attr_defs.h"
+#include "l2tp_switch_conf.h"
 
 #ifndef SOL_PPPOL2TP
 #define SOL_PPPOL2TP 273
@@ -209,6 +210,20 @@ static int l2tp_conn_read(struct triton_md_handler_t *);
 static void l2tp_session_free(struct l2tp_sess_t *sess);
 static void l2tp_tunnel_free(struct l2tp_conn_t *conn);
 static void apses_stop(void *data);
+
+/* l2tp-switch: struct l2tp_sess_t (below) holds pointers to these before
+ * their full bodies are defined (Tasks 6/7), and l2tp_session_free()'s
+ * teardown hook (Task 8) calls the two functions below before their
+ * natural definition point near the rest of the splice/pairing code
+ * (Task 7, anchored after l2tp_session_connect ~1951) -- see Task 1 of
+ * the implementation plan for why these live here together, matching
+ * this file's own existing forward-declaration convention above. */
+struct l2tp_switch_avps;
+struct l2tp_switch_link_t;
+
+static unsigned int l2tp_switch_active_total(void);
+static void l2tp_switch_link_free(struct l2tp_switch_link_t *link);
+static void l2tp_switch_teardown_peer(void *data);
 
 static void l2tp_stat_inc(unsigned int *stat)
 {
@@ -4623,6 +4638,13 @@ static struct l2tp_serv_t udp_serv =
 	.ctx.close=l2tp_ip_close,
 };*/
 
+in_addr_t l2tp_conf_get_bind_addr(void)
+{
+	const char *opt = conf_get_opt("l2tp", "bind");
+
+	return opt ? inet_addr(opt) : htonl(INADDR_ANY);
+}
+
 static int start_udp_server(void)
 {
 	struct sockaddr_in addr;
@@ -5103,6 +5125,20 @@ static void load_config(void)
 	}
 }
 
+static int l2tp_switch_show_exec(const char *cmd, char * const *fields,
+				 int fields_cnt, void *client)
+{
+	struct l2tp_switch_target_t *t;
+
+	cli_send(client, "targets:\r\n");
+	list_for_each_entry(t, &l2tp_switch_targets, entry)
+		cli_sendv(client, "  %s -> %s:%hu\r\n", t->name,
+			 inet_ntoa(t->peer_addr.sin_addr),
+			 ntohs(t->peer_addr.sin_port));
+
+	return CLI_CMD_OK;
+}
+
 static void l2tp_init(void)
 {
 	int fd;
@@ -5121,6 +5157,12 @@ static void l2tp_init(void)
 
 	load_config();
 
+	if (l2tp_switch_conf_load() < 0) {
+		log_emerg("l2tp-switch: configuration is invalid,"
+			  " terminating\n");
+		_exit(EXIT_FAILURE);
+	}
+
 	start_udp_server();
 
 	cli_register_simple_cmd2(&show_stat_exec, NULL, 2, "show", "stat");
@@ -5130,6 +5172,8 @@ static void l2tp_init(void)
 	cli_register_simple_cmd2(l2tp_create_session_exec,
 				 l2tp_create_session_help, 3,
 				 "l2tp", "create", "session");
+	cli_register_simple_cmd2(l2tp_switch_show_exec, NULL, 2,
+				 "l2tp", "switch");
 
 	if (triton_event_register_handler(EV_CONFIG_RELOAD,
 					  (triton_event_func)load_config) < 0)
