@@ -2,6 +2,7 @@ import pytest
 from common import process
 
 
+@pytest.mark.l2tp_switch
 def test_l2tp_switch_show_empty(accel_pppd_instance, accel_cmd):
     assert accel_pppd_instance
 
@@ -11,6 +12,7 @@ def test_l2tp_switch_show_empty(accel_pppd_instance, accel_cmd):
     assert "targets:" in out
 
 
+@pytest.mark.l2tp_switch
 class TestWithTarget:
     @pytest.fixture()
     def l2tp_switch_config(self):
@@ -30,6 +32,7 @@ class TestWithTarget:
         assert "acme -> 203.0.113.50:1701" in out
 
 
+@pytest.mark.l2tp_switch
 class TestDuplicateLine:
     """A line= value must not appear twice, even pointing at different
     targets -- spec section 11's fatal config-load error, not silent
@@ -53,6 +56,7 @@ class TestDuplicateLine:
         assert accel_pppd_instance is False
 
 
+@pytest.mark.l2tp_switch
 class TestSelfLoopTarget:
     """A target whose peer-addr equals this host's own [l2tp] bind
     address is a tunnel-to-itself misconfiguration -- also a fatal

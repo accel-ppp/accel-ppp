@@ -1,7 +1,9 @@
+import pytest
 import time
 from common import process, config, accel_pppd_process
 
 
+@pytest.mark.l2tp_switch
 def test_switch_tunnel_comes_up(pytestconfig, accel_cmd, accel_pppd):
     # downstream ("customer") LNS instance, plain L2TP LNS on port 12345
     downstream_config = config.make_tmp(

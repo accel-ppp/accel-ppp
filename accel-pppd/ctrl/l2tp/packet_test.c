@@ -59,6 +59,14 @@ static struct l2tp_dict_attr_t dict[] = {
 	{ .name = "Assigned-Tunnel-Id", .id = Assigned_Tunnel_ID, .type = ATTR_TYPE_INT16,  .M =  1, .H = -1 },
 	{ .name = "Call-Serial-Number", .id = Call_Serial_Number, .type = ATTR_TYPE_INT32,  .M =  1, .H = -1 },
 	{ .name = "Random-Vector",      .id = Random_Vector,      .type = ATTR_TYPE_OCTETS, .M =  1, .H =  0 },
+	{ .name = "Init-Recv-LCP",       .id = Init_Recv_LCP,       .type = ATTR_TYPE_OCTETS, .M = 0, .H = -1 },
+	{ .name = "Last-Sent-LCP",       .id = Last_Sent_LCP,       .type = ATTR_TYPE_OCTETS, .M = 0, .H = -1 },
+	{ .name = "Last-Recv-LCP",       .id = Last_Recv_LCP,       .type = ATTR_TYPE_OCTETS, .M = 0, .H = -1 },
+	{ .name = "Proxy-Authen-Type",   .id = Proxy_Authen_Type,   .type = ATTR_TYPE_INT16,  .M = 0, .H = -1 },
+	{ .name = "Proxy-Authen-Name",   .id = Proxy_Authen_Name,   .type = ATTR_TYPE_STRING, .M = 0, .H = -1 },
+	{ .name = "Proxy-Authen-Challenge", .id = Proxy_Authen_Challenge, .type = ATTR_TYPE_OCTETS, .M = 0, .H = -1 },
+	{ .name = "Proxy-Authen-ID",     .id = Proxy_Authen_ID,     .type = ATTR_TYPE_INT16,  .M = 0, .H = -1 },
+	{ .name = "Proxy-Authen-Response", .id = Proxy_Authen_Response, .type = ATTR_TYPE_OCTETS, .M = 0, .H = -1 },
 };
 
 struct l2tp_dict_attr_t *l2tp_dict_find_attr_by_id(int id)
@@ -417,6 +425,44 @@ static void test_roundtrip(int hide_avps)
 }
 
 /*
+ * The l2tp-switch feature's Proxy LCP AVP round-trips through the same
+ * encoder/parser as everything else here -- regression coverage for the
+ * type confusion bug this feature hit for real (docs/superpowers/plans/
+ * 2026-09-07-l2tp-switching.md, Task 6's fix commit): Last-Sent-LCP is an
+ * octet string, not an int, so l2tp_switch_capture_avp() must read
+ * attr->val.octets for it, not attr->val.uint16.
+ */
+static void test_proxy_avp_round_trip(void)
+{
+	static const uint8_t lcp[] = { 0x01, 0x02, 0x03, 0x04 };
+	struct l2tp_packet_t *pack;
+	const struct l2tp_attr_t *attr;
+
+	pack = l2tp_packet_alloc(2, Message_Type_Incoming_Call_Connected,
+				 &sock_addr, 0, secret, sizeof(secret) - 1);
+	CHECK(pack != NULL);
+	if (!pack)
+		return;
+
+	CHECK(l2tp_packet_add_octets(pack, Last_Sent_LCP, lcp, sizeof(lcp), 0) == 0);
+
+	CHECK(l2tp_packet_send(sock, pack) == 0);
+	l2tp_packet_free(pack);
+
+	pack = NULL;
+	CHECK(l2tp_recv(sock, &pack, NULL, secret, sizeof(secret) - 1) == 0);
+	CHECK(pack != NULL);
+	if (!pack)
+		return;
+
+	attr = find_attr(pack, Last_Sent_LCP);
+	CHECK(attr && attr->length == (int)sizeof(lcp));
+	CHECK(attr && memcmp(attr->val.octets, lcp, sizeof(lcp)) == 0);
+
+	l2tp_packet_free(pack);
+}
+
+/*
  * A hidden AVP deciphered with the wrong secret yields a random length
  * prefix. Whatever it is, the parser must not read outside the AVP.
  */
@@ -476,6 +522,7 @@ int main(void)
 	test_hidden_avp_prerequisites();
 	test_roundtrip(0);
 	test_roundtrip(1);
+	test_proxy_avp_round_trip();
 	test_wrong_secret();
 
 	close(sock);

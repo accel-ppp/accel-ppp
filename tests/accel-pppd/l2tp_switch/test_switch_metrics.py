@@ -1,3 +1,4 @@
+import pytest
 import http.client
 import time
 from common import process, config, accel_pppd_process, l2tp_peer_process
@@ -18,6 +19,7 @@ def _metrics_request():
         conn.close()
 
 
+@pytest.mark.l2tp_switch
 def test_switch_metrics_exposed_via_native_endpoint(pytestconfig, accel_cmd, accel_pppd):
     d_started, d_thread, d_ctrl, d_cfg = start_instance(
         accel_pppd, accel_cmd, 2101, "127.0.0.1", 17090, "downstreamsecret"

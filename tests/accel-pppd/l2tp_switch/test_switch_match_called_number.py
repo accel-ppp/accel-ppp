@@ -1,8 +1,10 @@
+import pytest
 import time
 from common import process, l2tp_peer_process
 from helpers import start_instance
 
 
+@pytest.mark.l2tp_switch
 def test_switch_matches_on_called_number(pytestconfig, accel_cmd, accel_pppd):
     d_started, d_thread, d_ctrl, d_cfg = start_instance(
         accel_pppd, accel_cmd, 2101, "127.0.0.1", 17022, "downstreamsecret"

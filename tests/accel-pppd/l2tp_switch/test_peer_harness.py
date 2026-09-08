@@ -1,6 +1,8 @@
+import pytest
 from common import process, config, accel_pppd_process, l2tp_peer_process
 
 
+@pytest.mark.l2tp_switch
 def test_peer_harness_against_plain_lns(pytestconfig, accel_cmd, accel_pppd):
     lns_config = config.make_tmp(
         """

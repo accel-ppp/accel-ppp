@@ -2,6 +2,7 @@ import pytest
 from common import process
 
 
+@pytest.mark.l2tp_switch
 def test_l2tp_switch_add_unknown_target(accel_pppd_instance, accel_cmd):
     assert accel_pppd_instance
 
@@ -15,6 +16,7 @@ def test_l2tp_switch_add_unknown_target(accel_pppd_instance, accel_cmd):
     assert "failed" in out
 
 
+@pytest.mark.l2tp_switch
 class TestWithTarget:
     @pytest.fixture()
     def l2tp_switch_config(self):
