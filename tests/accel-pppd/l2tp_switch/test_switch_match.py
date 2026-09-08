@@ -1,0 +1,85 @@
+import time
+from common import process, config, accel_pppd_process, l2tp_peer_process
+
+
+def start_instance(accel_pppd, accel_cmd, cli_port, l2tp_bind, l2tp_port, secret, extra=""):
+    cfg = config.make_tmp(
+        f"""
+    [modules]
+    log_syslog
+    l2tp
+
+    [core]
+    log-error=/dev/stderr
+    [log]
+    log-file=/dev/stdout
+    level=5
+    [cli]
+    tcp=127.0.0.1:{cli_port}
+    [client-ip-range]
+    127.0.0.0/8
+    [l2tp]
+    bind={l2tp_bind}
+    port={l2tp_port}
+    secret={secret}
+    {extra}
+    """
+    )
+    started, thread, ctrl = accel_pppd_process.start(
+        accel_pppd, ["-c" + cfg], accel_cmd, 5.0, cli_port=cli_port
+    )
+    return started, thread, ctrl, cfg
+
+
+def test_switch_tags_matching_call(pytestconfig, accel_cmd, accel_pppd):
+    d_started, d_thread, d_ctrl, d_cfg = start_instance(
+        accel_pppd, accel_cmd, 2101, "127.0.0.1", 17020, "downstreamsecret"
+    )
+    assert d_started
+
+    try:
+        s_started, s_thread, s_ctrl, s_cfg = start_instance(
+            accel_pppd,
+            accel_cmd,
+            2001,
+            "127.0.0.1",
+            17021,
+            "upstreamsecret",
+            extra="""
+    [l2tp-switch]
+    target=downstream,127.0.0.1,17020,downstreamsecret
+    line=472913,downstream
+    """,
+        )
+        assert s_started
+
+        try:
+            # wait for the persistent downstream tunnel (Task 3)
+            for _ in range(50):
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+                if "[up]" in out:
+                    break
+                time.sleep(0.1)
+            assert "[up]" in out
+
+            peer_thread, peer_ctrl = l2tp_peer_process.start(
+                "/tmp/l2tp_switch_peer_test",
+                [
+                    "--peer-addr", "127.0.0.1",
+                    "--peer-port", "17021",
+                    "--secret", "upstreamsecret",
+                    "--calling-number", "472913",
+                ],
+            )
+            rc, out, err = l2tp_peer_process.wait(peer_thread, peer_ctrl, 10.0)
+            assert rc == 0, err
+
+            # the switch instance's own accel-cmd should show one pending/switched call
+            (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+            assert "matched: 1" in out
+        finally:
+            accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=2001)
+            config.delete_tmp(s_cfg)
+    finally:
+        accel_pppd_process.end(d_thread, d_ctrl, accel_cmd, 10.0, cli_port=2101)
+        config.delete_tmp(d_cfg)

@@ -114,6 +114,39 @@ struct l2tp_stat_t
 	unsigned int data_starting;
 	unsigned int data_active;
 	unsigned int data_finishing;
+
+	/* l2tp-switch (Tasks 5-9) */
+	unsigned int switch_matched;             /* ICRQ matched a target (Task 5) */
+	unsigned int switch_placed;              /* downstream call placed (Task 6) */
+	unsigned int switch_downstream_connected; /* downstream ICRP handled (Task 6/7) */
+
+	/* No switch_active field here, deliberately: "currently bridged
+	 * pairs" already has exactly one correct source of truth --
+	 * l2tp_switch_target_t.active (Task 1), kept accurate by symmetric
+	 * increment/decrement in l2tp_switch_link_create()/_free() (Task 7),
+	 * including every partial-failure path. A second, independently
+	 * incremented/decremented copy here would be redundant at best and
+	 * silently wrong at worst if the two ever drift. Task 9 derives the
+	 * aggregate by summing every target's `active` on read instead. */
+
+	/* LNS-side aggregate byte counters (Task 7) -- named after
+	 * lns_mode/the existing `mode <lac|lns>` CLI terminology already in
+	 * this file, not "upstream": in ISP/BNG contexts "upstream" usually
+	 * means upload-vs-download traffic direction, which would collide
+	 * with the rx/tx direction these very counters carry. This is the
+	 * side facing MK, from that side's own point of view: rx is bytes
+	 * received FROM MK (which then get spliced out to whichever target
+	 * each call belongs to), tx is bytes sent back TO MK. Deliberately
+	 * aggregated across every target rather than split by MK's own
+	 * tunnel ID: those IDs are ephemeral (renegotiated on every
+	 * reconnect), so they make poor identity for a long-lived counter.
+	 * Per-target rx/tx (from that target's own point of view) live on
+	 * l2tp_switch_target_t itself (Task 1), not here -- there can be
+	 * several targets, and this struct is a single global snapshot.
+	 * Both are monotonic: never decremented, so Prometheus scraping
+	 * (Task 9) behaves correctly. */
+	uint64_t switch_lns_rx_bytes;
+	uint64_t switch_lns_tx_bytes;
 };
 
 static struct l2tp_stat_t l2tp_stat;
@@ -152,6 +185,8 @@ struct l2tp_sess_t
 	int apses_state;
 	struct ap_ctrl ctrl;
 	struct ppp_t ppp;
+
+	struct l2tp_switch_target_t *switch_target; /* NULL: normal session */
 };
 
 struct l2tp_conn_t
@@ -259,6 +294,11 @@ static void l2tp_stat_get(struct l2tp_stat_t *stat)
 	stat->data_starting = __atomic_load_n(&l2tp_stat.data_starting, __ATOMIC_RELAXED);
 	stat->data_active = __atomic_load_n(&l2tp_stat.data_active, __ATOMIC_RELAXED);
 	stat->data_finishing = __atomic_load_n(&l2tp_stat.data_finishing, __ATOMIC_RELAXED);
+	stat->switch_matched = __atomic_load_n(&l2tp_stat.switch_matched, __ATOMIC_RELAXED);
+	stat->switch_placed = __atomic_load_n(&l2tp_stat.switch_placed, __ATOMIC_RELAXED);
+	stat->switch_downstream_connected = __atomic_load_n(&l2tp_stat.switch_downstream_connected, __ATOMIC_RELAXED);
+	stat->switch_lns_rx_bytes = __atomic_load_n(&l2tp_stat.switch_lns_rx_bytes, __ATOMIC_RELAXED);
+	stat->switch_lns_tx_bytes = __atomic_load_n(&l2tp_stat.switch_lns_tx_bytes, __ATOMIC_RELAXED);
 }
 
 unsigned int __export l2tp_stat_starting(void)
@@ -3553,6 +3593,27 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 	sess->peer_sid = peer_sid;
 	sid = sess->sid;
 
+	{
+		const struct l2tp_dict_attr_t *match_attr = l2tp_switch_conf_attr();
+
+		if (match_attr) {
+			list_for_each_entry(attr, &pack->attrs, entry) {
+				if (attr->attr->id != match_attr->id)
+					continue;
+				sess->switch_target = l2tp_switch_lookup(
+					attr->val.octets, attr->length);
+				if (sess->switch_target) {
+					l2tp_stat_inc(&l2tp_stat.switch_matched);
+					log_tunnel(log_info1, conn,
+						   "call matches l2tp-switch"
+						   " target \"%s\"\n",
+						   sess->switch_target->name);
+				}
+				break;
+			}
+		}
+	}
+
 	/* Allocate memory for Calling-Number if exists, and put it to l2tp_sess_t structure */
 	if (n > 0) {
 		sess->calling_num = _malloc(n+1);
@@ -4727,6 +4788,18 @@ in_addr_t l2tp_conf_get_bind_addr(void)
 	return opt ? inet_addr(opt) : htonl(INADDR_ANY);
 }
 
+/* Parsed fresh via conf_get_opt(), like l2tp_conf_get_bind_addr() above --
+ * not read from the conf_port global, which start_udp_server() below only
+ * populates from "[l2tp] port=" *after* l2tp_switch_conf_load() has already
+ * run (l2tp_init() calls them in that order), so conf_port would still be
+ * stuck at its L2TP_PORT default at self-loop-validation time otherwise. */
+uint16_t l2tp_conf_get_bind_port(void)
+{
+	const char *opt = conf_get_opt("l2tp", "port");
+
+	return (opt && atoi(opt) > 0) ? atoi(opt) : L2TP_PORT;
+}
+
 static int start_udp_server(void)
 {
 	struct sockaddr_in addr;
@@ -5218,6 +5291,9 @@ static int l2tp_switch_show_exec(const char *cmd, char * const *fields,
 			 inet_ntoa(t->peer_addr.sin_addr),
 			 ntohs(t->peer_addr.sin_port),
 			 t->tunnel ? "up" : "down");
+
+	cli_send(client, "calls:\r\n");
+	cli_sendv(client, "  matched: %u\r\n", l2tp_stat.switch_matched);
 
 	return CLI_CMD_OK;
 }

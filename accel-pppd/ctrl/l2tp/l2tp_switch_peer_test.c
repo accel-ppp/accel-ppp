@@ -176,6 +176,7 @@ const struct l2tp_dict_value_t *l2tp_dict_find_value(const struct l2tp_dict_attr
 static struct sockaddr_in peer_addr;
 static const char *secret = "";
 static const char *calling_number = "472913";
+static const char *called_number;
 static uint16_t local_tid = 0x1234;
 static uint16_t local_sid = 0x5678;
 
@@ -230,13 +231,14 @@ int main(int argc, char **argv)
 		{"peer-port", required_argument, 0, 'p'},
 		{"secret", required_argument, 0, 's'},
 		{"calling-number", required_argument, 0, 'c'},
+		{"called-number", required_argument, 0, 'n'},
 		{0, 0, 0, 0},
 	};
 
 	peer_addr.sin_family = AF_INET;
 	peer_addr.sin_port = htons(1701);
 
-	while ((opt = getopt_long(argc, argv, "a:p:s:c:", opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "a:p:s:c:n:", opts, NULL)) != -1) {
 		switch (opt) {
 		case 'a':
 			if (inet_aton(optarg, &peer_addr.sin_addr) == 0)
@@ -251,9 +253,13 @@ int main(int argc, char **argv)
 		case 'c':
 			calling_number = optarg;
 			break;
+		case 'n':
+			called_number = optarg;
+			break;
 		default:
 			return die("usage: --peer-addr A --peer-port P"
-				   " --secret S [--calling-number C]");
+				   " --secret S [--calling-number C]"
+				   " [--called-number N]");
 		}
 	}
 
@@ -351,6 +357,8 @@ int main(int argc, char **argv)
 	l2tp_packet_add_int16(pack, Assigned_Session_ID, local_sid, 1);
 	l2tp_packet_add_int32(pack, Call_Serial_Number, 1, 1);
 	l2tp_packet_add_string(pack, Calling_Number, calling_number, 1);
+	if (called_number)
+		l2tp_packet_add_string(pack, Called_Number, called_number, 1);
 	pack->hdr.tid = htons(peer_tid);
 	pack->hdr.sid = 0;
 	pack->hdr.Ns = htons(my_ns);

@@ -227,20 +227,31 @@ static int parse_line(const char *val)
 }
 
 extern in_addr_t l2tp_conf_get_bind_addr(void); /* added to l2tp.c, Task 1 Step 3 */
+extern uint16_t l2tp_conf_get_bind_port(void); /* added to l2tp.c, Task 5 */
 
 static int validate_no_self_loop(void)
 {
 	in_addr_t bind_addr = l2tp_conf_get_bind_addr();
+	uint16_t bind_port = l2tp_conf_get_bind_port();
 	struct l2tp_switch_target_t *t;
 
 	if (bind_addr == INADDR_ANY)
 		return 0;
 
 	list_for_each_entry(t, &l2tp_switch_targets, entry) {
-		if (t->peer_addr.sin_addr.s_addr == bind_addr) {
-			log_error("l2tp-switch: target \"%s\" peer-addr equals"
-				  " this host's own [l2tp] bind address\n",
-				  t->name);
+		/* Both the IP *and* the port must match this host's own
+		 * [l2tp] listener for this to actually be a tunnel-to-itself
+		 * loop -- an IP-only comparison would reject any target that
+		 * merely shares an address with the switch's own bind (e.g.
+		 * a downstream instance colocated on the same host at a
+		 * different port, which is exactly how this feature's own
+		 * test suite runs a switch and downstream side by side on
+		 * 127.0.0.1). */
+		if (t->peer_addr.sin_addr.s_addr == bind_addr &&
+		    ntohs(t->peer_addr.sin_port) == bind_port) {
+			log_error("l2tp-switch: target \"%s\" peer-addr:port"
+				  " equals this host's own [l2tp]"
+				  " bind:port\n", t->name);
 			return -1;
 		}
 	}
