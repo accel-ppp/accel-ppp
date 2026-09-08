@@ -4361,6 +4361,8 @@ sudo python3 -m pytest -v -m l2tp_switch accel-pppd/l2tp_switch/
 
 Expected: all tests from Tasks 1-9 PASS together in one run (not just individually) — this catches any state leakage between tests (stray `/tmp` config files, leftover processes) that per-task runs might have missed.
 
+Task 10 matched the plan as written, no code bugs found. `packet_test.c`'s new `test_proxy_avp_round_trip()` passed clean under ASan/UBSan on the first build. `test_switch_cli.py` and `test_switch_config.py` each define test classes (`TestWithTarget`, `TestDuplicateLine`, `TestSelfLoopTarget`) rather than only bare functions — `@pytest.mark.l2tp_switch` is applied once to each class rather than to every individual method inside it, which is pytest's own standard idiom for applying one mark to a whole class's tests and is equivalent in effect to marking each method. Confirmed for real on a VM: `pytest -m l2tp_switch accel-pppd/l2tp_switch/` collects and passes all 17 tests (matching a plain unfiltered run of the same directory exactly) — nothing was silently left unmarked.
+
 - [ ] **Step 6: Commit**
 
 ```bash
