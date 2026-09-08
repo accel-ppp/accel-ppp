@@ -195,6 +195,8 @@ struct l2tp_conn_t
 	int state;
 	void *sessions;
 	unsigned int sess_count;
+
+	struct l2tp_switch_target_t *switch_target; /* NULL for ordinary tunnels */
 };
 
 static pthread_mutex_t l2tp_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -210,6 +212,11 @@ static int l2tp_conn_read(struct triton_md_handler_t *);
 static void l2tp_session_free(struct l2tp_sess_t *sess);
 static void l2tp_tunnel_free(struct l2tp_conn_t *conn);
 static void apses_stop(void *data);
+/* l2tp-switch (Task 3): l2tp_switch_target_connect(), defined right after
+ * l2tp_tunnel_alloc() below, starts an outbound tunnel the same way
+ * l2tp_create_tunnel_exec() does much further down in this file -- where
+ * l2tp_send_SCCRQ() is actually defined. */
+static void l2tp_send_SCCRQ(void *peer_addr);
 
 /* l2tp-switch: struct l2tp_sess_t (below) holds pointers to these before
  * their full bodies are defined (Tasks 6/7), and l2tp_session_free()'s
@@ -1214,6 +1221,14 @@ static void l2tp_tunnel_free(struct l2tp_conn_t *conn)
 
 	conn->state = STATE_CLOSE;
 
+	if (conn->switch_target) {
+		conn->switch_target->tunnel = NULL;
+		if (triton_timer_add(NULL, &conn->switch_target->reconnect_timer, 0) < 0)
+			log_error("l2tp-switch: target \"%s\": failed to"
+				  " schedule reconnect\n",
+				  conn->switch_target->name);
+	}
+
 	pthread_mutex_lock(&l2tp_lock);
 	l2tp_conn[conn->tid] = NULL;
 	pthread_mutex_unlock(&l2tp_lock);
@@ -1797,6 +1812,73 @@ err_conn:
 	mempool_free(conn);
 err:
 	return NULL;
+}
+
+static void l2tp_switch_target_connect(struct l2tp_switch_target_t *target)
+{
+	struct sockaddr_in host = {
+		.sin_family = AF_INET,
+		.sin_addr = { htonl(INADDR_ANY) },
+	};
+	struct l2tp_conn_t *conn;
+
+	if (ap_shutdown)
+		return;
+
+	conn = l2tp_tunnel_alloc(&target->peer_addr, &host, 3, 0, 0,
+				 conf_hide_avps);
+	if (conn == NULL) {
+		log_error("l2tp-switch: target \"%s\": tunnel allocation"
+			  " failed, retrying in 5s\n", target->name);
+		goto retry;
+	}
+
+	conn->secret = _strdup(target->secret);
+	if (conn->secret == NULL) {
+		log_error("l2tp-switch: target \"%s\": secret allocation"
+			  " failed\n", target->name);
+		l2tp_tunnel_free(conn);
+		goto retry;
+	}
+	conn->secret_len = target->secret_len;
+	conn->switch_target = target;
+
+	if (l2tp_tunnel_start(conn, l2tp_send_SCCRQ, &target->peer_addr) < 0) {
+		log_error("l2tp-switch: target \"%s\": starting tunnel"
+			  " failed, retrying in 5s\n", target->name);
+		l2tp_tunnel_free(conn);
+		goto retry;
+	}
+
+	target->tunnel = conn;
+	return;
+
+retry:
+	target->tunnel = NULL;
+	if (triton_timer_add(NULL, &target->reconnect_timer, 0) < 0)
+		log_error("l2tp-switch: target \"%s\": failed to schedule"
+			  " reconnect\n", target->name);
+}
+
+static void l2tp_switch_target_reconnect_timer(struct triton_timer_t *t)
+{
+	struct l2tp_switch_target_t *target =
+		container_of(t, typeof(*target), reconnect_timer);
+
+	triton_timer_del(t);
+	l2tp_switch_target_connect(target);
+}
+
+static void l2tp_switch_targets_connect(void)
+{
+	struct l2tp_switch_target_t *target;
+
+	list_for_each_entry(target, &l2tp_switch_targets, entry) {
+		target->reconnect_timer.expire =
+			l2tp_switch_target_reconnect_timer;
+		target->reconnect_timer.period = 5000;
+		l2tp_switch_target_connect(target);
+	}
 }
 
 static inline int l2tp_tunnel_update_peerport(struct l2tp_conn_t *conn,
@@ -5132,9 +5214,10 @@ static int l2tp_switch_show_exec(const char *cmd, char * const *fields,
 
 	cli_send(client, "targets:\r\n");
 	list_for_each_entry(t, &l2tp_switch_targets, entry)
-		cli_sendv(client, "  %s -> %s:%hu\r\n", t->name,
+		cli_sendv(client, "  %s -> %s:%hu [%s]\r\n", t->name,
 			 inet_ntoa(t->peer_addr.sin_addr),
-			 ntohs(t->peer_addr.sin_port));
+			 ntohs(t->peer_addr.sin_port),
+			 t->tunnel ? "up" : "down");
 
 	return CLI_CMD_OK;
 }
@@ -5196,6 +5279,7 @@ static void l2tp_init(void)
 			  " terminating\n");
 		_exit(EXIT_FAILURE);
 	}
+	l2tp_switch_targets_connect();
 
 	start_udp_server();
 
