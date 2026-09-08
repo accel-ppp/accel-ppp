@@ -888,6 +888,7 @@ git commit -m "feat(l2tp): add accel-cmd l2tp switch add/del"
 
 **Files:**
 - Modify: `accel-pppd/ctrl/l2tp/l2tp.c`
+- Modify: `tests/common/accel_pppd_process.py` (adds an optional `cli_port=` param to `start()`/`end()` — see the bug note after Step 3)
 - Test: `tests/accel-pppd/l2tp_switch/test_switch_tunnel.py`
 
 **Interfaces:**
@@ -928,9 +929,16 @@ def test_switch_tunnel_comes_up(pytestconfig, accel_cmd, accel_pppd):
     secret=downstreamsecret
     """
     )
+    # cli_port=2101 -- this instance's own [cli] tcp= above, which isn't
+    # accel-cmd's default port (2001, used by the switch instance below);
+    # without it, the readiness/shutdown checks silently target the wrong
+    # port for the whole max_wait_time instead of ever reaching this daemon
+    # (see the bug note after Step 3 -- accel_pppd_process.py needs a small
+    # change to accept this).
     downstream_started, downstream_thread, downstream_ctrl = (
         accel_pppd_process.start(
-            accel_pppd, ["-c" + downstream_config], accel_cmd, 5.0
+            accel_pppd, ["-c" + downstream_config], accel_cmd, 5.0,
+            cli_port=2101,
         )
     )
     assert downstream_started
@@ -975,11 +983,40 @@ def test_switch_tunnel_comes_up(pytestconfig, accel_cmd, accel_pppd):
         finally:
             accel_pppd_process.end(switch_thread, switch_ctrl, accel_cmd, 10.0)
     finally:
-        accel_pppd_process.end(downstream_thread, downstream_ctrl, accel_cmd, 10.0)
+        accel_pppd_process.end(
+            downstream_thread, downstream_ctrl, accel_cmd, 10.0, cli_port=2101
+        )
         config.delete_tmp(downstream_config)
 ```
 
-(Two directly-started `accel_pppd_process` pairs, not the `accel_pppd_instance` fixture, because that fixture is scoped to exactly one instance per test via `conftest.py`'s single `accel_pppd_config_file` fixture — calling `accel_pppd_process.start`/`.end` directly, exactly as `conftest.py`'s own `accel_pppd_instance` fixture does internally, is the natural way to run two.)
+(Two directly-started `accel_pppd_process` pairs, not the `accel_pppd_instance` fixture, because that fixture is scoped to exactly one instance per test via `conftest.py`'s single `accel_pppd_config_file` fixture — calling `accel_pppd_process.start`/`.end` directly, exactly as `conftest.py`'s own `accel_pppd_instance` fixture does internally, is the natural way to run two. The switch instance doesn't need `cli_port=` since its own `[cli] tcp=127.0.0.1:2001` already matches accel-cmd's default.)
+
+**Bug found running this against real accel-pppd/accel-cmd on a VM: `tests/common/accel_pppd_process.py` needs a small change first.** Both `start()`'s readiness poll (`accel-cmd show version`) and `end()`'s `shutdown hard` hardcode a bare `accel_cmd` invocation, which accel-cmd resolves to its compiled-in default port 2001. Every existing test in this suite only ever runs one instance at a time on that default port, so this was never exposed before — but this task's downstream instance deliberately uses 2101 to avoid colliding with the switch's own 2001, and `start()` has no way to know that. Confirmed by direct reproduction: in isolation, `accel_pppd_process.start()` against the downstream config above returns `started=False` after the full 5-second timeout, every time, because it's polling port 2001 where nothing is listening — not because the daemon failed to come up (its own `[cli]` on 2101 was confirmed listening throughout). Silently running this test unmodified would make the *whole test* impossible to ever pass, not flaky — a 100% reproducible failure.
+
+Fix by adding an optional `cli_port=None` parameter to both `start()` and `end()` in `accel_pppd_process.py`, defaulting to the old bare-`accel_cmd` behavior (so every other existing caller in the test suite is unaffected) and adding `["-p", str(cli_port)]` to the check/shutdown command when given:
+
+```python
+def start(accel_pppd, args, accel_cmd, max_wait_time, cli_port=None):
+    ...
+    check_cmd = [accel_cmd]
+    if cli_port is not None:
+        check_cmd += ["-p", str(cli_port)]
+    check_cmd += ["show version"]
+    ...
+    (exit, out, err) = process.run(check_cmd)
+    ...
+
+def end(accel_pppd_thread, accel_pppd_control, accel_cmd, max_wait_time, cli_port=None):
+    ...
+    shutdown_cmd = [accel_cmd]
+    if cli_port is not None:
+        shutdown_cmd += ["-p", str(cli_port)]
+    shutdown_cmd += ["shutdown hard"]
+    process.run(shutdown_cmd)
+    ...
+```
+
+Add `tests/common/accel_pppd_process.py` to this task's `git add` in Step 5.
 
 - [ ] **Step 2: Run, verify it fails**
 
@@ -989,6 +1026,12 @@ Expected: FAIL — `l2tp switch` doesn't print a `[up]`/`[down]` status yet, and
 - [ ] **Step 3: Implement persistent tunnel bring-up**
 
 In `l2tp.c`, add near the other tunnel-lifecycle statics (close to `l2tp_tunnel_alloc`/`l2tp_tunnel_start`):
+
+**Add a forward declaration first**, to Task 1's existing forward-declaration block near the top of the file (next to `l2tp_conn_read`/`l2tp_session_free`/etc.): `l2tp_send_SCCRQ()` is used below but not actually *defined* until much further down in `l2tp.c` (it's what `l2tp_create_tunnel_exec`'s own `l2tp_tunnel_start()` call passes too) — inserting `l2tp_switch_target_connect()` right after `l2tp_tunnel_alloc()`, as this step does, places it well before that definition, so without this the file fails to compile (implicit-declaration error, since it's used as a function-pointer argument of type `triton_event_func`, not merely called):
+
+```c
+static void l2tp_send_SCCRQ(void *peer_addr);
+```
 
 Every place in this file that accepts or initiates new work checks the global `ap_shutdown` flag first (`l2tp_recv_ICRQ`, `l2tp_recv_OCRQ`, `l2tp_recv_SCCRQ`) — this function must too, since it actively opens a brand-new tunnel and gets re-invoked by the reconnect timer for as long as the daemon runs. Without this guard, a target's tunnel dropping during a graceful shutdown (`ap_shutdown_soft()`, `session.c`) would make the reconnect timer open a new tunnel — new triton context, new network traffic — after the daemon has already started exiting:
 
@@ -1063,7 +1106,7 @@ static void l2tp_switch_targets_connect(void)
 
 `l2tp_tunnel_alloc(peer, host, framing_cap, lns_mode, port_set, hide_avps)` and the `l2tp_send_SCCRQ`-as-start-func pattern are copied verbatim from `l2tp_create_tunnel_exec` (`l2tp.c`, around line 4871-4890) — `lns_mode=0` because we are the LAC toward this target. `conf_hide_avps` is the existing module-wide default already used elsewhere in `load_config()`.
 
-`triton_timer_add(NULL, ...)`: passing `NULL` for the context runs the timer on the default/global triton context, since a target has no tunnel (and therefore no context) while it's down — check `triton_timer_add`'s existing non-tunnel-bound call sites in this codebase (e.g. anything calling it before a context exists) to confirm `NULL` is accepted; if it is not, use `triton_context_self()` from within `l2tp_init()`'s own registration context instead, or register a small dedicated `struct triton_context_t` owned by `l2tp_switch_conf.c` for this purpose — resolve this by testing Step 4 below; if the build fails or the timer never fires, this is the first place to look.
+`triton_timer_add(NULL, ...)`: passing `NULL` for the context runs the timer on the default/global triton context, since a target has no tunnel (and therefore no context) while it's down. Confirmed directly in `accel-pppd/triton/timer.c`'s own `triton_timer_add()` (~line 135): `if (ctx) t->ctx = ...; else t->ctx = (struct _triton_context_t *)default_ctx.tpd;` — `NULL` is an explicitly-handled, intentional case, not an oversight, so no fallback `switch_ctx` is needed.
 
 Add `switch_target` to `struct l2tp_conn_t`. This struct is defined directly in `l2tp.c` (~line 156), not `l2tp.h` — `l2tp.h` only holds the AVP/packet-format declarations shared with `dict.c`/`packet.c`, and neither `l2tp_sess_t` nor `l2tp_conn_t` needs to be visible outside `l2tp.c` itself, so this feature never needs to touch `l2tp.h` at all:
 
@@ -1100,12 +1143,15 @@ Extend `l2tp_switch_show_exec` (Task 1) to print status:
 - [ ] **Step 4: Run, verify it passes**
 
 Run: `sudo python3 -m pytest -v accel-pppd/l2tp_switch/test_switch_tunnel.py`
-Expected: PASS — the tunnel reaches `STATE_ESTB` against the downstream instance and `l2tp switch` reports `[up]`. If `triton_timer_add(NULL, ...)` from Step 3 doesn't compile or the reconnect timer never fires, replace it with a small file-scope `static struct triton_context_t switch_ctx;` in `l2tp.c`, registered once in `l2tp_init()` via `triton_context_register(&switch_ctx, NULL)`, and pass `&switch_ctx` to every `triton_timer_add` call in this task instead of `NULL`.
+Expected: PASS — the tunnel reaches `STATE_ESTB` against the downstream instance and `l2tp switch` reports `[up]`. Confirmed for real: built and run against a real downstream/switch pair of accel-pppd instances on a Debian 12 VM, `l2tp switch` reported `downstream -> 127.0.0.1:12345 [up]`, pytest PASSED in ~11s.
+
+**Manually verified beyond the automated test, with a caveat:** killed the downstream instance while the switch was running, waited past `conf_hello_interval`'s 60-second default (the earliest point the switch's own HELLO timer would notice the peer is gone and trigger `l2tp_tunnel_free()` → the reconnect hook), restarted downstream, and confirmed `l2tp switch` reported `[up]` again afterward with the switch daemon's own uptime unbroken throughout (so it wasn't a fluke of restarting the switch itself) and `show stat` reporting exactly one active L2TP tunnel. This is consistent with the reconnect path working, but inconclusive on its own: the switch's `[log] log-file=/dev/stdout` redirected to a file over a non-tty pipe, which fully buffers rather than line-buffers, so the actual HELLO-timeout/retransmit/reconnect log sequence never got flushed to disk before it could be inspected. If re-verifying this by hand, redirect through something that forces line buffering (e.g. `stdbuf -oL`) or set `log-file=` to a real file path rather than `/dev/stdout` piped through a shell redirect.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add accel-pppd/ctrl/l2tp/l2tp.c \
+        tests/common/accel_pppd_process.py \
         tests/accel-pppd/l2tp_switch/test_switch_tunnel.py
 git commit -m "feat(l2tp): bring up persistent outbound tunnels for switch targets"
 ```
