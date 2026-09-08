@@ -22,7 +22,7 @@ def test_switch_forwards_proxy_avps(pytestconfig, accel_cmd, accel_pppd):
             extra="""
     [l2tp-switch]
     target=downstream,127.0.0.1,17030,downstreamsecret
-    line=472913,downstream
+    match=Calling-Number,exact,472913,downstream
     """,
         )
         assert s_started

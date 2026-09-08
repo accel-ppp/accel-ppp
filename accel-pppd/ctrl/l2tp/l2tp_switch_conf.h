@@ -35,10 +35,19 @@ struct l2tp_switch_target_t {
 extern struct list_head l2tp_switch_targets;
 
 int l2tp_switch_conf_load(void);
-const struct l2tp_dict_attr_t *l2tp_switch_conf_attr(void);
-struct l2tp_switch_target_t *l2tp_switch_lookup(const uint8_t *val, int len);
 struct l2tp_switch_target_t *l2tp_switch_target_find(const char *name);
-int l2tp_switch_line_add(const uint8_t *val, int len, const char *target_name);
-int l2tp_switch_line_del(const uint8_t *val, int len);
+
+/* Generic AVP-based call routing: each rule names its own AVP (by dictionary
+ * name, e.g. "Calling-Number" or "Proxy-Authen-Name") and a match mode
+ * ("exact" or "prefix") -- callers (l2tp.c) don't need to know which
+ * message an AVP normally arrives in, or track match state themselves;
+ * they just offer every AVP they see, for every message, until one call
+ * returns non-NULL. */
+struct l2tp_switch_target_t *l2tp_switch_match(const struct l2tp_dict_attr_t *attr,
+					       const uint8_t *val, int len);
+int l2tp_switch_rule_add(const char *attr_name, const char *mode_name,
+			 const uint8_t *val, int len, const char *target_name);
+int l2tp_switch_rule_del(const char *attr_name, const char *mode_name,
+			 const uint8_t *val, int len);
 
 #endif

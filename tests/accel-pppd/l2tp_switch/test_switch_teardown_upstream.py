@@ -22,7 +22,7 @@ def test_upstream_tunnel_drop_tears_down_downstream(pytestconfig, accel_cmd, acc
             extra="""
     [l2tp-switch]
     target=downstream,127.0.0.1,17070,downstreamsecret
-    line=472913,downstream
+    match=Calling-Number,exact,472913,downstream
     """,
         )
         assert s_started

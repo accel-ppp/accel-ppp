@@ -21,9 +21,8 @@ def test_switch_matches_on_called_number(pytestconfig, accel_cmd, accel_pppd):
             "upstreamsecret",
             extra="""
     [l2tp-switch]
-    attr=Called-Number
     target=downstream,127.0.0.1,17022,downstreamsecret
-    line=5551234,downstream
+    match=Called-Number,exact,5551234,downstream
     """,
         )
         assert s_started

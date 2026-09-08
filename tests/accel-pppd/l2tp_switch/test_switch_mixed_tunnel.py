@@ -10,7 +10,7 @@ def test_downstream_failure_does_not_affect_locally_terminated_session(
 ):
     """A real upstream tunnel plausibly carries both switched calls and
     ordinary, locally-terminated calls side by side -- only the calling
-    numbers listed under [l2tp-switch] line= get switched, everything
+    numbers listed under [l2tp-switch] match= get switched, everything
     else on the same tunnel goes through accel-ppp's own normal PPP
     stack. When one switched call's downstream leg fails, only that one
     call may be affected: the shared upstream tunnel and any other,
@@ -32,7 +32,7 @@ def test_downstream_failure_does_not_affect_locally_terminated_session(
             extra="""
     [l2tp-switch]
     target=downstream,127.0.0.1,17100,downstreamsecret
-    line=472913,downstream
+    match=Calling-Number,exact,472913,downstream
     """,
         )
         assert s_started
@@ -45,9 +45,9 @@ def test_downstream_failure_does_not_affect_locally_terminated_session(
                 time.sleep(0.1)
             assert "[up]" in out
 
-            # place a switched call (472913, matches the line= entry above)
+            # place a switched call (472913, matches the match= entry above)
             # and, on the *same* tunnel, a second call with a calling number
-            # that does NOT match any line= entry -- an ordinary,
+            # that does NOT match any match= entry -- an ordinary,
             # locally-terminated call on the switch instance's own PPP stack.
             peer_thread, peer_ctrl = l2tp_peer_process.start(
                 "/tmp/l2tp_switch_peer_test",

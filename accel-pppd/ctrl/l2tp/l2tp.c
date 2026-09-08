@@ -3818,24 +3818,30 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 	sess->peer_sid = peer_sid;
 	sid = sess->sid;
 
-	{
-		const struct l2tp_dict_attr_t *match_attr = l2tp_switch_conf_attr();
-
-		if (match_attr) {
-			list_for_each_entry(attr, &pack->attrs, entry) {
-				if (attr->attr->id != match_attr->id)
-					continue;
-				sess->switch_target = l2tp_switch_lookup(
-					attr->val.octets, attr->length);
-				if (sess->switch_target) {
-					l2tp_stat_inc(&l2tp_stat.switch_matched);
-					log_tunnel(log_info1, conn,
-						   "call matches l2tp-switch"
-						   " target \"%s\"\n",
-						   sess->switch_target->name);
-				}
-				break;
-			}
+	/* Generic AVP-based routing (l2tp_switch_match(), l2tp_switch_conf.c):
+	 * each configured match= rule names its own AVP, so this offers
+	 * every AVP actually present in the ICRQ and lets the rule table
+	 * decide whether any of them means something. Safe to pass
+	 * attr->val.octets unconditionally regardless of this AVP's real
+	 * dictionary type (int16/int32 AVPs included): l2tp_switch_match()
+	 * only ever dereferences val/len after first confirming this exact
+	 * attr pointer matches a configured rule's own attr, and no rule can
+	 * exist for a non-string-typed AVP in the first place (enforced at
+	 * config-load time by resolve_match_attr() in l2tp_switch_conf.c) --
+	 * so the union member is never actually read as a pointer unless it
+	 * is genuinely a string. Same reasoning applies at every other call
+	 * site below and in l2tp_recv_ICCN. */
+	list_for_each_entry(attr, &pack->attrs, entry) {
+		sess->switch_target = l2tp_switch_match(attr->attr,
+							attr->val.octets,
+							attr->length);
+		if (sess->switch_target) {
+			l2tp_stat_inc(&l2tp_stat.switch_matched);
+			log_tunnel(log_info1, conn,
+				   "call matches l2tp-switch"
+				   " target \"%s\"\n",
+				   sess->switch_target->name);
+			break;
 		}
 	}
 
@@ -4647,6 +4653,29 @@ static int l2tp_recv_ICCN(struct l2tp_sess_t *sess,
 	log_session(log_info2, sess, "handling ICCN\n");
 
 	list_for_each_entry(attr, &pack->attrs, entry) {
+		/* Same generic match attempt as l2tp_recv_ICRQ, run here too:
+		 * some AVPs worth routing on (Proxy-Authen-Name, carrying
+		 * MK's proxied username/realm) only ever appear in ICCN, not
+		 * ICRQ -- see l2tp_switch_match()'s own doc comment for why
+		 * offering every AVP's raw value is safe regardless of this
+		 * AVP's real type. Runs before the switch below so that, if
+		 * this same AVP is the one that matches (Proxy-Authen-Name
+		 * itself, most commonly), sess->switch_target is already set
+		 * by the time that case is reached and the existing capture
+		 * logic there correctly captures it for forwarding. */
+		if (!sess->switch_target) {
+			sess->switch_target = l2tp_switch_match(attr->attr,
+								attr->val.octets,
+								attr->length);
+			if (sess->switch_target) {
+				l2tp_stat_inc(&l2tp_stat.switch_matched);
+				log_session(log_info1, sess,
+					    "call matches l2tp-switch"
+					    " target \"%s\"\n",
+					    sess->switch_target->name);
+			}
+		}
+
 		switch (attr->attr->id) {
 		case Message_Type:
 		case Random_Vector:
@@ -6263,14 +6292,18 @@ static int l2tp_switch_show_exec(const char *cmd, char * const *fields,
 static int l2tp_switch_add_exec(const char *cmd, char * const *fields,
 				int fields_cnt, void *client)
 {
-	if (fields_cnt != 5) {
-		cli_send(client, "usage: l2tp switch add <value> <target>\r\n");
+	if (fields_cnt != 7) {
+		cli_send(client, "usage: l2tp switch add <attr> <exact|prefix>"
+				 " <value> <target>\r\n");
 		return CLI_CMD_SYNTAX;
 	}
 
-	if (l2tp_switch_line_add((const uint8_t *)fields[3], strlen(fields[3]),
-				 fields[4]) < 0) {
-		cli_send(client, "failed: unknown target or duplicate value\r\n");
+	if (l2tp_switch_rule_add(fields[3], fields[4],
+				 (const uint8_t *)fields[5], strlen(fields[5]),
+				 fields[6]) < 0) {
+		cli_send(client, "failed: unknown target, unknown/non-string"
+				 " attr, invalid mode, or an overlapping rule"
+				 " already exists\r\n");
 		return CLI_CMD_FAILED;
 	}
 
@@ -6280,14 +6313,16 @@ static int l2tp_switch_add_exec(const char *cmd, char * const *fields,
 static int l2tp_switch_del_exec(const char *cmd, char * const *fields,
 				int fields_cnt, void *client)
 {
-	if (fields_cnt != 4) {
-		cli_send(client, "usage: l2tp switch del <value>\r\n");
+	if (fields_cnt != 6) {
+		cli_send(client, "usage: l2tp switch del <attr> <exact|prefix>"
+				 " <value>\r\n");
 		return CLI_CMD_SYNTAX;
 	}
 
-	if (l2tp_switch_line_del((const uint8_t *)fields[3],
-				 strlen(fields[3])) < 0) {
-		cli_send(client, "failed: no such value\r\n");
+	if (l2tp_switch_rule_del(fields[3], fields[4],
+				 (const uint8_t *)fields[5],
+				 strlen(fields[5])) < 0) {
+		cli_send(client, "failed: no such rule\r\n");
 		return CLI_CMD_FAILED;
 	}
 

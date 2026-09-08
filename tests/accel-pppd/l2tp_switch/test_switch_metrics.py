@@ -56,7 +56,7 @@ def test_switch_metrics_exposed_via_native_endpoint(pytestconfig, accel_cmd, acc
 
     [l2tp-switch]
     target=downstream,127.0.0.1,17090,downstreamsecret
-    line=472913,downstream
+    match=Calling-Number,exact,472913,downstream
 
     [metrics]
     address=127.0.0.1:{METRICS_PORT}

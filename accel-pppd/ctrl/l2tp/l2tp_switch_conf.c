@@ -9,21 +9,22 @@
 
 #include "memdebug.h"
 
-struct l2tp_switch_line_t {
+enum l2tp_switch_match_mode {
+	L2TP_SWITCH_MATCH_EXACT,
+	L2TP_SWITCH_MATCH_PREFIX,
+};
+
+struct l2tp_switch_rule_t {
 	struct list_head entry;
+	const struct l2tp_dict_attr_t *attr;
+	enum l2tp_switch_match_mode mode;
 	uint8_t *val;
 	int len;
 	struct l2tp_switch_target_t *target;
 };
 
 struct list_head l2tp_switch_targets = { &l2tp_switch_targets, &l2tp_switch_targets };
-static LIST_HEAD(l2tp_switch_lines);
-static const struct l2tp_dict_attr_t *conf_switch_attr;
-
-const struct l2tp_dict_attr_t *l2tp_switch_conf_attr(void)
-{
-	return conf_switch_attr;
-}
+static LIST_HEAD(l2tp_switch_rules);
 
 static void free_target(struct l2tp_switch_target_t *t)
 {
@@ -33,15 +34,15 @@ static void free_target(struct l2tp_switch_target_t *t)
 	_free(t);
 }
 
-static void free_line(struct l2tp_switch_line_t *l)
+static void free_rule(struct l2tp_switch_rule_t *r)
 {
-	_free(l->val);
-	_free(l);
+	_free(r->val);
+	_free(r);
 }
 
 static void switch_conf_clear(void)
 {
-	struct l2tp_switch_line_t *l;
+	struct l2tp_switch_rule_t *r;
 	struct l2tp_switch_target_t *t;
 
 	/* This project's list.h has no list_for_each_entry_safe (confirmed:
@@ -50,10 +51,10 @@ static void switch_conf_clear(void)
 	 * existing convention for "delete every entry off a list" elsewhere
 	 * in l2tp.c (e.g. l2tp_tunnel_clear_sendqueue()) is this
 	 * while/list_first_entry idiom instead. */
-	while (!list_empty(&l2tp_switch_lines)) {
-		l = list_first_entry(&l2tp_switch_lines, typeof(*l), entry);
-		list_del(&l->entry);
-		free_line(l);
+	while (!list_empty(&l2tp_switch_rules)) {
+		r = list_first_entry(&l2tp_switch_rules, typeof(*r), entry);
+		list_del(&r->entry);
+		free_rule(r);
 	}
 	while (!list_empty(&l2tp_switch_targets)) {
 		t = list_first_entry(&l2tp_switch_targets, typeof(*t), entry);
@@ -73,66 +74,175 @@ struct l2tp_switch_target_t *l2tp_switch_target_find(const char *name)
 	return NULL;
 }
 
-static struct l2tp_switch_line_t *line_find(const uint8_t *val, int len)
+/* True if a rule configured as `r` would fire on a real AVP carrying
+ * `val`/`len` -- exact requires an identical value, prefix requires `val`
+ * to start with `r`'s own value. Also used, symmetrically, to detect
+ * configuration-time overlap between two candidate rules (see
+ * rules_overlap() below) -- a single definition of "does this rule fire on
+ * this value" is enough for both the runtime lookup and the config-time
+ * ambiguity check, rather than keeping two separate notions of "matches"
+ * that could drift apart. */
+static int rule_matches_value(const struct l2tp_switch_rule_t *r,
+			      const uint8_t *val, int len)
 {
-	struct l2tp_switch_line_t *l;
+	switch (r->mode) {
+	case L2TP_SWITCH_MATCH_EXACT:
+		return len == r->len && !memcmp(val, r->val, len);
+	case L2TP_SWITCH_MATCH_PREFIX:
+		return len >= r->len && !memcmp(val, r->val, r->len);
+	}
+	return 0;
+}
 
-	list_for_each_entry(l, &l2tp_switch_lines, entry)
-		if (l->len == len && !memcmp(l->val, val, len))
-			return l;
+/* Two rules on the same AVP are ambiguous if either one would fire on the
+ * other's own configured value -- this single symmetric check covers every
+ * case that matters without enumerating them: an exact duplicate (each
+ * matches the other's value trivially), one prefix that is itself a prefix
+ * of another (the shorter matches the longer's value), and an exact value
+ * that also happens to start with a configured prefix (the prefix rule
+ * matches the exact rule's value) -- all come out true here, with no
+ * separate exact-vs-exact/prefix-vs-prefix/exact-vs-prefix cases to keep in
+ * sync by hand. */
+static int rules_overlap(const struct l2tp_switch_rule_t *a,
+			 const struct l2tp_switch_rule_t *b)
+{
+	return rule_matches_value(a, b->val, b->len) ||
+	       rule_matches_value(b, a->val, a->len);
+}
+
+struct l2tp_switch_target_t *l2tp_switch_match(const struct l2tp_dict_attr_t *attr,
+					       const uint8_t *val, int len)
+{
+	struct l2tp_switch_rule_t *r;
+
+	list_for_each_entry(r, &l2tp_switch_rules, entry)
+		if (r->attr == attr && rule_matches_value(r, val, len))
+			return r->target;
 
 	return NULL;
 }
 
-struct l2tp_switch_target_t *l2tp_switch_lookup(const uint8_t *val, int len)
+static int parse_mode(const char *s, enum l2tp_switch_match_mode *mode)
 {
-	struct l2tp_switch_line_t *l = line_find(val, len);
-
-	return l ? l->target : NULL;
+	if (!strcmp(s, "exact")) {
+		*mode = L2TP_SWITCH_MATCH_EXACT;
+		return 0;
+	}
+	if (!strcmp(s, "prefix")) {
+		*mode = L2TP_SWITCH_MATCH_PREFIX;
+		return 0;
+	}
+	return -1;
 }
 
-int l2tp_switch_line_add(const uint8_t *val, int len, const char *target_name)
+static const struct l2tp_dict_attr_t *resolve_match_attr(const char *attr_name)
+{
+	const struct l2tp_dict_attr_t *attr = l2tp_dict_find_attr_by_name(attr_name);
+
+	if (!attr || attr->type != ATTR_TYPE_STRING) {
+		log_error("l2tp-switch: \"%s\" is not a known string-typed"
+			  " AVP\n", attr_name);
+		return NULL;
+	}
+
+	return attr;
+}
+
+static struct l2tp_switch_rule_t *rule_find_exact(const struct l2tp_dict_attr_t *attr,
+						   enum l2tp_switch_match_mode mode,
+						   const uint8_t *val, int len)
+{
+	struct l2tp_switch_rule_t *r;
+
+	list_for_each_entry(r, &l2tp_switch_rules, entry)
+		if (r->attr == attr && r->mode == mode &&
+		    r->len == len && !memcmp(r->val, val, len))
+			return r;
+
+	return NULL;
+}
+
+int l2tp_switch_rule_add(const char *attr_name, const char *mode_name,
+			 const uint8_t *val, int len, const char *target_name)
 {
 	struct l2tp_switch_target_t *target = l2tp_switch_target_find(target_name);
-	struct l2tp_switch_line_t *l;
+	const struct l2tp_dict_attr_t *attr;
+	enum l2tp_switch_match_mode mode;
+	struct l2tp_switch_rule_t *r, candidate;
 
 	if (!target) {
 		log_error("l2tp-switch: unknown target \"%s\"\n", target_name);
 		return -1;
 	}
 
-	if (line_find(val, len)) {
-		log_error("l2tp-switch: a line entry for this value already exists\n");
+	attr = resolve_match_attr(attr_name);
+	if (!attr)
+		return -1;
+
+	if (parse_mode(mode_name, &mode) < 0) {
+		log_error("l2tp-switch: unknown match mode \"%s\","
+			  " expected \"exact\" or \"prefix\"\n", mode_name);
 		return -1;
 	}
 
-	l = _malloc(sizeof(*l));
-	if (!l)
+	candidate.attr = attr;
+	candidate.mode = mode;
+	candidate.val = (uint8_t *)val;
+	candidate.len = len;
+
+	list_for_each_entry(r, &l2tp_switch_rules, entry) {
+		if (r->attr != attr)
+			continue;
+		if (rules_overlap(r, &candidate)) {
+			log_error("l2tp-switch: match rule for \"%s\""
+				  " overlaps with an existing rule for the"
+				  " same attribute (ambiguous)\n", attr_name);
+			return -1;
+		}
+	}
+
+	r = _malloc(sizeof(*r));
+	if (!r)
 		return -1;
 
-	l->val = _malloc(len);
-	if (!l->val) {
-		_free(l);
+	r->val = _malloc(len);
+	if (!r->val) {
+		_free(r);
 		return -1;
 	}
-	memcpy(l->val, val, len);
-	l->len = len;
-	l->target = target;
+	memcpy(r->val, val, len);
+	r->attr = attr;
+	r->mode = mode;
+	r->len = len;
+	r->target = target;
 
-	list_add_tail(&l->entry, &l2tp_switch_lines);
+	list_add_tail(&r->entry, &l2tp_switch_rules);
 
 	return 0;
 }
 
-int l2tp_switch_line_del(const uint8_t *val, int len)
+int l2tp_switch_rule_del(const char *attr_name, const char *mode_name,
+			 const uint8_t *val, int len)
 {
-	struct l2tp_switch_line_t *l = line_find(val, len);
+	const struct l2tp_dict_attr_t *attr = resolve_match_attr(attr_name);
+	enum l2tp_switch_match_mode mode;
+	struct l2tp_switch_rule_t *r;
 
-	if (!l)
+	if (!attr)
 		return -1;
 
-	list_del(&l->entry);
-	free_line(l);
+	if (parse_mode(mode_name, &mode) < 0) {
+		log_error("l2tp-switch: unknown match mode \"%s\","
+			  " expected \"exact\" or \"prefix\"\n", mode_name);
+		return -1;
+	}
+
+	r = rule_find_exact(attr, mode, val, len);
+	if (!r)
+		return -1;
+
+	list_del(&r->entry);
+	free_rule(r);
 
 	return 0;
 }
@@ -200,27 +310,30 @@ err:
 	return -1;
 }
 
-static int parse_line(const char *val)
+static int parse_match(const char *val)
 {
-	/* line=<value>,<target-name> */
-	char *copy, *value, *target_name, *save = NULL;
+	/* match=<attr-name>,<mode>,<value>,<target-name> */
+	char *copy, *attr_name, *mode_name, *value, *target_name, *save = NULL;
 	int ret;
 
 	copy = _strdup(val);
 	if (!copy)
 		return -1;
 
-	value = strtok_r(copy, ",", &save);
+	attr_name = strtok_r(copy, ",", &save);
+	mode_name = strtok_r(NULL, ",", &save);
+	value = strtok_r(NULL, ",", &save);
 	target_name = strtok_r(NULL, ",", &save);
 
-	if (!value || !target_name) {
-		log_error("l2tp-switch: malformed line= \"%s\","
-			  " expected value,target-name\n", val);
+	if (!attr_name || !mode_name || !value || !target_name) {
+		log_error("l2tp-switch: malformed match= \"%s\", expected"
+			  " attr-name,mode,value,target-name\n", val);
 		_free(copy);
 		return -1;
 	}
 
-	ret = l2tp_switch_line_add((const uint8_t *)value, strlen(value),
+	ret = l2tp_switch_rule_add(attr_name, mode_name,
+				   (const uint8_t *)value, strlen(value),
 				   target_name);
 	_free(copy);
 	return ret;
@@ -263,26 +376,13 @@ int l2tp_switch_conf_load(void)
 {
 	struct conf_sect_t *s = conf_get_section("l2tp-switch");
 	struct conf_option_t *opt;
-	const char *attr_name;
 
 	switch_conf_clear();
-	conf_switch_attr = NULL;
 
 	if (!s)
 		return 0;
 
-	attr_name = conf_get_opt("l2tp-switch", "attr");
-	if (!attr_name)
-		attr_name = "Calling-Number";
-
-	conf_switch_attr = l2tp_dict_find_attr_by_name(attr_name);
-	if (!conf_switch_attr || conf_switch_attr->type != ATTR_TYPE_STRING) {
-		log_error("l2tp-switch: attr=\"%s\" is not a known"
-			  " string-typed AVP\n", attr_name);
-		return -1;
-	}
-
-	/* targets first: line= entries reference them by name */
+	/* targets first: match= entries reference them by name */
 	list_for_each_entry(opt, &s->items, entry) {
 		if (!strcmp(opt->name, "target") && opt->val)
 			if (parse_target(opt->val) < 0)
@@ -290,8 +390,8 @@ int l2tp_switch_conf_load(void)
 	}
 
 	list_for_each_entry(opt, &s->items, entry) {
-		if (!strcmp(opt->name, "line") && opt->val)
-			if (parse_line(opt->val) < 0)
+		if (!strcmp(opt->name, "match") && opt->val)
+			if (parse_match(opt->val) < 0)
 				return -1;
 	}
 

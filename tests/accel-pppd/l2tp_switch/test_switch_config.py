@@ -18,9 +18,8 @@ class TestWithTarget:
     def l2tp_switch_config(self):
         return """
     [l2tp-switch]
-    attr=Calling-Number
     target=acme,203.0.113.50,1701,targetsecret
-    line=472913,acme
+    match=Calling-Number,exact,472913,acme
     """
 
     def test_l2tp_switch_show_target(self, accel_pppd_instance, accel_cmd):
@@ -33,9 +32,9 @@ class TestWithTarget:
 
 
 @pytest.mark.l2tp_switch
-class TestDuplicateLine:
-    """A line= value must not appear twice, even pointing at different
-    targets -- spec section 11's fatal config-load error, not silent
+class TestDuplicateMatch:
+    """An exact match= value must not appear twice for the same attr, even
+    pointing at different targets -- a fatal config-load error, not silent
     last-wins."""
 
     @pytest.fixture()
@@ -44,15 +43,54 @@ class TestDuplicateLine:
     [l2tp-switch]
     target=acme,203.0.113.50,1701,targetsecret
     target=other,203.0.113.60,1701,othersecret
-    line=472913,acme
-    line=472913,other
+    match=Calling-Number,exact,472913,acme
+    match=Calling-Number,exact,472913,other
     """
 
-    def test_duplicate_line_value_rejected(self, accel_pppd_instance):
+    def test_duplicate_match_value_rejected(self, accel_pppd_instance):
         # l2tp_switch_conf_load() returning -1 makes l2tp_init() call
         # log_emerg()+_exit(EXIT_FAILURE) before the daemon ever becomes
         # ready -- accel_pppd_instance (the shared fixture) should report
         # this as a failed start, not a successful one.
+        assert accel_pppd_instance is False
+
+
+@pytest.mark.l2tp_switch
+class TestOverlappingPrefix:
+    """Two prefix rules on the same attr are ambiguous if either one is a
+    prefix of the other's own value -- also a fatal config-load error."""
+
+    @pytest.fixture()
+    def l2tp_switch_config(self):
+        return """
+    [l2tp-switch]
+    target=acme,203.0.113.50,1701,targetsecret
+    target=other,203.0.113.60,1701,othersecret
+    match=Proxy-Authen-Name,prefix,downstream,acme
+    match=Proxy-Authen-Name,prefix,downstream-a,other
+    """
+
+    def test_overlapping_prefix_rejected(self, accel_pppd_instance):
+        assert accel_pppd_instance is False
+
+
+@pytest.mark.l2tp_switch
+class TestExactOverlapsPrefix:
+    """An exact value that would itself satisfy another rule's prefix (or
+    vice versa) is exactly as ambiguous as two overlapping prefixes -- also
+    rejected."""
+
+    @pytest.fixture()
+    def l2tp_switch_config(self):
+        return """
+    [l2tp-switch]
+    target=acme,203.0.113.50,1701,targetsecret
+    target=other,203.0.113.60,1701,othersecret
+    match=Proxy-Authen-Name,prefix,downstream-,acme
+    match=Proxy-Authen-Name,exact,downstream-54546,other
+    """
+
+    def test_exact_overlapping_prefix_rejected(self, accel_pppd_instance):
         assert accel_pppd_instance is False
 
 
@@ -67,7 +105,7 @@ class TestSelfLoopTarget:
         return """
     [l2tp-switch]
     target=loopback,127.0.0.1,1701,targetsecret
-    line=472913,loopback
+    match=Calling-Number,exact,472913,loopback
     """
 
     @pytest.fixture()
