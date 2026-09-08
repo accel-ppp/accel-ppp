@@ -2195,6 +2195,52 @@ err:
 	return -1;
 }
 
+/* Larger than the typical net.core.rmem_max/wmem_max default (208 KiB on
+ * most distros) on purpose: switch-mode sessions read and write this
+ * socket directly via splice() in userspace (see l2tp_switch_link_read()),
+ * unlike a normal session's kernel-to-kernel PPPIOCATTCHAN path, so a
+ * short burst has to fit in this buffer or it's lost (read side) or
+ * fails outright with ENOMEM (write side, handled as retryable -- see
+ * l2tp_switch_link_read()). Sized to comfortably absorb the largest
+ * burst confirmed lossless during testing (~100 back-to-back 1400-byte
+ * datagrams, ~140 KiB) with real headroom on top, without being so large
+ * it hides a genuinely sustained overload for long enough to matter. This
+ * only raises how much of a *momentary* burst survives -- it cannot raise
+ * a rate ceiling enforced by the network path itself (confirmed via a
+ * real two-VM test: throughput scaled with UDP payload size while both
+ * hosts' CPUs stayed idle, the signature of a packets-per-second policer
+ * outside either host, not a buffering problem -- see
+ * docs/l2tp_switching.md's "Operational constraints" for the full
+ * diagnostic). */
+#define L2TP_SWITCH_SOCKBUF_SIZE (4 * 1024 * 1024)
+
+/* SO_RCVBUFFORCE/SO_SNDBUFFORCE (root/CAP_NET_ADMIN, which accel-ppp already
+ * needs for pppol2tp itself) bypass net.core.rmem_max/wmem_max, which
+ * otherwise silently clamp a plain SO_RCVBUF/SO_SNDBUF request down to
+ * whatever the system default happens to be (208 KiB on most distros) --
+ * exactly the ceiling this sizing is meant to raise. Fall back to the
+ * plain (clamped) option if FORCE isn't permitted for some reason (e.g.
+ * running under reduced capabilities); either way this is a best-effort
+ * optimization, not a correctness requirement, so a failure here only
+ * logs and never blocks session setup. */
+static void l2tp_switch_set_sockbuf(struct l2tp_sess_t *sess, int fd)
+{
+	int size = L2TP_SWITCH_SOCKBUF_SIZE;
+
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVBUFFORCE, &size, sizeof(size)) < 0 &&
+	    setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size)) < 0)
+		log_session(log_warn, sess,
+			    "l2tp-switch: setsockopt(SO_RCVBUF) failed: %s\n",
+			    strerror(errno));
+
+	size = L2TP_SWITCH_SOCKBUF_SIZE;
+	if (setsockopt(fd, SOL_SOCKET, SO_SNDBUFFORCE, &size, sizeof(size)) < 0 &&
+	    setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)) < 0)
+		log_session(log_warn, sess,
+			    "l2tp-switch: setsockopt(SO_SNDBUF) failed: %s\n",
+			    strerror(errno));
+}
+
 static int l2tp_session_connect_socket(struct l2tp_sess_t *sess, int start_ppp)
 {
 	struct sockaddr_pppol2tp pppox_addr;
@@ -2274,6 +2320,8 @@ static int l2tp_session_connect_socket(struct l2tp_sess_t *sess, int start_ppp)
 				    strerror(errno));
 			goto out_err;
 		}
+
+		l2tp_switch_set_sockbuf(sess, sess->ppp.fd);
 	}
 
 	if (setsockopt(sess->ppp.fd, SOL_PPPOL2TP, PPPOL2TP_SO_LNSMODE,
@@ -3909,6 +3957,14 @@ static int l2tp_switch_link_read(struct triton_md_handler_t *h)
 					   (uint64_t)n, __ATOMIC_RELAXED);
 		}
 
+		{
+		int enomem_retries = 0;
+		/* Bounded: up to ~1s total (20 * up to 50ms), matching the
+		 * kind of transient network-stack memory pressure a real
+		 * burst causes -- not meant to ride out a sustained overload
+		 * indefinitely, just to not treat one bad moment as fatal. */
+		#define L2TP_SWITCH_ENOMEM_MAX_RETRIES 20
+
 		while (n > 0) {
 			ssize_t w = splice(link->pipe_rd, NULL,
 					   link->dst->ppp.fd, NULL, n,
@@ -3938,13 +3994,39 @@ static int l2tp_switch_link_read(struct triton_md_handler_t *h)
 					}
 					continue;
 				}
+				if ((errno == ENOMEM || errno == ENOBUFS) &&
+				    enomem_retries < L2TP_SWITCH_ENOMEM_MAX_RETRIES) {
+					/* Transient kernel/network-stack
+					 * memory pressure under a burst --
+					 * confirmed on a real VM (splice(out)
+					 * failing with ENOMEM under a large
+					 * instantaneous burst, disconnecting
+					 * an otherwise-healthy call). Unlike
+					 * EAGAIN, POLLOUT readiness doesn't
+					 * necessarily mean this has cleared,
+					 * so back off on a short timeout
+					 * instead of waiting indefinitely for
+					 * an event that may already be
+					 * (mis)reported as ready. */
+					struct pollfd pfd = {
+						.fd = link->dst->ppp.fd,
+						.events = POLLOUT,
+					};
+
+					enomem_retries++;
+					poll(&pfd, 1, 50);
+					continue;
+				}
 				log_session(log_error, link->src,
 					    "l2tp-switch: splice(out)"
 					    " failed: %s\n", strerror(errno));
 				l2tp_switch_link_fail(link);
 				return 0;
 			}
+			enomem_retries = 0;
 			n -= w;
+		}
+		#undef L2TP_SWITCH_ENOMEM_MAX_RETRIES
 		}
 	}
 }
