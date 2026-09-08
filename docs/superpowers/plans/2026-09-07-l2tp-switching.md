@@ -2245,9 +2245,13 @@ Expected: FAIL — `"placed: 1"` doesn't exist yet, and ICCN handling still call
 
 - [ ] **Step 4: Capture Proxy AVPs and skip local PPP in `l2tp_recv_ICCN`**
 
-In `l2tp.c`, `l2tp_recv_ICCN` (~3597), the AVP-parsing loop currently has (see the code already read during design):
+In `l2tp.c`, `l2tp_recv_ICCN` (~3597), the AVP-parsing loop currently has (see the code already read during design) -- **the full case group, not just the AVPs relevant to this task**, since that distinction is the entire point of the fix below:
 
 ```c
+		case Message_Type:
+		case Random_Vector:
+		case TX_Speed:
+		case Framing_Type:
 		case Init_Recv_LCP:
 		case Last_Sent_LCP:
 		case Last_Recv_LCP:
@@ -2256,13 +2260,21 @@ In `l2tp.c`, `l2tp_recv_ICCN` (~3597), the AVP-parsing loop currently has (see t
 		case Proxy_Authen_Challenge:
 		case Proxy_Authen_ID:
 		case Proxy_Authen_Response:
+		case Private_Group_ID:
+		case RX_Speed:
+			break;
 ```
 
 (Note: `attr_defs.h` names this AVP `Init_Recv_LCP`, spec §5 calls it `Initial LCP CONFREQ` per RFC wording — same AVP, this plan uses the codebase's own identifier throughout.)
 
-Change this block so that, for a switch-tagged session, each of these AVPs is captured instead of falling through to the shared `break;`:
+**Do not add the capture call to this whole shared group — split it.** Only `Init_Recv_LCP`/`Last_Sent_LCP`/`Last_Recv_LCP`/`Proxy_Authen_Type`/`Proxy_Authen_Name`/`Proxy_Authen_Challenge`/`Proxy_Authen_ID`/`Proxy_Authen_Response` are AVPs this feature ever needs to re-inject downstream; `Message_Type`/`Random_Vector`/`TX_Speed`/`Framing_Type` must keep falling through to a bare `break` exactly as before. An earlier draft of this task added the capture call to the *entire* combined group as it actually exists in the real file (the snippet above, not the 8-case-only fragment a stale earlier read of this function had suggested) and crashed reproducibly on a real VM the moment a real ICCN arrived: `l2tp_switch_capture_avp()` (below) reads `attr->val.octets` unconditionally, but `Message_Type`/`TX_Speed`/`Framing_Type` are `int16`/`int32`-typed in the dictionary, not `octets` — their union member holds a small integer *value*, not a pointer, so reading `.octets` reinterprets that value as a garbage pointer and segfaults on the subsequent `memcpy`. Split the case labels as shown next:
 
 ```c
+		case Message_Type:
+		case Random_Vector:
+		case TX_Speed:
+		case Framing_Type:
+			break;
 		case Init_Recv_LCP:
 		case Last_Sent_LCP:
 		case Last_Recv_LCP:
@@ -2305,11 +2317,47 @@ static int l2tp_switch_capture_avp(struct l2tp_sess_t *sess,
 	slot = &sess->switch_avps->avp[sess->switch_avps->count];
 	slot->id = attr->attr->id;
 	slot->M = attr->M;
-	slot->len = attr->length;
-	slot->val = _malloc(attr->length ? attr->length : 1);
-	if (!slot->val)
-		return -1;
-	memcpy(slot->val, attr->val.octets, attr->length);
+
+	/* attr->val is a union: which member is actually populated depends
+	 * on attr->attr->type (set by packet.c's parser from the dictionary
+	 * entry for this AVP id). Every AVP this function is ever invoked
+	 * for (after the case-split above) is octets, string, or int16
+	 * (Init/Last-*-LCP and Proxy-Authen-Challenge/Response are octets;
+	 * Proxy-Authen-Name is string; Proxy-Authen-Type/ID are int16) --
+	 * reading attr->val.octets unconditionally works for the first two
+	 * (both are just a pointer into real byte data, string vs uint8_t*
+	 * makes no difference for memcpy purposes) but for int16 it
+	 * reinterprets a small integer VALUE stored directly in the union as
+	 * if it were a pointer and crashes dereferencing it -- confirmed by
+	 * reproducing this exact segfault against a real accel-pppd on a VM
+	 * (Proxy-Authen-Type, sent whenever --proxy-username is used, i.e.
+	 * Task 6's own test below). Serialize to the same on-the-wire byte
+	 * representation l2tp_packet_add_int16() itself would produce, so
+	 * re-injecting via l2tp_packet_add_octets() later (Step 6) round-
+	 * trips correctly -- the wire format for an int16 AVP is just its 2
+	 * network-order bytes, indistinguishable from an octets AVP of
+	 * length 2 to whichever end decodes it. */
+	switch (attr->attr->type) {
+	case ATTR_TYPE_INT16: {
+		uint16_t val = htons(attr->val.uint16);
+
+		slot->len = sizeof(val);
+		slot->val = _malloc(slot->len);
+		if (!slot->val)
+			return -1;
+		memcpy(slot->val, &val, slot->len);
+		break;
+	}
+	case ATTR_TYPE_OCTETS:
+	case ATTR_TYPE_STRING:
+	default:
+		slot->len = attr->length;
+		slot->val = _malloc(slot->len ? slot->len : 1);
+		if (!slot->val)
+			return -1;
+		memcpy(slot->val, attr->val.octets, slot->len);
+		break;
+	}
 
 	sess->switch_avps->count++;
 	return 0;
@@ -2605,7 +2653,7 @@ to:
 
 - [ ] **Step 8: Run, verify it passes**
 
-Rebuild, rerun `test_switch_avp_forward.py`. Expected: PASS — `"placed: 1"` appears once the MK-simulator's ICCN reaches the switch instance.
+Rebuild, rerun `test_switch_avp_forward.py`. Expected: PASS — `"placed: 1"` appears once the MK-simulator's ICCN reaches the switch instance. Confirmed for real on a VM after the two bug fixes above (the case-split and the type-aware capture serialization): `test_switch_avp_forward.py` passes on its own, and the full `l2tp_switch` suite (12 tests as of this task) passes together with no regressions. Before those fixes, every test that sent a real ICCN through a switch-tagged session (including the pre-existing `test_switch_match.py`, once it reached ICCN) crashed the daemon; `accel-cmd` would then report `matched: 0`/`placed: 0` against a *freshly re-executed* daemon process (accel-ppp's own `sigsegv` handler `execv()`s itself back to a clean start on crash, same PID, all state lost) rather than surfacing as an obvious test failure -- worth knowing if a similar "counters silently reset to 0" symptom ever reappears.
 
 - [ ] **Step 9: Commit**
 
