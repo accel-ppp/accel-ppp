@@ -17,7 +17,7 @@ Note: tests will be run under sudo. If you prefer install python modules using p
 
 Install additional tools required for tests:
 ```bash
-sudo apt install iproute2 ppp pppoe isc-dhcp-client
+sudo apt install iproute2 ppp pppoe isc-dhcp-client tcpdump
 ```
 
 Then build accel-ppp in 'build' directory (as usual)

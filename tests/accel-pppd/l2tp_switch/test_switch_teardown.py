@@ -1,0 +1,85 @@
+import time
+from common import process, config, accel_pppd_process, l2tp_peer_process
+from helpers import start_instance
+
+
+def test_downstream_drop_tears_down_upstream(pytestconfig, accel_cmd, accel_pppd):
+    d_started, d_thread, d_ctrl, d_cfg = start_instance(
+        accel_pppd, accel_cmd, 2101, "127.0.0.1", 17060, "downstreamsecret"
+    )
+    assert d_started
+
+    try:
+        s_started, s_thread, s_ctrl, s_cfg = start_instance(
+            accel_pppd,
+            accel_cmd,
+            2001,
+            "127.0.0.1",
+            17061,
+            "upstreamsecret",
+            extra="""
+    [l2tp-switch]
+    target=downstream,127.0.0.1,17060,downstreamsecret
+    line=472913,downstream
+    """,
+        )
+        assert s_started
+
+        try:
+            for _ in range(50):
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+                if "[up]" in out:
+                    break
+                time.sleep(0.1)
+            assert "[up]" in out
+
+            # establish one switched call, then block waiting for the CDN
+            # the switch's upstream leg must send once the paired downstream
+            # leg goes away -- proves the actual RFC-level teardown, not
+            # just an internal counter.
+            peer_thread, peer_ctrl = l2tp_peer_process.start(
+                "/tmp/l2tp_switch_peer_test",
+                [
+                    "--peer-addr", "127.0.0.1",
+                    "--peer-port", "17061",
+                    "--secret", "upstreamsecret",
+                    "--calling-number", "472913",
+                    "--wait-cdn",
+                ],
+            )
+
+            active = None
+            for _ in range(50):
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+                if "active: 1" in out:
+                    active = 1
+                    break
+                time.sleep(0.1)
+            assert active == 1, out
+
+            # kill the downstream instance mid-call -- the switch's
+            # l2tp_session_free() teardown hook must notice and tear down
+            # the paired upstream leg too, rather than crashing or leaking.
+            accel_pppd_process.end(d_thread, d_ctrl, accel_cmd, 10.0, cli_port=2101)
+
+            rc, out2, err = l2tp_peer_process.wait(peer_thread, peer_ctrl, 10.0)
+            assert rc == 0, err
+
+            active = None
+            for _ in range(50):
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+                assert exit == 0
+                if "active: 0" in out:
+                    active = 0
+                    break
+                time.sleep(0.1)
+            assert active == 0, out
+        finally:
+            accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=2001)
+            config.delete_tmp(s_cfg)
+    finally:
+        # already ended mid-test above in the success path; end() is a
+        # no-op on an already-terminated process, so this still cleans up
+        # correctly if an earlier assertion failed first.
+        accel_pppd_process.end(d_thread, d_ctrl, accel_cmd, 10.0, cli_port=2101)
+        config.delete_tmp(d_cfg)

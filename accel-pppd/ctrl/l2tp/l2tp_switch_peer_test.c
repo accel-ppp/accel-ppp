@@ -26,6 +26,8 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <linux/if_pppox.h>
+#include <time.h>
 
 #include "triton.h"
 #include "log.h"
@@ -179,6 +181,9 @@ static const char *calling_number = "472913";
 static const char *called_number;
 static const char *proxy_username;
 static const char *proxy_password;
+static const char *data_pattern;
+static int send_stopccn;
+static int wait_cdn;
 static uint16_t local_tid = 0x1234;
 static uint16_t local_sid = 0x5678;
 
@@ -236,13 +241,16 @@ int main(int argc, char **argv)
 		{"called-number", required_argument, 0, 'n'},
 		{"proxy-username", required_argument, 0, 'u'},
 		{"proxy-password", required_argument, 0, 'w'},
+		{"data-pattern", required_argument, 0, 'd'},
+		{"send-stopccn", no_argument, 0, 'x'},
+		{"wait-cdn", no_argument, 0, 'W'},
 		{0, 0, 0, 0},
 	};
 
 	peer_addr.sin_family = AF_INET;
 	peer_addr.sin_port = htons(1701);
 
-	while ((opt = getopt_long(argc, argv, "a:p:s:c:n:u:w:", opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "a:p:s:c:n:u:w:d:xW", opts, NULL)) != -1) {
 		switch (opt) {
 		case 'a':
 			if (inet_aton(optarg, &peer_addr.sin_addr) == 0)
@@ -266,25 +274,43 @@ int main(int argc, char **argv)
 		case 'w':
 			proxy_password = optarg;
 			break;
+		case 'd':
+			data_pattern = optarg;
+			break;
+		case 'x':
+			send_stopccn = 1;
+			break;
+		case 'W':
+			wait_cdn = 1;
+			break;
 		default:
 			return die("usage: --peer-addr A --peer-port P"
 				   " --secret S [--calling-number C]"
 				   " [--called-number N]"
-				   " [--proxy-username U] [--proxy-password W]");
+				   " [--proxy-username U] [--proxy-password W]"
+				   " [--data-pattern D] [--send-stopccn]"
+				   " [--wait-cdn]");
 		}
 	}
 
-	/* Deliberately not connect()ed: l2tp_packet_send() always calls
-	 * sendto() with an explicit destination (pack->addr) regardless of
-	 * the socket's connection state, and POSIX leaves sendto() with an
-	 * explicit address on an already-connect()ed DGRAM socket
-	 * implementation-defined (EISCONN on some stacks -- confirmed
-	 * hitting exactly this while verifying this harness by hand).
-	 * accel-ppp's own l2tp.c never connect()s its UDP sockets either --
-	 * match that instead of introducing a second convention. */
+	/* connect()ed to the peer, exactly like the real daemon's own
+	 * l2tp_tunnel_alloc() (l2tp.c ~1776) connect()s its per-tunnel UDP
+	 * socket. This is required for the pppol2tp data channel: the
+	 * kernel's pppol2tp/l2tp_core xmit path routes via the underlying
+	 * UDP socket's connected peer (inet_sk(sk)->inet_daddr); leaving fd
+	 * unconnected made data-channel write()/splice() report success
+	 * while emitting zero wire packets, because the kernel had no
+	 * destination to route to. l2tp_packet_send()'s sendto() with an
+	 * explicit destination still works fine afterwards -- Linux does
+	 * not return EISCONN for a connected SOCK_DGRAM socket used with
+	 * sendto() (that restriction is for connection-mode/TCP sockets);
+	 * the real daemon relies on exactly this same combination for
+	 * every control message it sends. */
 	fd = socket(AF_INET, SOCK_DGRAM, 0);
 	if (fd < 0)
 		return die("socket() failed");
+	if (connect(fd, (struct sockaddr *)&peer_addr, sizeof(peer_addr)) < 0)
+		return die("connect(fd) failed");
 
 	/* --- SCCRQ --- */
 	pack = l2tp_packet_alloc(2, Message_Type_Start_Ctrl_Conn_Request,
@@ -417,6 +443,176 @@ int main(int argc, char **argv)
 		return die("ICCN send failed");
 	l2tp_packet_free(pack);
 	my_ns++;
+
+	if (data_pattern) {
+		struct sockaddr_pppol2tp pppox_addr;
+		int data_fd, reg_fd, lns_mode = 0;
+
+		/* Sending our own ICCN only completes *our* (MK's) side of the
+		 * handshake -- on a real switch, ICCN triggers placing the
+		 * downstream call asynchronously (its own ICRQ/ICRP/ICCN round
+		 * trip), and only once *that* finishes does the switch open
+		 * its own kernel socket for this (upstream) session and the
+		 * splice actually starts moving bytes. Writing immediately
+		 * races that: this local connect() below still succeeds
+		 * regardless (it only sets up local kernel state for
+		 * encapsulating outgoing packets, independent of whether the
+		 * peer has a matching session yet), but the switch's kernel
+		 * has nowhere to route the resulting packet until pairing
+		 * finishes, so it is silently dropped -- confirmed on a real
+		 * VM: the write "succeeds" but the byte pattern never reaches
+		 * the downstream leg. A real PPP client papers over this via
+		 * LCP's own retransmission; this harness has no such retry,
+		 * so give the switch a moment instead. */
+		usleep(300000);
+
+		/* The real accel-ppp daemon registers each tunnel with the
+		 * kernel's L2TP subsystem via a throwaway pppol2tp connect
+		 * with session IDs left at 0 (l2tp_tunnel_connect(), l2tp.c
+		 * ~2071) as soon as its own SCCRQ/SCCRP/SCCCN handshake
+		 * completes -- confirmed on real hardware (Step 0 above) to
+		 * be a hard prerequisite for any *session*-level pppol2tp
+		 * connect() on that tunnel, which otherwise fails ENOENT.
+		 * This harness plays the MK/LAC side of the upstream tunnel,
+		 * so it must do the same registration itself before the real
+		 * session-level connect below -- nothing else on this
+		 * process's side ever does it, unlike the daemon, which
+		 * always goes through l2tp_tunnel_connect() for every tunnel
+		 * it establishes. */
+		reg_fd = socket(AF_PPPOX, SOCK_DGRAM, PX_PROTO_OL2TP);
+		if (reg_fd < 0)
+			return die("tunnel registration socket() failed");
+
+		memset(&pppox_addr, 0, sizeof(pppox_addr));
+		pppox_addr.sa_family = AF_PPPOX;
+		pppox_addr.sa_protocol = PX_PROTO_OL2TP;
+		pppox_addr.pppol2tp.fd = fd;
+		pppox_addr.pppol2tp.addr = peer_addr;
+		pppox_addr.pppol2tp.s_tunnel = local_tid;
+		pppox_addr.pppol2tp.d_tunnel = peer_tid;
+		/* s_session/d_session left at 0: this is the tunnel-level
+		 * registration, not a real session. */
+
+		if (connect(reg_fd, (struct sockaddr *)&pppox_addr,
+			   sizeof(pppox_addr)) < 0)
+			return die("tunnel registration connect() failed");
+		close(reg_fd);
+
+		data_fd = socket(AF_PPPOX, SOCK_DGRAM, PX_PROTO_OL2TP);
+		if (data_fd < 0)
+			return die("data socket() failed");
+
+		memset(&pppox_addr, 0, sizeof(pppox_addr));
+		pppox_addr.sa_family = AF_PPPOX;
+		pppox_addr.sa_protocol = PX_PROTO_OL2TP;
+		pppox_addr.pppol2tp.fd = fd; /* share the control-channel UDP socket */
+		pppox_addr.pppol2tp.addr = peer_addr;
+		pppox_addr.pppol2tp.s_tunnel = local_tid;
+		pppox_addr.pppol2tp.d_tunnel = peer_tid;
+		pppox_addr.pppol2tp.s_session = local_sid;
+		pppox_addr.pppol2tp.d_session = peer_sid;
+
+		if (connect(data_fd, (struct sockaddr *)&pppox_addr,
+			   sizeof(pppox_addr)) < 0)
+			return die("data socket connect() failed");
+
+		if (setsockopt(data_fd, SOL_PPPOL2TP, PPPOL2TP_SO_LNSMODE,
+			      &lns_mode, sizeof(lns_mode)) < 0)
+			return die("data socket setsockopt(LNSMODE) failed");
+
+		{
+			ssize_t n = write(data_fd, data_pattern, strlen(data_pattern));
+
+			if (n < 0)
+				return die("data socket write() failed");
+		}
+
+		close(data_fd);
+
+		/* Give the kernel a moment to finish encapsulating and
+		 * emitting the queued datagram before the process (and so
+		 * `fd`, the UDP socket the tunnel/session are keyed to)
+		 * exits and tears down the underlying socket. */
+		usleep(200000);
+	}
+
+	if (send_stopccn) {
+		pack = l2tp_packet_alloc(2, Message_Type_Stop_Ctrl_Conn_Notify,
+					 &peer_addr, 0, secret, strlen(secret));
+		if (!pack)
+			return die("StopCCN alloc failed");
+		l2tp_packet_add_int16(pack, Assigned_Tunnel_ID, local_tid, 1);
+		pack->hdr.tid = htons(peer_tid);
+		pack->hdr.sid = 0;
+		pack->hdr.Ns = htons(my_ns);
+		pack->hdr.Nr = htons(peer_next_nr);
+		if (l2tp_packet_send(fd, pack) < 0)
+			return die("StopCCN send failed");
+		l2tp_packet_free(pack);
+		my_ns++;
+	}
+
+	if (wait_cdn) {
+		/* RFC 2661 5.1: a control message's header sid/tid is the ID
+		 * *assigned by the recipient* -- a session-level CDN sent to
+		 * us for our own call carries our own fixed local_sid (not
+		 * peer_sid); a tunnel-level StopCCN carries sid 0 and our own
+		 * local_tid. Accept either: l2tp_tunnel_disconnect() (l2tp.c
+		 * ~1039) deliberately discards any already-queued CDN and
+		 * sends only StopCCN when the tunnel itself is going down
+		 * (the common case when the call being torn down is the
+		 * tunnel's last session) -- "to minimise delay in case of
+		 * congestion", per that function's own comment. Both signals
+		 * unambiguously mean the same thing to a peer: this call is
+		 * over. Requiring a CDN specifically would fail exactly the
+		 * scenario this flag exists to test. Poll with a wall-clock
+		 * deadline rather than a single SO_RCVTIMEO-bounded call,
+		 * since SO_RCVTIMEO bounds each individual recv(), not the
+		 * cumulative wait -- an intervening Hello/ZLB would
+		 * otherwise reset the budget. */
+		struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+		time_t deadline = time(NULL) + 5;
+		int got_cdn = 0;
+
+		if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
+			return die("setsockopt(SO_RCVTIMEO) failed");
+
+		while (time(NULL) < deadline) {
+			struct l2tp_packet_t *cdn = NULL;
+			struct l2tp_attr_t *msg_type;
+			int is_ours;
+
+			if (l2tp_recv(fd, &cdn, NULL, secret, strlen(secret)) != 0) {
+				if (errno == EAGAIN)
+					break;
+				continue;
+			}
+			if (!cdn)
+				continue;
+			is_ours = ntohs(cdn->hdr.sid) == local_sid ||
+				  (ntohs(cdn->hdr.sid) == 0 &&
+				   ntohs(cdn->hdr.tid) == local_tid);
+			if (list_empty(&cdn->attrs) || !is_ours) {
+				l2tp_packet_free(cdn);
+				continue;
+			}
+			msg_type = list_first_entry(&cdn->attrs,
+						    typeof(*msg_type), entry);
+			if (msg_type->attr &&
+			    msg_type->attr->id == Message_Type &&
+			    (msg_type->val.uint16 ==
+				     Message_Type_Call_Disconnect_Notify ||
+			     msg_type->val.uint16 ==
+				     Message_Type_Stop_Ctrl_Conn_Notify))
+				got_cdn = 1;
+			l2tp_packet_free(cdn);
+			if (got_cdn)
+				break;
+		}
+
+		if (!got_cdn)
+			return die("timed out waiting for CDN");
+	}
 
 	printf("ok tid=%hu sid=%hu\n", peer_tid, peer_sid);
 	return 0;
