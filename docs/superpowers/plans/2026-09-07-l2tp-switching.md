@@ -1467,17 +1467,28 @@ int main(int argc, char **argv)
 		}
 	}
 
-	/* Deliberately not connect()ed: l2tp_packet_send() always calls
-	 * sendto() with an explicit destination (pack->addr) regardless of
-	 * the socket's connection state, and POSIX leaves sendto() with an
-	 * explicit address on an already-connect()ed DGRAM socket
-	 * implementation-defined (EISCONN on some stacks -- confirmed
-	 * hitting exactly this while verifying this harness by hand).
-	 * accel-ppp's own l2tp.c never connect()s its UDP sockets either --
-	 * match that instead of introducing a second convention. */
+	/* connect()ed to the peer, exactly like the real daemon's own
+	 * l2tp_tunnel_alloc() (l2tp.c ~1776) connect()s its per-tunnel UDP
+	 * socket -- an earlier version of this harness left it deliberately
+	 * unconnected on the theory that connect() would make l2tp_packet_
+	 * send()'s sendto() (which always passes an explicit destination)
+	 * fail with EISCONN. That theory was wrong (Linux does not return
+	 * EISCONN for a connected SOCK_DGRAM socket used with sendto() --
+	 * that restriction is for connection-mode/TCP sockets only; the
+	 * real daemon relies on exactly this same connect()+sendto()
+	 * combination for every control message it sends) and it hid a real
+	 * bug found while building Task 7: the kernel's pppol2tp/l2tp_core
+	 * data-plane transmit path routes via the underlying UDP socket's
+	 * connected peer (inet_sk(sk)->inet_daddr), so leaving `fd`
+	 * unconnected made Task 7's data-channel write()/splice() (Step 5
+	 * below) report success while silently emitting nothing to the
+	 * wire -- confirmed on a real VM via `tcpdump -i lo udp` (no port
+	 * filter) showing zero packets despite a successful write(). */
 	fd = socket(AF_INET, SOCK_DGRAM, 0);
 	if (fd < 0)
 		return die("socket() failed");
+	if (connect(fd, (struct sockaddr *)&peer_addr, sizeof(peer_addr)) < 0)
+		return die("connect(fd) failed");
 
 	/* --- SCCRQ --- */
 	pack = l2tp_packet_alloc(2, Message_Type_Start_Ctrl_Conn_Request,
@@ -2501,6 +2512,33 @@ static void l2tp_switch_place_call(void *data)
 		goto err_pairing_done;
 	}
 
+	/* l2tp_session_place_call() only enqueues the ICRQ -- l2tp_tunnel_send()/
+	 * l2tp_session_send() append to conn->send_queue and return; nothing
+	 * about them transmits. Every other existing path that ends up
+	 * calling l2tp_session_place_call() runs from within l2tp_conn_read()'s
+	 * own receive loop, which unconditionally flushes the send queue
+	 * afterward -- this function instead runs via triton_context_call()
+	 * from a *different* tunnel's context (see
+	 * l2tp_switch_place_downstream_call() below), which never passes
+	 * through that loop. l2tp_tunnel_create_session() -- the existing
+	 * CLI-triggered path this whole cross-context pattern is modeled on
+	 * -- already calls l2tp_tunnel_push_sendqueue() explicitly for
+	 * exactly this reason; missing it here was a bug found while
+	 * building Task 7 against a real VM: the ICRQ sat in the queue,
+	 * silently undelivered, until some *unrelated* event on the
+	 * downstream tunnel (e.g. the next HELLO) happened to flush it --
+	 * observed as a ~40+ second stall between "sending ICRQ" in the log
+	 * and the packet actually reaching the wire, misleadingly looking
+	 * like a matching/pairing failure (`matched: 0`/`placed: 0` for
+	 * tens of seconds) rather than a late packet. Flush explicitly: */
+	if (l2tp_tunnel_push_sendqueue(conn) < 0) {
+		log_session(log_error, upstream,
+			    "l2tp-switch: transmitting downstream ICRQ"
+			    " failed\n");
+		l2tp_session_free(downstream);
+		goto err_pairing_done;
+	}
+
 	l2tp_stat_inc(&l2tp_stat.switch_placed);
 	session_put(upstream); /* the temporary hold taken in
 				 * l2tp_switch_place_downstream_call() below --
@@ -2694,6 +2732,51 @@ No fallback to `read()`/`write()` is needed — proceed with the `splice(2)`-bas
 ```c
 static int l2tp_session_connect_socket(struct l2tp_sess_t *sess, int start_ppp)
 {
+	/* ... unchanged body up through the existing connect() call ... */
+
+	if (connect(sess->ppp.fd,
+		    (struct sockaddr *)&pppox_addr, sizeof(pppox_addr)) < 0) {
+		log_session(log_error, sess, "impossible to connect session:"
+			    " connect() failed: %s\n", strerror(errno));
+		goto out_err;
+	}
+
+	/* start_ppp==0 sessions (l2tp-switch) read/write this socket
+	 * directly via splice() in l2tp_switch_link_read() (Step 3 below) --
+	 * unlike the normal (start_ppp==1) path, where this fd is handed
+	 * off to the kernel's generic PPP channel via PPPIOCATTCHAN and
+	 * userspace never touches it again, so it has never needed
+	 * O_NONBLOCK. Found missing while testing on a real VM: without
+	 * this, splice()'s read side blocks forever once the currently
+	 * pending datagram(s) are drained (SPLICE_F_NONBLOCK only avoids
+	 * blocking on the *pipe* end of the pair -- per splice(2), it does
+	 * nothing for a blocking-mode fd on the other end), permanently
+	 * consuming one of triton's worker threads per active switched
+	 * session. Once `thread-count` (default 2, or nproc) many sessions
+	 * are up, this starves every other triton context in the process,
+	 * including the CLI -- observed as `accel-cmd` hanging indefinitely
+	 * against an otherwise-healthy daemon, confirmed via `gdb -p <pid>
+	 * -batch -x <(echo 'thread apply all bt')` showing both worker
+	 * threads stuck inside splice(). */
+	if (!start_ppp) {
+		int flg = fcntl(sess->ppp.fd, F_GETFL);
+
+		if (flg < 0) {
+			log_session(log_error, sess,
+				    "impossible to connect session:"
+				    " fcntl(F_GETFL) failed: %s\n",
+				    strerror(errno));
+			goto out_err;
+		}
+		if (fcntl(sess->ppp.fd, F_SETFL, flg | O_NONBLOCK) < 0) {
+			log_session(log_error, sess,
+				    "impossible to connect session:"
+				    " fcntl(F_SETFL) failed: %s\n",
+				    strerror(errno));
+			goto out_err;
+		}
+	}
+
 	/* ... unchanged body up through: ... */
 
 	triton_event_fire(EV_CTRL_STARTED, &sess->ppp.ses);
@@ -2718,7 +2801,7 @@ static int l2tp_session_connect(struct l2tp_sess_t *sess)
 }
 ```
 
-Every existing call site (`l2tp_recv_ICRP`'s non-switch path, `l2tp_recv_ICCN`'s non-switch path, `l2tp_session_outcall_reply`) keeps calling `l2tp_session_connect(sess)` unchanged — zero behavior change for normal sessions, satisfying the Global Constraints entry on this.
+Every existing call site (`l2tp_recv_ICRP`'s non-switch path, `l2tp_recv_ICCN`'s non-switch path, `l2tp_session_outcall_reply`) keeps calling `l2tp_session_connect(sess)` unchanged — always `start_ppp=1`, so the new `fcntl` block above never runs for them and normal sessions see zero behavior change, satisfying the Global Constraints entry on this. Note this also means `link->dst->ppp.fd` (the *write* side of a splice link in Step 3) is `O_NONBLOCK` too, since both legs of a switched pair go through this same `start_ppp=0` path — Step 3's write-side splice call must handle `EAGAIN` accordingly (see below), not just the read side.
 
 - [ ] **Step 2: Add the pairing/link data structures**
 
@@ -2803,6 +2886,32 @@ static int l2tp_switch_link_read(struct triton_md_handler_t *h)
 			if (w < 0) {
 				if (errno == EINTR)
 					continue;
+				if (errno == EAGAIN) {
+					/* link->dst->ppp.fd is O_NONBLOCK (see
+					 * Step 1's l2tp_session_connect_socket
+					 * fix) -- wait for it to become
+					 * writable rather than treating a
+					 * momentarily full send path as a
+					 * hard failure. Without this, the
+					 * O_NONBLOCK fix in Step 1 turns every
+					 * transient EAGAIN here into an
+					 * incorrectly torn-down session. */
+					struct pollfd pfd = {
+						.fd = link->dst->ppp.fd,
+						.events = POLLOUT,
+					};
+
+					if (poll(&pfd, 1, -1) < 0 &&
+					    errno != EINTR) {
+						log_session(log_error, link->src,
+							    "l2tp-switch: poll(out)"
+							    " failed: %s\n",
+							    strerror(errno));
+						l2tp_switch_link_fail(link);
+						return 0;
+					}
+					continue;
+				}
 				log_session(log_error, link->src,
 					    "l2tp-switch: splice(out)"
 					    " failed: %s\n", strerror(errno));
@@ -2813,6 +2922,11 @@ static int l2tp_switch_link_read(struct triton_md_handler_t *h)
 		}
 	}
 }
+```
+
+(`poll()`/`struct pollfd`/`POLLOUT` need `#include <poll.h>` — add it near the top of `l2tp.c`, alongside the existing `<pthread.h>` include.)
+
+```c
 
 static void l2tp_switch_link_free(struct l2tp_switch_link_t *link)
 {
@@ -2830,8 +2944,23 @@ static void l2tp_switch_link_free(struct l2tp_switch_link_t *link)
 	if (link->from_upstream)
 		__atomic_sub_fetch(&link->target->active, 1, __ATOMIC_RELAXED);
 
-	if (link->hnd.tpd)
+	if (link->hnd.tpd) {
 		triton_md_unregister_handler(&link->hnd, 1 /* close fd */);
+		/* triton_md_unregister_handler() closes and resets
+		 * link->hnd.fd -- but that is a separate int from
+		 * link->src->ppp.fd (same value, different storage; hnd.fd
+		 * was only ever set *from* it in l2tp_switch_link_create()
+		 * below). Left alone, this is a real double-close bug found
+		 * during Task 7 testing: __session_destroy() (~line 1063)
+		 * unconditionally does `if (sess->ppp.fd >= 0) close(sess->
+		 * ppp.fd);` once the session's ref count reaches zero, finds
+		 * the now-stale fd number still >= 0, and closes it a second
+		 * time -- by then potentially reassigned by the kernel to an
+		 * unrelated fd opened by any other thread in the meantime
+		 * (this daemon is multi-threaded and constantly opening
+		 * sockets/pipes), silently closing something it doesn't own. */
+		link->src->ppp.fd = -1;
+	}
 	close(link->pipe_rd);
 	close(link->pipe_wr);
 	link->src->switch_link = NULL;
@@ -3091,10 +3220,31 @@ case 'd':
 
 Then, once `peer_tid`/`peer_sid` are known (right before the final `printf`):
 
+The plan as originally written jumped straight to a session-level `pppol2tp` connect. In practice that fails with `ENOENT`: Step 0 above already established that a *tunnel* must be registered with the kernel's L2TP subsystem (a throwaway `pppol2tp` connect with `s_session`/`d_session` left at `0`, then closed) before any session-level connect on it will succeed — `l2tp_tunnel_connect()` (`l2tp.c` ~2248) already does this for the real daemon's own tunnels, but nothing on this harness's side (playing the MK/LAC role for the *upstream* tunnel) ever did it for that tunnel until this task. Register it explicitly first, then open the real session-level data socket:
+
 ```c
 	if (data_pattern) {
 		struct sockaddr_pppol2tp pppox_addr;
-		int data_fd, lns_mode = 0;
+		int reg_fd, data_fd, lns_mode = 0;
+
+		/* Tunnel registration (Step 0's ENOENT prerequisite) --
+		 * s_session/d_session left at 0, closed immediately after. */
+		reg_fd = socket(AF_PPPOX, SOCK_DGRAM, PX_PROTO_OL2TP);
+		if (reg_fd < 0)
+			return die("tunnel registration socket() failed");
+
+		memset(&pppox_addr, 0, sizeof(pppox_addr));
+		pppox_addr.sa_family = AF_PPPOX;
+		pppox_addr.sa_protocol = PX_PROTO_OL2TP;
+		pppox_addr.pppol2tp.fd = fd;
+		pppox_addr.pppol2tp.addr = peer_addr;
+		pppox_addr.pppol2tp.s_tunnel = local_tid;
+		pppox_addr.pppol2tp.d_tunnel = peer_tid;
+
+		if (connect(reg_fd, (struct sockaddr *)&pppox_addr,
+			   sizeof(pppox_addr)) < 0)
+			return die("tunnel registration connect() failed");
+		close(reg_fd);
 
 		data_fd = socket(AF_PPPOX, SOCK_DGRAM, PX_PROTO_OL2TP);
 		if (data_fd < 0)
@@ -3122,6 +3272,12 @@ Then, once `peer_tid`/`peer_sid` are known (right before the final `printf`):
 			return die("data socket write() failed");
 
 		close(data_fd);
+
+		/* Give the kernel a moment to finish encapsulating and
+		 * emitting the queued datagram before the process (and so
+		 * `fd`, the UDP socket the tunnel/session are keyed to)
+		 * exits and tears down the underlying socket. */
+		usleep(200000);
 	}
 ```
 
@@ -3164,7 +3320,7 @@ def test_switch_splices_data_plane(pytestconfig, accel_cmd, accel_pppd):
 
         try:
             for _ in range(50):
-                (exit, out, err) = process.run([accel_cmd, "l2tp switch"])
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
                 if "[up]" in out:
                     break
                 time.sleep(0.1)
@@ -3199,12 +3355,14 @@ def test_switch_splices_data_plane(pytestconfig, accel_cmd, accel_pppd):
 
             assert DATA_PATTERN in capture_out
         finally:
-            accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0)
+            accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=2001)
             config.delete_tmp(s_cfg)
     finally:
-        accel_pppd_process.end(d_thread, d_ctrl, accel_cmd, 10.0)
+        accel_pppd_process.end(d_thread, d_ctrl, accel_cmd, 10.0, cli_port=2101)
         config.delete_tmp(d_cfg)
 ```
+
+(`-p 2001`/`cli_port=2001`/`cli_port=2101`, matching the convention already established in Tasks 5-6's tests — `process.run([accel_cmd, "l2tp switch"])` and `accel_pppd_process.end(..., 10.0)` without an explicit port, as originally written above, target `accel-cmd`'s default CLI port rather than either of this test's two instances.)
 
 The assertion is on the wire between the switch and the downstream instance, not on the downstream instance's own behavior — the downstream instance in this test is a **plain, unmodified accel-pppd LNS**, so it will try to interpret the arriving bytes as a real PPP frame and will not echo or acknowledge them meaningfully; `SWITCHOK` is not a valid PPP frame, so it is simply discarded by the downstream LNS's LCP layer without side effects. What this test actually proves is narrower and sufficient: the switch's `splice(2)` datapath (Task 7) correctly moved the exact bytes written into the MK-simulator's own kernel socket into a real L2TP data-message UDP packet addressed to the downstream target — which is the switch's entire responsibility; what the downstream LNS does with those bytes is outside this feature's scope.
 
@@ -3212,6 +3370,8 @@ The assertion is on the wire between the switch and the downstream instance, not
 
 Run: `sudo python3 -m pytest -v accel-pppd/l2tp_switch/test_switch_splice.py`
 Expected before this task's implementation: FAIL (`DATA_PATTERN not in capture_out`) — no data-plane bridging exists yet, so the write into the MK-simulator's kernel socket goes nowhere. After implementing Steps 1-4 above: PASS.
+
+Confirmed for real on a VM, after fixing the four bugs documented inline above (Task 6's missing `l2tp_tunnel_push_sendqueue()` call, the harness's missing tunnel registration and missing `connect()` on its control-channel socket, the missing `O_NONBLOCK` on switch-mode session sockets, and the resulting need for `EAGAIN` handling on the write-side splice plus the `l2tp_switch_link_free()` double-close): `test_switch_splice.py` passes on its own in ~12s, and the full `l2tp_switch` suite (13 tests as of this task) passes together with no regressions. Before the `O_NONBLOCK` fix specifically, the *daemon itself* would hang shortly after the first successful splice — `accel-cmd` timing out against an otherwise-alive process — which is a considerably worse failure mode than a failing test and would not have been obvious from the test suite alone (the test's own 10-second `l2tp_peer_process.wait` timeout masks it as an ordinary assertion failure rather than the underlying thread-pool starvation); worth knowing if a similar "daemon looks alive but the CLI hangs" symptom ever reappears elsewhere in this codebase.
 
 - [ ] **Step 8: Commit**
 
@@ -3227,17 +3387,188 @@ git commit -m "feat(l2tp): pair switched sessions and splice PPP frames via spli
 ### Task 8: Error handling & teardown
 
 **Files:**
-- Modify: `accel-pppd/ctrl/l2tp/l2tp.c` (`l2tp_session_free` ~1063)
-- Modify: `accel-pppd/ctrl/l2tp/l2tp_switch_peer_test.c` (adds `--send-stopccn`, for the symmetric upstream-teardown test)
+- Modify: `accel-pppd/ctrl/l2tp/l2tp.c` (`l2tp_session_free` ~1063; also `l2tp_switch_place_call` (Task 6) and `l2tp_switch_finish_upstream`/`l2tp_recv_ICRP` (Task 7) — two pre-existing functions that turn out to need their own fixes, found while testing this task's own teardown hook, see Step 3's addendum below)
+- Modify: `accel-pppd/ctrl/l2tp/l2tp_switch_peer_test.c` (adds `--wait-cdn`, for confirming the surviving leg is actually notified, and `--send-stopccn`, for the symmetric upstream-teardown test)
 - Test: `tests/accel-pppd/l2tp_switch/test_switch_teardown.py`, `tests/accel-pppd/l2tp_switch/test_switch_teardown_upstream.py`
 
 **Interfaces:**
 - Consumes: `sess->switch_link`, `sess->switch_downstream`/`switch_upstream` (Tasks 6-7), `l2tp_switch_teardown_peer()` (Task 7 — already fully defined there; this task adds no new definition, only a new call site).
-- Produces: a CDN propagates to whichever leg is still up when the other is torn down for any reason (peer CDN/StopCCN, splice error, target tunnel drop).
+- Produces: a CDN or StopCCN (whichever `l2tp_tunnel_disconnect()` actually sends — see `--wait-cdn`'s own comment below) propagates to whichever leg is still up when the other is torn down for any reason (peer CDN/StopCCN, splice error, target tunnel drop).
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/accel-pppd/l2tp_switch/test_switch_teardown.py`: reuse Task 7's setup (switch instance + downstream instance + MK-simulator harness establishing one switched call), then kill the **downstream** `accel_pppd_process` mid-call (`accel_pppd_process.end(...)` on it while the switch instance is still up) and assert, via `l2tp switch`, that the switch instance's `active` count drops back to 0 and (via the MK-simulator harness, extended to optionally listen for a CDN after ICCN instead of exiting immediately — add a `--wait-cdn` flag that, after ICCN, blocks on `l2tp_recv()` for up to 5 seconds and exits 0 only if a CDN for its session arrives) that the upstream leg receives a CDN.
+`tests/accel-pppd/l2tp_switch/test_switch_teardown.py`: reuse Task 7's setup (switch instance + downstream instance + MK-simulator harness establishing one switched call), then kill the **downstream** `accel_pppd_process` mid-call (`accel_pppd_process.end(...)` on it while the switch instance is still up) and assert, via `l2tp switch`, that the switch instance's `active` count drops back to 0 and (via the MK-simulator harness, extended to optionally listen for teardown after ICCN instead of exiting immediately) that the upstream leg is actually notified.
+
+Add a `--wait-cdn` flag to `l2tp_switch_peer_test.c` that, after ICCN, blocks on `l2tp_recv()` with a wall-clock deadline (not a single `SO_RCVTIMEO`-bounded call, since that bounds each individual `recv()` rather than the cumulative wait — an intervening Hello/ZLB would otherwise reset the budget) for up to 5 seconds, and exits 0 only once it sees a message that unambiguously means "this call is over":
+
+```c
+/* add to the option globals */
+static int wait_cdn;
+
+/* add to the getopt_long array */
+{"wait-cdn", no_argument, 0, 'W'},
+
+/* add to the switch statement */
+case 'W':
+	wait_cdn = 1;
+	break;
+
+/* after the ICCN-sending block (and after Step 5's --send-stopccn
+ * block below, if both happen to be given), before the final printf: */
+if (wait_cdn) {
+	/* RFC 2661 5.1: a control message's header sid/tid is the ID
+	 * *assigned by the recipient* -- a session-level CDN sent to us
+	 * for our own call carries our own fixed local_sid (not
+	 * peer_sid); a tunnel-level StopCCN carries sid 0 and our own
+	 * local_tid. Accept either: l2tp_tunnel_disconnect() (l2tp.c
+	 * ~1039) deliberately discards any already-queued CDN and sends
+	 * only StopCCN when the tunnel itself is going down (the common
+	 * case when the call being torn down is the tunnel's last
+	 * session) -- "to minimise delay in case of congestion", per
+	 * that function's own comment. Both signals unambiguously mean
+	 * the same thing to a peer: this call is over. Requiring a CDN
+	 * specifically would fail exactly the scenario this flag exists
+	 * to test -- confirmed on a real VM: an earlier version of this
+	 * flag that only accepted Message_Type_Call_Disconnect_Notify
+	 * timed out every time against test_switch_teardown.py's own
+	 * scenario, because the switch's upstream leg is the *only*
+	 * session on its tunnel, so tearing it down always takes the
+	 * StopCCN-only path. */
+	struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+	time_t deadline = time(NULL) + 5;
+	int got_cdn = 0;
+
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
+		return die("setsockopt(SO_RCVTIMEO) failed");
+
+	while (time(NULL) < deadline) {
+		struct l2tp_packet_t *cdn = NULL;
+		struct l2tp_attr_t *msg_type;
+		int is_ours;
+
+		if (l2tp_recv(fd, &cdn, NULL, secret, strlen(secret)) != 0) {
+			if (errno == EAGAIN)
+				break;
+			continue;
+		}
+		if (!cdn)
+			continue;
+		is_ours = ntohs(cdn->hdr.sid) == local_sid ||
+			  (ntohs(cdn->hdr.sid) == 0 &&
+			   ntohs(cdn->hdr.tid) == local_tid);
+		if (list_empty(&cdn->attrs) || !is_ours) {
+			l2tp_packet_free(cdn);
+			continue;
+		}
+		msg_type = list_first_entry(&cdn->attrs, typeof(*msg_type), entry);
+		if (msg_type->attr && msg_type->attr->id == Message_Type &&
+		    (msg_type->val.uint16 == Message_Type_Call_Disconnect_Notify ||
+		     msg_type->val.uint16 == Message_Type_Stop_Ctrl_Conn_Notify))
+			got_cdn = 1;
+		l2tp_packet_free(cdn);
+		if (got_cdn)
+			break;
+	}
+
+	if (!got_cdn)
+		return die("timed out waiting for CDN");
+}
+```
+
+(`#include <time.h>` for `time_t`/`time()`, needed alongside the existing includes.)
+
+`tests/accel-pppd/l2tp_switch/test_switch_teardown.py`:
+
+```python
+import time
+from common import process, config, accel_pppd_process, l2tp_peer_process
+from helpers import start_instance
+
+
+def test_downstream_drop_tears_down_upstream(pytestconfig, accel_cmd, accel_pppd):
+    d_started, d_thread, d_ctrl, d_cfg = start_instance(
+        accel_pppd, accel_cmd, 2101, "127.0.0.1", 17060, "downstreamsecret"
+    )
+    assert d_started
+
+    try:
+        s_started, s_thread, s_ctrl, s_cfg = start_instance(
+            accel_pppd,
+            accel_cmd,
+            2001,
+            "127.0.0.1",
+            17061,
+            "upstreamsecret",
+            extra="""
+    [l2tp-switch]
+    target=downstream,127.0.0.1,17060,downstreamsecret
+    line=472913,downstream
+    """,
+        )
+        assert s_started
+
+        try:
+            for _ in range(50):
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+                if "[up]" in out:
+                    break
+                time.sleep(0.1)
+            assert "[up]" in out
+
+            # establish one switched call, then block waiting for the CDN
+            # (or StopCCN -- see --wait-cdn's own comment above) the
+            # switch's upstream leg must send once the paired downstream
+            # leg goes away -- proves the actual RFC-level teardown, not
+            # just an internal counter.
+            peer_thread, peer_ctrl = l2tp_peer_process.start(
+                "/tmp/l2tp_switch_peer_test",
+                [
+                    "--peer-addr", "127.0.0.1",
+                    "--peer-port", "17061",
+                    "--secret", "upstreamsecret",
+                    "--calling-number", "472913",
+                    "--wait-cdn",
+                ],
+            )
+
+            active = None
+            for _ in range(50):
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+                if "active: 1" in out:
+                    active = 1
+                    break
+                time.sleep(0.1)
+            assert active == 1, out
+
+            # kill the downstream instance mid-call -- the switch's
+            # l2tp_session_free() teardown hook must notice and tear down
+            # the paired upstream leg too, rather than crashing or leaking.
+            accel_pppd_process.end(d_thread, d_ctrl, accel_cmd, 10.0, cli_port=2101)
+
+            rc, out2, err = l2tp_peer_process.wait(peer_thread, peer_ctrl, 10.0)
+            assert rc == 0, err
+
+            active = None
+            for _ in range(50):
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+                assert exit == 0
+                if "active: 0" in out:
+                    active = 0
+                    break
+                time.sleep(0.1)
+            assert active == 0, out
+        finally:
+            accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=2001)
+            config.delete_tmp(s_cfg)
+    finally:
+        # already ended mid-test above in the success path; end() is a
+        # no-op on an already-terminated process, so this still cleans up
+        # correctly if an earlier assertion failed first.
+        accel_pppd_process.end(d_thread, d_ctrl, accel_cmd, 10.0, cli_port=2101)
+        config.delete_tmp(d_cfg)
+```
+
+(`-p 2001`/`cli_port=2001`/`cli_port=2101`, matching the convention already established in Tasks 5-7's tests.)
 
 - [ ] **Step 2: Run, verify it fails**
 
@@ -3282,6 +3613,89 @@ Expected: FAIL — nothing currently notices the downstream tunnel dying and tea
 ```
 
 No new function is needed here: `l2tp_switch_teardown_peer()` (Task 7) already does exactly what the peer side of this teardown requires — clear the peer's own pointer, release the hold that pointer justified, and disconnect the peer if it isn't already closing. Result code `2`/error code `6`, used both there and in the hook above, are re-used verbatim from the existing "impossible to handle ICCN"/"impossible to handle ICRP" disconnect calls already in this file — matches Global Constraints' "follow existing conventions" and avoids inventing a new error-code scheme.
+
+**Two more race conditions surfaced while testing this hook against real VMs, both in Task 6/7 functions that this hook now makes reachable from a genuinely concurrent angle they weren't written against.** Both are fixed in `l2tp.c` alongside the hook above, not deferred to a later task, since the hook above is useless without them (the very scenario it exists for — a leg dying mid-pairing — is exactly what triggers both races).
+
+**Race 1: `l2tp_switch_place_call()` (Task 6) never checks whether `upstream` is still alive.** `l2tp_switch_place_downstream_call()` schedules `l2tp_switch_place_call(upstream)` via `triton_context_call()` from inside ICCN handling — a genuine deferral, not a synchronous call. If the MK peer sends ICCN and then *immediately* StopCCN (no delay — confirmed with `l2tp_switch_peer_test.c`'s own `--send-stopccn`, sent right after ICCN with zero pause), the StopCCN can be processed on upstream's own tunnel context — tearing upstream down completely via the now-hooked `l2tp_session_free()` — *before* the already-scheduled `l2tp_switch_place_call()` gets its turn to run. `l2tp_session_free()` is a no-op on an already-`STATE_CLOSE` session (its own `switch` statement returns immediately), so if `l2tp_switch_place_call()` proceeds anyway — pairing `upstream->switch_downstream = downstream` and placing the downstream call — nothing will *ever* call `l2tp_session_free(upstream)` again to trigger Step 3's hook. `downstream`'s hold on `upstream`, and the pairing itself, leak forever: confirmed on a real VM as `active` stuck at `1` indefinitely, with the log showing the downstream call being placed *after* "deleting session" for the upstream leg that supposedly placed it. Fix — bail out before doing anything if `upstream` is already gone, in `l2tp_switch_place_call()` (`l2tp.c`, Task 6), right after its parameter/local declarations:
+
+```c
+	/* upstream can already be STATE_CLOSE by the time this scheduled
+	 * cross-context call actually runs -- e.g. the MK peer sends ICCN
+	 * then immediately StopCCN, and the StopCCN is processed on
+	 * upstream's own tunnel context (tearing upstream down completely,
+	 * via l2tp_session_free()'s normal STATE_CLOSE-guarded path) before
+	 * this call is scheduled to run. l2tp_session_free() is a no-op on
+	 * an already-STATE_CLOSE session (its own switch statement returns
+	 * immediately), so pairing downstream to a dead upstream here would
+	 * mean nothing ever calls l2tp_session_free(upstream) again --
+	 * Task 8's teardown hook would never fire, downstream's own
+	 * session_hold(upstream) would never be released, and the pairing
+	 * would leak forever (confirmed on a real VM: active stuck at 1
+	 * indefinitely). session_put() directly (no context cross needed --
+	 * l2tp_switch_finish_upstream() already does the same for its own
+	 * trailing releases) releases the hold taken by the caller without
+	 * pairing or placing any downstream call for a call that no longer
+	 * exists. */
+	if (upstream->state1 == STATE_CLOSE) {
+		session_put(upstream);
+		return;
+	}
+```
+
+**Race 2: `l2tp_switch_finish_upstream()` (Task 7) re-derives `upstream` from a pointer this same hook can concurrently clear.** It read `upstream` as `downstream->switch_upstream` at call time rather than being handed a stable reference. If *either* leg dies and Step 3's hook runs while this scheduled call is still in flight, the hook clears `switch_upstream`/`switch_downstream` on the surviving leg — so `l2tp_switch_finish_upstream()` can find `downstream->switch_upstream == NULL` and crash dereferencing it, or (if it finds a stale but non-NULL leftover in some other interleaving) proceed to call `l2tp_session_connect_socket()`/`l2tp_switch_link_create()` against an already-`STATE_CLOSE` session — leaking a stray kernel socket that nothing will ever clean up, since that session's own `l2tp_session_free()` already ran and is a no-op on any later call. Fix — carry both pointers explicitly instead of re-deriving one from the other, and guard against either already being closed. Change the struct and function signature (`l2tp.c`, Task 7, directly above `l2tp_recv_ICRP`):
+
+```c
+struct l2tp_switch_finish_ctx {
+	struct l2tp_sess_t *upstream;
+	struct l2tp_sess_t *downstream;
+};
+
+static void l2tp_switch_finish_upstream(void *data)
+{
+	struct l2tp_switch_finish_ctx *ctx = data;
+	struct l2tp_sess_t *upstream = ctx->upstream;
+	struct l2tp_sess_t *downstream = ctx->downstream;
+
+	_free(ctx);
+
+	if (upstream->state1 == STATE_CLOSE || downstream->state1 == STATE_CLOSE) {
+		session_put(downstream);
+		session_put(upstream);
+		return;
+	}
+
+	if (l2tp_session_connect_socket(upstream, 0) < 0) {
+		/* ... unchanged from here on ... */
+```
+
+And its call site in `l2tp_recv_ICRP`'s `switch_upstream` branch (Task 7 Step 4) — allocate and pass the ctx instead of passing `sess` alone:
+
+```c
+		struct l2tp_switch_finish_ctx *ctx = _malloc(sizeof(*ctx));
+
+		if (!ctx) {
+			log_session(log_error, sess,
+				    "l2tp-switch: allocating finish-upstream"
+				    " context failed\n");
+			l2tp_session_disconnect(sess, 2, 6);
+			return -1;
+		}
+		ctx->upstream = upstream;
+		ctx->downstream = sess;
+
+		session_hold(upstream);
+		session_hold(sess);
+		if (triton_context_call(&upstream->paren_conn->ctx,
+					l2tp_switch_finish_upstream, ctx) < 0) {
+			_free(ctx);
+			session_put(sess);
+			session_put(upstream);
+			l2tp_session_disconnect(sess, 2, 6);
+			return -1;
+		}
+```
+
+Both races were found the same way: running `test_switch_teardown_upstream.py` (Step 5 below) repeatedly rather than once. Race 1 reproduced on the very first real-VM attempt (the harness's `--send-stopccn` has zero delay after ICCN by design); Race 2 never reproduced under either race's own test as written (both send StopCCN either immediately after ICCN or wait for full pairing first, never split the difference), but was found by code inspection while fixing Race 1 and is real regardless — a MK peer that waits for pairing to fully complete and *then* immediately drops the tunnel would hit it. Fixed proactively rather than left for a future task to rediscover the hard way.
 
 - [ ] **Step 4: Handle the "downstream tunnel itself dropped, before any per-session CDN" case**
 
@@ -3331,14 +3745,13 @@ Add `tests/accel-pppd/l2tp_switch/test_switch_teardown_upstream.py`, mirroring `
 
 ```python
 import time
-from common import process
+from common import process, config, accel_pppd_process, l2tp_peer_process
 from helpers import start_instance
-from common import l2tp_peer_process
 
 
 def test_upstream_tunnel_drop_tears_down_downstream(pytestconfig, accel_cmd, accel_pppd):
     d_started, d_thread, d_ctrl, d_cfg = start_instance(
-        accel_pppd, accel_cmd, 2101, "127.0.0.1", 17050, "downstreamsecret"
+        accel_pppd, accel_cmd, 2101, "127.0.0.1", 17070, "downstreamsecret"
     )
     assert d_started
 
@@ -3348,11 +3761,11 @@ def test_upstream_tunnel_drop_tears_down_downstream(pytestconfig, accel_cmd, acc
             accel_cmd,
             2001,
             "127.0.0.1",
-            17051,
+            17071,
             "upstreamsecret",
             extra="""
     [l2tp-switch]
-    target=downstream,127.0.0.1,17050,downstreamsecret
+    target=downstream,127.0.0.1,17070,downstreamsecret
     line=472913,downstream
     """,
         )
@@ -3360,7 +3773,7 @@ def test_upstream_tunnel_drop_tears_down_downstream(pytestconfig, accel_cmd, acc
 
         try:
             for _ in range(50):
-                (exit, out, err) = process.run([accel_cmd, "l2tp switch show"])
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
                 if "[up]" in out:
                     break
                 time.sleep(0.1)
@@ -3373,7 +3786,7 @@ def test_upstream_tunnel_drop_tears_down_downstream(pytestconfig, accel_cmd, acc
                 "/tmp/l2tp_switch_peer_test",
                 [
                     "--peer-addr", "127.0.0.1",
-                    "--peer-port", "17051",
+                    "--peer-port", "17071",
                     "--secret", "upstreamsecret",
                     "--calling-number", "472913",
                     "--send-stopccn",
@@ -3384,7 +3797,7 @@ def test_upstream_tunnel_drop_tears_down_downstream(pytestconfig, accel_cmd, acc
 
             active = None
             for _ in range(50):
-                (exit, out, err) = process.run([accel_cmd, "l2tp switch show"])
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
                 assert exit == 0
                 if "active: 0" in out:
                     active = 0
@@ -3392,20 +3805,20 @@ def test_upstream_tunnel_drop_tears_down_downstream(pytestconfig, accel_cmd, acc
                 time.sleep(0.1)
             assert active == 0, out
         finally:
-            from common import accel_pppd_process, config
-            accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0)
+            accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=2001)
             config.delete_tmp(s_cfg)
     finally:
-        from common import accel_pppd_process, config
-        accel_pppd_process.end(d_thread, d_ctrl, accel_cmd, 10.0)
+        accel_pppd_process.end(d_thread, d_ctrl, accel_cmd, 10.0, cli_port=2101)
         config.delete_tmp(d_cfg)
 ```
 
-(Move the `accel_pppd_process`/`config` imports to the top of the file with the others, matching every other test file in this plan — written inline above only to keep the diff self-contained to read.)
+(`-p 2001`/`cli_port=2001`/`cli_port=2101`, matching Task 7's fixed convention — different ports (17070/17071) from `test_switch_teardown.py` above, since pytest may run both in the same session and reused ports across tests have caused cross-test interference before. Imports collected at the top of the file rather than split inline, matching every other test file in this plan.)
 
 - [ ] **Step 6: Run, verify both directions pass**
 
 Expected: PASS for both `test_switch_teardown.py` (downstream dies) and `test_switch_teardown_upstream.py` (upstream dies) — in both cases the switch instance's `active` count returns to `0` and the surviving leg is cleanly disconnected, confirming the single `l2tp_session_free()` choke point handles either direction without direction-specific code.
+
+Confirmed for real on a VM, after fixing the two race conditions documented above (in addition to the teardown hook itself): both tests pass individually, and the full `l2tp_switch` suite (15 tests as of this task) passes together with no regressions. Because Race 1 is timing-dependent, a single passing run does not prove it is fixed — `test_switch_teardown_upstream.py` was run 15 times back-to-back in a loop (bypassing pytest's own per-test overhead so each iteration exercises the same tight ICCN-then-StopCCN timing) with zero failures, versus reproducing on the very next attempt (1-in-3 to 1-in-5, inconsistently) before the fix. `test_switch_teardown.py` additionally confirms Step 4's claim experimentally: killing the downstream instance mid-call (no code path specific to "downstream" vs "upstream" dying) correctly cascades through the exact same `l2tp_session_free()` hook.
 
 - [ ] **Step 7: Commit**
 
