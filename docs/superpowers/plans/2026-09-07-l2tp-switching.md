@@ -58,7 +58,7 @@
   - `struct l2tp_switch_target_t *l2tp_switch_lookup(const uint8_t *val, int len)` — returns the target for a raw AVP value, or `NULL`.
   - `int l2tp_switch_line_count(void)`, and a `list_head l2tp_switch_targets` (extern) for CLI iteration.
 
-- [ ] **Step 1: Write `l2tp_switch_conf.h`**
+- [x] **Step 1: Write `l2tp_switch_conf.h`**
 
 ```c
 #ifndef __L2TP_SWITCH_CONF_H
@@ -107,7 +107,7 @@ int l2tp_switch_line_del(const uint8_t *val, int len);
 #endif
 ```
 
-- [ ] **Step 2: Write `l2tp_switch_conf.c`**
+- [x] **Step 2: Write `l2tp_switch_conf.c`**
 
 ```c
 #include <stdlib.h>
@@ -413,7 +413,7 @@ int l2tp_switch_conf_load(void)
 
 `ATTR_TYPE_STRING` comes from `l2tp.h` (already defines `ATTR_TYPE_NONE`/`INT16`/`INT32`/`INT64`/`OCTETS`/`STRING`). `list_add_tail`/`list_del`/`list_first_entry`/`list_empty`/`list_for_each_entry`/`LIST_HEAD` come from the project's own `list.h`, already used identically throughout `l2tp.c` — verified by compiling this file with `gcc -fsyntax-only` against the real headers (see the note in `switch_conf_clear()` above about the one macro this project's `list.h` does *not* have).
 
-- [ ] **Step 3: Add `l2tp_conf_get_bind_addr()` to `l2tp.c`**
+- [x] **Step 3: Add `l2tp_conf_get_bind_addr()` to `l2tp.c`**
 
 There is no existing stored variable to read here: `[l2tp] bind` is parsed **twice** in `l2tp.c` today, independently, and neither call site keeps the result around afterward — `start_udp_server()` (~line 4655) parses it straight into a local `addr.sin_addr.s_addr` used immediately for `bind()`, and `l2tp_create_tunnel_exec()` (~line 4791) parses it again into its own local `host.sin_addr` for the CLI-driven tunnel command. So `l2tp_conf_get_bind_addr()` must parse it fresh too, matching `start_udp_server()`'s exact idiom (`inet_addr()`, defaulting to `INADDR_ANY` when unset):
 
@@ -440,7 +440,7 @@ uint16_t l2tp_conf_get_bind_port(void)
 
 Add these functions next to `start_udp_server()` in `l2tp.c`. `l2tp_conf_get_bind_addr()` returns `INADDR_ANY` when no `bind=` is configured, matching how `l2tp_switch_conf.c`'s `validate_no_self_loop()` already treats `INADDR_ANY` as "skip the check." `l2tp_conf_get_bind_port()` is added by Task 5, not this task — it doesn't exist yet at this point in the plan, but is documented here alongside its sibling since both belong to the same self-loop check and a reader implementing Step 3 needs the full picture. **This function did not exist when this task was originally written** — see Task 5's bug note for why `validate_no_self_loop()` needed it added.
 
-- [ ] **Step 4: Wire into `CMakeLists.txt`**
+- [x] **Step 4: Wire into `CMakeLists.txt`**
 
 `accel-pppd/ctrl/l2tp/CMakeLists.txt` in full today is:
 
@@ -476,7 +476,7 @@ ADD_LIBRARY(l2tp SHARED
 )
 ```
 
-- [ ] **Step 5: Register `l2tp switch show` and load the config, in `l2tp_init()`**
+- [x] **Step 5: Register `l2tp switch show` and load the config, in `l2tp_init()`**
 
 In `l2tp.c`, add near the top of the file (with the other includes):
 
@@ -543,7 +543,7 @@ static int l2tp_switch_show_exec(const char *cmd, char * const *fields,
 }
 ```
 
-- [ ] **Step 6: Write the pytest scaffolding**
+- [x] **Step 6: Write the pytest scaffolding**
 
 Create `tests/accel-pppd/l2tp_switch/conftest.py`:
 
@@ -721,7 +721,7 @@ class TestSelfLoopTarget:
         assert accel_pppd_instance is False
 ```
 
-- [ ] **Step 7: Build and run**
+- [x] **Step 7: Build and run**
 
 ```bash
 cd accel-ppp && mkdir -p build && cd build
@@ -734,7 +734,7 @@ sudo python3 -m pytest -v accel-pppd/l2tp_switch/test_switch_config.py
 
 Expected: both tests pass; `l2tp switch` with no `[l2tp-switch]` section prints just `targets:`; with the section, prints the `acme` line.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add accel-pppd/ctrl/l2tp/l2tp_switch_conf.h accel-pppd/ctrl/l2tp/l2tp_switch_conf.c \
@@ -755,7 +755,7 @@ git commit -m "feat(l2tp): add [l2tp-switch] config table and read-only CLI"
 - Consumes: `l2tp_switch_line_add()`, `l2tp_switch_line_del()`, `l2tp_switch_target_find()` (Task 1).
 - Produces: `l2tp switch add <value> <target-name>` / `l2tp switch del <value>` CLI commands.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/accel-pppd/l2tp_switch/test_switch_cli.py`:
 
@@ -781,12 +781,12 @@ def test_l2tp_switch_add_del(accel_pppd_instance, accel_cmd):
     assert "failed" in out
 ```
 
-- [ ] **Step 2: Run, verify it fails**
+- [x] **Step 2: Run, verify it fails**
 
 Run: `sudo python3 -m pytest -v accel-pppd/l2tp_switch/test_switch_cli.py`
 Expected: FAIL — `l2tp switch add` is not a recognized command yet. `cli_process_simple_cmd()` matches simple commands by header *prefix*, so typing `l2tp switch add ...` still matches Task 1's already-registered 2-word `l2tp switch` (show) handler and runs it, returning `CLI_CMD_OK` with no error text — the assertion looking for `"failed"` in the output fails because that text was never produced, not because the command was rejected outright.
 
-- [ ] **Step 3: Implement `l2tp switch add`/`del`**
+- [x] **Step 3: Implement `l2tp switch add`/`del`**
 
 In `l2tp.c`, alongside `l2tp_switch_show_exec`:
 
@@ -837,7 +837,7 @@ Register in `l2tp_init()`, next to the `l2tp switch` (show) registration:
 
 (`fields_cnt == 5` for `add`: `["l2tp","switch","add",<value>,<target>]`; `fields[3]`/`fields[4]` are the two arguments — the same `fields[]` indexing already used by `l2tp_create_tunnel_exec`.)
 
-- [ ] **Step 4: Run, verify the intended-fail test still fails as designed, then add the success-path test**
+- [x] **Step 4: Run, verify the intended-fail test still fails as designed, then add the success-path test**
 
 Extend `test_switch_cli.py` with a config that defines the `acme` target (mirroring Task 1's `TestWithTarget` pattern) and assert `add` succeeds and `l2tp switch` then lists it under the line, plus `del` removes it:
 
@@ -898,7 +898,7 @@ Expected: all PASS.
 
 **Bug found verifying this against a real accel-pppd/accel-cmd on a VM:** the original version of this test used `assert exit != 0` for every failure case. `accel-cmd`'s process exit code reflects only local/connection-level errors (bad params, connection failure, timeout) — never whether the remote CLI command itself succeeded (see `accel-cmd/accel_cmd.c`'s `XSTATUS_*` enum, none of which correspond to a remote failure). This is why the existing test suite already carries `# accel-cmd fails` comments next to `assert exit == 0` in several places (e.g. `tests/accel-pppd/pppoe/test_pppoe_session_wo_auth.py`). A remote failure is signaled only by `"command failed"` (`CLI_CMD_FAILED`) or `"syntax error"` (`CLI_CMD_SYNTAX`) appended to the response text (`accel-pppd/cli/cli.c`'s `MSG_FAILURE_ERROR`/`MSG_SYNTAX_ERROR`). Every `assert exit != 0` above fails outright against the real daemon (`accel-cmd`'s exit code is always 0 here) — confirmed by actually running this test against a real accel-pppd/accel-cmd on a VM. Fixed to assert on `"failed" in out`/`"failed" not in out` instead.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add accel-pppd/ctrl/l2tp/l2tp.c tests/accel-pppd/l2tp_switch/test_switch_cli.py
@@ -920,7 +920,7 @@ git commit -m "feat(l2tp): add accel-cmd l2tp switch add/del"
 
 This is the first task that makes an actual second `accel-pppd` instance necessary in tests — the fixtures already support running two `accel_pppd_instance`s in one test by calling the fixture logic twice with two different config files, since L2TP is plain UDP and needs no veth/netns.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/accel-pppd/l2tp_switch/test_switch_tunnel.py`:
 
@@ -1041,12 +1041,12 @@ def end(accel_pppd_thread, accel_pppd_control, accel_cmd, max_wait_time, cli_por
 
 Add `tests/common/accel_pppd_process.py` to this task's `git add` in Step 5.
 
-- [ ] **Step 2: Run, verify it fails**
+- [x] **Step 2: Run, verify it fails**
 
 Run: `sudo python3 -m pytest -v accel-pppd/l2tp_switch/test_switch_tunnel.py`
 Expected: FAIL — `l2tp switch` doesn't print a `[up]`/`[down]` status yet, and no tunnel is brought up at all.
 
-- [ ] **Step 3: Implement persistent tunnel bring-up**
+- [x] **Step 3: Implement persistent tunnel bring-up**
 
 In `l2tp.c`, add near the other tunnel-lifecycle statics (close to `l2tp_tunnel_alloc`/`l2tp_tunnel_start`):
 
@@ -1163,7 +1163,7 @@ Extend `l2tp_switch_show_exec` (Task 1) to print status:
 			 t->tunnel ? "up" : "down");
 ```
 
-- [ ] **Step 4: Run, verify it passes**
+- [x] **Step 4: Run, verify it passes**
 
 Run: `sudo python3 -m pytest -v accel-pppd/l2tp_switch/test_switch_tunnel.py`
 Expected: PASS — the tunnel reaches `STATE_ESTB` against the downstream instance and `l2tp switch` reports `[up]`. Confirmed for real: built and run against a real downstream/switch pair of accel-pppd instances on a Debian 12 VM, `l2tp switch` reported `downstream -> 127.0.0.1:12345 [up]`, pytest PASSED in ~11s.
@@ -1172,7 +1172,7 @@ Expected: PASS — the tunnel reaches `STATE_ESTB` against the downstream instan
 
 Killed the downstream instance while the switch was running. The switch's `l2tp_tunnel_free()` → reconnect-timer hook (Step 3) fired immediately (not after the 60s `conf_hello_interval`, since the peer is now on a closed port and the failing `sendto()`/receive path detects that fast), and from then on retried on the exact configured 5-second cadence -- 15+ consecutive `sending SCCRQ` → `peer is unreachable, disconnecting tunnel` → `deleting tunnel` → `tunnel destroyed` cycles, one every 5s on the dot, for as long as downstream stayed down. The moment downstream was restarted, the very next scheduled retry (within the same 5s window) completed a full SCCRQ → SCCRP → SCCCN exchange and the tunnel reached `established`, with `l2tp switch` immediately reporting `[up]` again. This is a complete, conclusive confirmation of the reconnect path, not just a plausible outcome.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add accel-pppd/ctrl/l2tp/l2tp.c \
@@ -1203,7 +1203,7 @@ This tool is deliberately a fixed, hardcoded script, not a general L2TP client �
 
 The harness must also implement RFC 2661 §5.1.1 tunnel-authentication Challenge/Challenge-Response: any peer with `[l2tp] secret=` configured (which every test fixture in this plan sets) sends a mandatory `Challenge` AVP in its SCCRP, and rejects a SCCCN that doesn't answer it with a matching MD5 `Challenge-Response`. This mirrors `l2tp_tunnel_genchallresp()`/`comp_chap_md5()` in `l2tp.c` (~line 468/286) exactly: `MD5(msg-ident-octet || secret || challenge)`, where `msg-ident-octet` is the single-byte SCCCN message-type value (`Message_Type_Start_Ctrl_Conn_Connected`, i.e. 3).
 
-- [ ] **Step 1: Write `l2tp_switch_peer_test.c`**
+- [x] **Step 1: Write `l2tp_switch_peer_test.c`**
 
 **Do not link the real `dict.c`.** `packet.c`'s `attr_alloc()` (used by every `l2tp_packet_add_*` call) and its AVP-parsing loop in `l2tp_recv()` both call `l2tp_dict_find_attr_by_id()` — without a match, encoding an AVP silently fails (`attr_alloc()` returns `NULL`, and every `add_*` call returns `-1`) and decoding treats it as unknown. The real `dict.c` only becomes usable via `dict_init()`, which needs the `DICTIONARY` path macro (normally supplied by CMake, pointing at an *installed* dictionary file) or `[l2tp] dictionary=` read through `conf_get_opt()` — i.e. the whole triton conf-file subsystem — and is only ever invoked via `DEFINE_INIT`'s init-registration mechanism, none of which a standalone test binary has. `packet_test.c` in this same directory already solves this the right way: it stubs its own minimal dictionary and its own `l2tp_dict_find_attr_by_id()`/`l2tp_dict_find_value()` rather than linking `dict.c` at all. Follow that exact pattern here, with entries for every AVP this harness sends or parses (types and `M` values copied verbatim from `dict/dictionary.rfc2661`, the actual production dictionary file — not guessed):
 
@@ -1614,7 +1614,7 @@ int main(int argc, char **argv)
 }
 ```
 
-- [ ] **Step 2: Compile it and run it by hand against a throwaway plain accel-pppd LNS**
+- [x] **Step 2: Compile it and run it by hand against a throwaway plain accel-pppd LNS**
 
 ```bash
 cd accel-ppp
@@ -1634,7 +1634,7 @@ This exact code (including all three bugs and their fixes above) was compiled an
 
 **Unrelated pre-existing cosmetic bug noticed, not fixed here:** `l2tp.c`'s own debug logging prints `Assigned-Tunnel-ID`/`Assigned-Session-ID` values above 32767 as negative numbers (e.g. `<Assigned-Tunnel-ID -1569>` for the unsigned value 63967) — `packet.c:55`'s `log_ppp_debug`/print helper formats the `int16` union member with `%i` instead of casting to `unsigned`. Purely a log-readability issue (the actual wire encoding and this harness's own parsing are unaffected, since both correctly treat the value as `uint16`); flag to the user before touching, since it's pre-existing code with no connection to this feature.
 
-- [ ] **Step 3: Write `tests/common/l2tp_peer_process.py`**
+- [x] **Step 3: Write `tests/common/l2tp_peer_process.py`**
 
 ```python
 from subprocess import Popen, PIPE
@@ -1665,7 +1665,7 @@ def wait(peer_thread, peer_control, timeout):
 
 (Same `Popen` + reader-thread shape as `pppd_process.py`; simpler because this tool runs to completion and exits rather than persisting like `pppd`, so there's no `end()`/kill step, just `wait()`.)
 
-- [ ] **Step 4: Write the walking-skeleton test**
+- [x] **Step 4: Write the walking-skeleton test**
 
 `tests/accel-pppd/l2tp_switch/test_peer_harness.py`:
 
@@ -1718,7 +1718,7 @@ def test_peer_harness_against_plain_lns(pytestconfig, accel_cmd, accel_pppd):
         config.delete_tmp(lns_config)
 ```
 
-- [ ] **Step 5: Run**
+- [x] **Step 5: Run**
 
 ```bash
 sudo python3 -m pytest -v accel-pppd/l2tp_switch/test_peer_harness.py
@@ -1726,7 +1726,7 @@ sudo python3 -m pytest -v accel-pppd/l2tp_switch/test_peer_harness.py
 
 Expected: PASS. This confirms the harness correctly completes a full SCCRQ..ICCN exchange against a real, unmodified accel-ppp LNS before it's used to test the switch feature itself in Task 6.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add accel-pppd/ctrl/l2tp/l2tp_switch_peer_test.c \
@@ -1747,7 +1747,7 @@ git commit -m "test(l2tp): add standalone MK-simulator peer harness"
 - Consumes: `l2tp_switch_conf_attr()`, `l2tp_switch_lookup()` (Task 1).
 - Produces: `sess->switch_target` set on match; a "pending" count surfaced via `l2tp switch show` for observability during this intermediate step.
 
-- [ ] **Step 1: Add the field**
+- [x] **Step 1: Add the field**
 
 Add to `struct l2tp_sess_t` (next to `lns_mode:1` and friends) — this struct is defined directly in `l2tp.c` (~line 127), not `l2tp.h`:
 
@@ -1757,7 +1757,7 @@ Add to `struct l2tp_sess_t` (next to `lns_mode:1` and friends) — this struct i
 
 `l2tp.c` already includes `l2tp_switch_conf.h` (added in Task 1 Step 5), which is where `struct l2tp_switch_target_t` comes from — nothing further to add for this field to compile.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `tests/accel-pppd/l2tp_switch/test_switch_match.py` (extends the Task 4 walking-skeleton pattern — switch instance in the middle, downstream plain-LNS instance, MK-simulator peer):
 
@@ -1943,11 +1943,11 @@ def test_switch_matches_on_called_number(pytestconfig, accel_cmd, accel_pppd):
 
 (`--calling-number` deliberately set to a value that is *not* in the switch table — if matching were accidentally still keying off Calling-Number instead of the configured `attr=Called-Number`, this test would fail to match, catching exactly that regression. Note the `from test_switch_match import start_instance` line — not `from helpers import start_instance` as an earlier draft had it — see the plan-ordering bug note after Step 4 below for why, and Task 6's helpers.py refactor for when this import changes again.)
 
-- [ ] **Step 3: Run, verify it fails**
+- [x] **Step 3: Run, verify it fails**
 
 Expected: FAIL — nothing tags sessions yet, `"matched: 1"` never appears (for either test above).
 
-- [ ] **Step 4: Implement matching in `l2tp_recv_ICRQ`**
+- [x] **Step 4: Implement matching in `l2tp_recv_ICRQ`**
 
 In `l2tp.c`, `l2tp_recv_ICRQ` (around line 3358) already parses `Calling_Number` into a local `calling[]`/`n` pair before allocating the session (see the existing `case Calling_Number:` branch around line 3411). After `sess = l2tp_tunnel_alloc_session(conn);` succeeds and `sess->peer_sid = peer_sid;` is set (around line 3456), add:
 
@@ -2055,11 +2055,11 @@ Fixed by adding `l2tp_conf_get_bind_port()` to `l2tp.c` (documented in Task 1 St
 
 **Also found: a plan-ordering issue in this task's own test files.** The originally-written `test_switch_match_called_number.py` (below) imported `from helpers import start_instance` — but `helpers.py` isn't created until Task 6's Step 2. Fixed for this task by importing directly from the sibling test module instead (`from test_switch_match import start_instance`); Task 6's refactor into `helpers.py` should update *both* test files' imports, not just `test_switch_match.py`'s, when it runs.
 
-- [ ] **Step 5: Run, verify it passes**
+- [x] **Step 5: Run, verify it passes**
 
 Expected: PASS. Confirmed for real on a VM: `test_switch_match.py` and `test_switch_match_called_number.py` (see the `--called-number` addendum above) both pass, and the full `l2tp_switch` suite (11 tests as of this task) passes together with no regressions.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add accel-pppd/ctrl/l2tp/l2tp.c \
@@ -2083,7 +2083,7 @@ This is the core control-plane task. It makes the switch actually place a call d
 **Interfaces:**
 - Produces: `struct l2tp_switch_avps` (captured raw AVP octets); `sess->switch_avps`; downstream leg placed via existing `l2tp_tunnel_create_session`/`l2tp_session_place_call`.
 
-- [ ] **Step 1: Add the AVP-capture struct**
+- [x] **Step 1: Add the AVP-capture struct**
 
 In `l2tp.c` (not `l2tp.h` — `struct l2tp_sess_t` lives in `l2tp.c` itself, ~line 127; `l2tp.h` only holds the AVP/packet-format declarations shared with `dict.c`/`packet.c`). Task 1 already forward-declared the `struct l2tp_switch_avps` tag, so the full body can go anywhere convenient in `l2tp.c` — right above `l2tp_recv_ICCN` (Step 4 below) is a natural spot, next to the code that actually fills it in:
 
@@ -2112,7 +2112,7 @@ Add to `struct l2tp_sess_t` (`l2tp.c` ~line 127):
 
 (Two separate pointers rather than one symmetric `switch_peer`, because the two legs are asymmetric until Task 7 pairs their data planes — the upstream leg tracks "my downstream leg, if any", the downstream leg tracks "the upstream leg I exist for." Task 7 adds the actual splice wiring on top of these.)
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `tests/accel-pppd/l2tp_switch/test_switch_avp_forward.py` extends Task 5's `start_instance` helper (move it to `conftest.py` as a fixture-free helper function importable by every test file that needs it — create `tests/accel-pppd/l2tp_switch/helpers.py` with `start_instance` moved there verbatim, and update `test_switch_match.py`'s import accordingly in this same step. Also update `test_switch_match_called_number.py`'s `from test_switch_match import start_instance` to `from helpers import start_instance` here too — it was pointed at the sibling test module as an interim fix in Task 5, since `helpers.py` didn't exist yet at that point):
 
@@ -2250,11 +2250,11 @@ def test_switch_forwards_proxy_avps(pytestconfig, accel_cmd, accel_pppd):
         config.delete_tmp(d_cfg)
 ```
 
-- [ ] **Step 3: Run, verify it fails**
+- [x] **Step 3: Run, verify it fails**
 
 Expected: FAIL — `"placed: 1"` doesn't exist yet, and ICCN handling still calls `l2tp_session_connect` unconditionally for every session including switch-tagged ones.
 
-- [ ] **Step 4: Capture Proxy AVPs and skip local PPP in `l2tp_recv_ICCN`**
+- [x] **Step 4: Capture Proxy AVPs and skip local PPP in `l2tp_recv_ICCN`**
 
 In `l2tp.c`, `l2tp_recv_ICCN` (~3597), the AVP-parsing loop currently has (see the code already read during design) -- **the full case group, not just the AVPs relevant to this task**, since that distinction is the entire point of the fix below:
 
@@ -2416,7 +2416,7 @@ Change it to branch on `sess->switch_target`:
 }
 ```
 
-- [ ] **Step 5: Implement `l2tp_switch_place_downstream_call`**
+- [x] **Step 5: Implement `l2tp_switch_place_downstream_call`**
 
 Add the three functions below directly above `l2tp_recv_ICCN`, right after Step 4's `l2tp_switch_capture_avp` — same reason: `l2tp_recv_ICCN`'s tail (Step 4) calls `l2tp_switch_place_downstream_call()`, which is not forward-declared, so it must be defined earlier in the source. `l2tp_switch_disconnect_upstream` and `l2tp_switch_place_call` only need to precede `l2tp_switch_place_downstream_call` itself (which calls both), so keep all three together in the order shown below.
 
@@ -2589,7 +2589,7 @@ static int l2tp_switch_place_downstream_call(struct l2tp_sess_t *upstream)
 	cli_sendv(client, "  placed: %u\r\n", l2tp_stat.switch_placed);
 ```
 
-- [ ] **Step 6: Forward Calling-Number/Called-Number and the captured Proxy AVPs**
+- [x] **Step 6: Forward Calling-Number/Called-Number and the captured Proxy AVPs**
 
 Extend `l2tp_send_ICRQ` (~2483) to forward the two AVPs `l2tp_recv_ICRQ` already captures for inbound sessions but this function has never sent for outbound ones, right before the existing `l2tp_session_try_send` call. Both AVPs are `M=1` in `dict/dictionary.rfc2661`, so pass `1` for the mandatory flag (the dictionary's own `M` would silently override a mismatched caller value here anyway — `attr_alloc()` in `packet.c` always prefers the dictionary's `M` when it specifies one — but pass the correct value regardless, for clarity):
 
@@ -2631,7 +2631,7 @@ Extend `l2tp_send_ICCN` (~2556) to inject captured Proxy AVPs when present, righ
 	}
 ```
 
-- [ ] **Step 7: Wire up `l2tp_recv_ICRP` for the downstream leg**
+- [x] **Step 7: Wire up `l2tp_recv_ICRP` for the downstream leg**
 
 `l2tp_recv_ICRP` (~3518) already calls `l2tp_send_ICCN(sess)` then `l2tp_session_connect(sess)` unconditionally for every outbound-call session (used today only by the manual `l2tp create session` CLI path). For a switch downstream leg, `l2tp_session_connect` must not run yet (that starts local PPP — Task 7 replaces it with the kernel-socket-only variant). Change the tail of `l2tp_recv_ICRP` from:
 
@@ -2689,11 +2689,11 @@ to:
 	cli_sendv(client, "  connected: %u\r\n", l2tp_stat.switch_downstream_connected);
 ```
 
-- [ ] **Step 8: Run, verify it passes**
+- [x] **Step 8: Run, verify it passes**
 
 Rebuild, rerun `test_switch_avp_forward.py`. Expected: PASS — `"placed: 1"` appears once the MK-simulator's ICCN reaches the switch instance. Confirmed for real on a VM after the two bug fixes above (the case-split and the type-aware capture serialization): `test_switch_avp_forward.py` passes on its own, and the full `l2tp_switch` suite (12 tests as of this task) passes together with no regressions. Before those fixes, every test that sent a real ICCN through a switch-tagged session (including the pre-existing `test_switch_match.py`, once it reached ICCN) crashed the daemon; `accel-cmd` would then report `matched: 0`/`placed: 0` against a *freshly re-executed* daemon process (accel-ppp's own `sigsegv` handler `execv()`s itself back to a clean start on crash, same PID, all state lost) rather than surfacing as an obvious test failure -- worth knowing if a similar "counters silently reset to 0" symptom ever reappears.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add accel-pppd/ctrl/l2tp/l2tp.c \
@@ -2725,7 +2725,7 @@ No fallback to `read()`/`write()` is needed — proceed with the `splice(2)`-bas
 
 **One real, previously-unknown prerequisite this testing surfaced**: a session-level `pppol2tp` `connect()` (real `s_tunnel`/`d_tunnel`/`s_session`/`d_session`, matching what `l2tp_session_connect_socket` does) fails with `ENOENT` unless the *tunnel* has first been registered with the kernel's L2TP subsystem — a separate, throwaway `pppol2tp` socket connected with `s_session`/`d_session` left at `0`, then immediately closed. This is exactly what the existing `l2tp_tunnel_connect()` (`l2tp.c` ~2071) already does, called once a tunnel's SCCRQ/SCCRP/SCCCN handshake completes (~lines 3123, 3190) — **already correct for both legs without any change**, precisely because this design reuses the existing tunnel-establishment machinery wholesale (Task 3's persistent downstream tunnel goes through the exact same `l2tp_tunnel_start`/SCCRQ/SCCRP/SCCCN path the upstream MK tunnel already does) rather than reimplementing tunnel setup. Worth knowing this exists, in case any future change ever tries to open a session-level `pppol2tp` socket without having gone through normal tunnel establishment first — that would reproduce this exact `ENOENT` on real hardware, and this note is the reason why.
 
-- [ ] **Step 1: Split `l2tp_session_connect`**
+- [x] **Step 1: Split `l2tp_session_connect`**
 
 `l2tp_session_connect` (~1951) currently does kernel-socket setup, then unconditionally calls `l2tp_session_start_data_channel(sess)`. Rename the existing function to `l2tp_session_connect_socket` and change its `return 0;`/error paths so it no longer calls `l2tp_session_start_data_channel` itself; instead, give it a `start_ppp` parameter:
 
@@ -2803,7 +2803,7 @@ static int l2tp_session_connect(struct l2tp_sess_t *sess)
 
 Every existing call site (`l2tp_recv_ICRP`'s non-switch path, `l2tp_recv_ICCN`'s non-switch path, `l2tp_session_outcall_reply`) keeps calling `l2tp_session_connect(sess)` unchanged — always `start_ppp=1`, so the new `fcntl` block above never runs for them and normal sessions see zero behavior change, satisfying the Global Constraints entry on this. Note this also means `link->dst->ppp.fd` (the *write* side of a splice link in Step 3) is `O_NONBLOCK` too, since both legs of a switched pair go through this same `start_ppp=0` path — Step 3's write-side splice call must handle `EAGAIN` accordingly (see below), not just the read side.
 
-- [ ] **Step 2: Add the pairing/link data structures**
+- [x] **Step 2: Add the pairing/link data structures**
 
 Add to `struct l2tp_sess_t` (`l2tp.c` ~line 127 — not `l2tp.h`, see the note in Task 6 Step 1):
 
@@ -2836,7 +2836,7 @@ struct l2tp_switch_link_t {
 };
 ```
 
-- [ ] **Step 3: Implement the splice read callback and link setup/teardown**
+- [x] **Step 3: Implement the splice read callback and link setup/teardown**
 
 `l2tp_switch_link_free()` and `l2tp_switch_teardown_peer()` below are already forward-declared (Task 1), since `l2tp_session_free()`'s teardown hook (Task 8) needs to call both and sits much earlier in the file (~line 1063) than this code. Their real definitions can go anywhere in `l2tp.c` — here, next to the rest of the splice/pairing code, is where they naturally belong:
 
@@ -3080,7 +3080,7 @@ static int l2tp_switch_link_create(struct l2tp_sess_t *src,
 
 (`fcntl` and `pipe`/`splice`/`SPLICE_F_MOVE`/`SPLICE_F_NONBLOCK` need `#include <fcntl.h>` — already included in `l2tp.c` — and `#define _GNU_SOURCE` before any system header for `splice(2)`'s prototype; check the top of `l2tp.c` for an existing `_GNU_SOURCE` define or add one as the very first line of the file if missing.)
 
-- [ ] **Step 4: Pair both legs once the downstream socket connects**
+- [x] **Step 4: Pair both legs once the downstream socket connects**
 
 In `l2tp_recv_ICRP`'s `sess->switch_upstream` branch (added in Task 6 Step 7), replace the placeholder body:
 
@@ -3193,7 +3193,7 @@ and print it from `l2tp_switch_show_exec`'s `calls:` block:
 	cli_sendv(client, "  active: %u\r\n", l2tp_switch_active_total());
 ```
 
-- [ ] **Step 5: Extend the MK-simulator harness to write into its own data-channel socket**
+- [x] **Step 5: Extend the MK-simulator harness to write into its own data-channel socket**
 
 Add to `l2tp_switch_peer_test.c` (Task 4), after the existing ICCN-sending block in `main()`, right before `printf("ok tid=%hu sid=%hu\n", peer_tid, peer_sid);`:
 
@@ -3283,7 +3283,7 @@ The plan as originally written jumped straight to a session-level `pppol2tp` con
 
 (`pppox_addr.pppol2tp.fd = fd` reuses this harness's own control-channel UDP socket, exactly as `l2tp_session_connect_socket`'s existing `pppox_addr.pppol2tp.fd = conn->hnd.fd;` reuses the tunnel's own UDP socket — `s_tunnel`/`s_session` are this harness's own IDs (`local_tid`/`local_sid`, already used when building the SCCRQ/ICRQ earlier in `main()`), `d_tunnel`/`d_session` are the switch's IDs captured from SCCRP/ICRP (`peer_tid`/`peer_sid`, already captured by the existing code).)
 
-- [ ] **Step 6: Write the failing test**
+- [x] **Step 6: Write the failing test**
 
 `tests/accel-pppd/l2tp_switch/test_switch_splice.py`, extending Task 6's `test_switch_forwards_proxy_avps` setup with a wire capture. This needs `tcpdump` on the test machine — add it to `tests/README.md`'s existing "Install additional tools required for tests" `apt install` line (currently `iproute2 ppp pppoe isc-dhcp-client`) alongside this task's other changes:
 
@@ -3366,14 +3366,18 @@ def test_switch_splices_data_plane(pytestconfig, accel_cmd, accel_pppd):
 
 The assertion is on the wire between the switch and the downstream instance, not on the downstream instance's own behavior — the downstream instance in this test is a **plain, unmodified accel-pppd LNS**, so it will try to interpret the arriving bytes as a real PPP frame and will not echo or acknowledge them meaningfully; `SWITCHOK` is not a valid PPP frame, so it is simply discarded by the downstream LNS's LCP layer without side effects. What this test actually proves is narrower and sufficient: the switch's `splice(2)` datapath (Task 7) correctly moved the exact bytes written into the MK-simulator's own kernel socket into a real L2TP data-message UDP packet addressed to the downstream target — which is the switch's entire responsibility; what the downstream LNS does with those bytes is outside this feature's scope.
 
-- [ ] **Step 7: Run, verify it fails, then implement and verify it passes**
+- [x] **Step 7: Run, verify it fails, then implement and verify it passes**
 
 Run: `sudo python3 -m pytest -v accel-pppd/l2tp_switch/test_switch_splice.py`
 Expected before this task's implementation: FAIL (`DATA_PATTERN not in capture_out`) — no data-plane bridging exists yet, so the write into the MK-simulator's kernel socket goes nowhere. After implementing Steps 1-4 above: PASS.
 
 Confirmed for real on a VM, after fixing the four bugs documented inline above (Task 6's missing `l2tp_tunnel_push_sendqueue()` call, the harness's missing tunnel registration and missing `connect()` on its control-channel socket, the missing `O_NONBLOCK` on switch-mode session sockets, and the resulting need for `EAGAIN` handling on the write-side splice plus the `l2tp_switch_link_free()` double-close): `test_switch_splice.py` passes on its own in ~12s, and the full `l2tp_switch` suite (13 tests as of this task) passes together with no regressions. Before the `O_NONBLOCK` fix specifically, the *daemon itself* would hang shortly after the first successful splice — `accel-cmd` timing out against an otherwise-alive process — which is a considerably worse failure mode than a failing test and would not have been obvious from the test suite alone (the test's own 10-second `l2tp_peer_process.wait` timeout masks it as an ordinary assertion failure rather than the underlying thread-pool starvation); worth knowing if a similar "daemon looks alive but the CLI hangs" symptom ever reappears elsewhere in this codebase.
 
-- [ ] **Step 8: Commit**
+**Burst-load characterization, done separately after Tasks 7-10 were all complete and committed** (a real two-VM setup, one switched call, an MK-side sender writing as fast as possible with no pacing — a synthetic worst case no real network path would ever actually deliver, but a legitimate stress test of the relay design itself): below roughly 100 back-to-back 1400-byte writes, everything is relayed with zero loss. Above that, two distinct failure modes were observed, neither of them a crash or a leak: (1) the kernel's UDP receive buffer for the session can fill faster than the single-threaded `splice(2)` relay loop drains it, silently dropping excess packets at the kernel level (`Udp: receive buffer errors` in `netstat -su`); (2) on a real, non-loopback network path specifically, the relay's own outbound `splice(2)` call can fail outright under the same burst (`ENOMEM`; a concurrently-running paired leg can then also see a spurious `EBADF` as a direct side effect of the first leg's fd being closed during teardown) — `l2tp_switch_link_fail()` handles this exactly as designed, disconnecting the call cleanly rather than continuing degraded. Documented in `docs/l2tp_switching.md`'s "Operational constraints" rather than fixed: addressing it for real would mean redesigning the single-synchronous-thread relay (e.g. per-session dedicated threads, larger tunable socket buffers), which is a scope decision for a future task, not a bug in this one — ordinary call volumes and any realistically network-paced traffic never approach either threshold.
+
+**Follow-up measurement that changes how to read the above: a plain `iperf3` benchmark between the same two VMs, entirely outside accel-ppp**, found the underlying path's own UDP capacity is dramatically lower than its TCP capacity — 9.15 Gbit/s TCP vs. ~1.2-1.4 Gbit/s UDP, and that UDP ceiling did *not* rise with more parallel streams (`-P 4`), which points at the virtualized network path's own small-packet handling rather than either host's CPU or this feature's single relay thread. The "burst that broke it" figures above were the *local* `write()` acceptance rate into the switch's own upstream kernel socket, not a measurement of what actually left the wire toward the downstream leg — so at least part of what looked like a pure relay-design limitation is really the switch being asked to sustain a real UDP rate at or above this specific VM pair's actual ceiling, which no amount of buffer or threading changes on the switch's own side could ever exceed. `docs/l2tp_switching.md` now documents the `iperf3` TCP-vs-UDP-vs-parallel-streams procedure as the first diagnostic step for any future throughput report, precisely so this distinction (path ceiling vs. relay-design ceiling) gets checked before assuming the latter.
+
+- [x] **Step 8: Commit**
 
 ```bash
 git add accel-pppd/ctrl/l2tp/l2tp.c \
@@ -3395,7 +3399,7 @@ git commit -m "feat(l2tp): pair switched sessions and splice PPP frames via spli
 - Consumes: `sess->switch_link`, `sess->switch_downstream`/`switch_upstream` (Tasks 6-7), `l2tp_switch_teardown_peer()` (Task 7 — already fully defined there; this task adds no new definition, only a new call site).
 - Produces: a CDN or StopCCN (whichever `l2tp_tunnel_disconnect()` actually sends — see `--wait-cdn`'s own comment below) propagates to whichever leg is still up when the other is torn down for any reason (peer CDN/StopCCN, splice error, target tunnel drop).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/accel-pppd/l2tp_switch/test_switch_teardown.py`: reuse Task 7's setup (switch instance + downstream instance + MK-simulator harness establishing one switched call), then kill the **downstream** `accel_pppd_process` mid-call (`accel_pppd_process.end(...)` on it while the switch instance is still up) and assert, via `l2tp switch`, that the switch instance's `active` count drops back to 0 and (via the MK-simulator harness, extended to optionally listen for teardown after ICCN instead of exiting immediately) that the upstream leg is actually notified.
 
@@ -3570,11 +3574,11 @@ def test_downstream_drop_tears_down_upstream(pytestconfig, accel_cmd, accel_pppd
 
 (`-p 2001`/`cli_port=2001`/`cli_port=2101`, matching the convention already established in Tasks 5-7's tests.)
 
-- [ ] **Step 2: Run, verify it fails**
+- [x] **Step 2: Run, verify it fails**
 
 Expected: FAIL — nothing currently notices the downstream tunnel dying and tears down the paired upstream leg; `active` stays at 1 and no CDN arrives within the harness's timeout.
 
-- [ ] **Step 3: Implement the teardown hook in `l2tp_session_free`**
+- [x] **Step 3: Implement the teardown hook in `l2tp_session_free`**
 
 `l2tp_session_free` (~1063) is the single choke point for both "one session CDN'd/freed individually" and "whole tunnel torn down, all its sessions freed via `l2tp_tunnel_free_sessions`" (confirmed: both paths call this function). Add the switch-teardown hook right after `sess->state1 = STATE_CLOSE;` is set (before the send-queue cleanup):
 
@@ -3697,11 +3701,11 @@ And its call site in `l2tp_recv_ICRP`'s `switch_upstream` branch (Task 7 Step 4)
 
 Both races were found the same way: running `test_switch_teardown_upstream.py` (Step 5 below) repeatedly rather than once. Race 1 reproduced on the very first real-VM attempt (the harness's `--send-stopccn` has zero delay after ICCN by design); Race 2 never reproduced under either race's own test as written (both send StopCCN either immediately after ICCN or wait for full pairing first, never split the difference), but was found by code inspection while fixing Race 1 and is real regardless — a MK peer that waits for pairing to fully complete and *then* immediately drops the tunnel would hit it. Fixed proactively rather than left for a future task to rediscover the hard way.
 
-- [ ] **Step 4: Handle the "downstream tunnel itself dropped, before any per-session CDN" case**
+- [x] **Step 4: Handle the "downstream tunnel itself dropped, before any per-session CDN" case**
 
 Task 3's `l2tp_tunnel_free()` hook already clears `target->tunnel` and arms a reconnect. Confirm (by reading `l2tp_tunnel_free`'s body again) that it calls `l2tp_tunnel_free_sessions(conn)` for every session still in that tunnel — since that function iterates the tunnel's sessions and calls `l2tp_session_free()` on each, and Step 3 above already hooks `l2tp_session_free()`, every switched session on a dying downstream tunnel gets its paired upstream leg torn down automatically with no additional code needed here. Confirm this experimentally in Step 6 rather than adding redundant logic.
 
-- [ ] **Step 5: Cover the symmetric direction — the *upstream* (MK-facing) tunnel torn down while downstream stays connected**
+- [x] **Step 5: Cover the symmetric direction — the *upstream* (MK-facing) tunnel torn down while downstream stays connected**
 
 Step 4's reasoning applies identically in reverse: `l2tp_tunnel_free()` → `l2tp_tunnel_free_sessions()` → `l2tp_session_free()` is the same choke point regardless of *which* tunnel goes down or *why* (admin-initiated disconnect, StopCCN received, protocol error, timeout — confirmed by grepping every `l2tp_tunnel_free`/`l2tp_tunnel_disconnect`/`l2tp_tunnel_disconnect_push` call site in `l2tp.c`: all of them funnel through `l2tp_tunnel_free`, with no bypass). So removing the upstream tunnel while a downstream pairing is still active is already handled by the exact same Step 3 hook — but only the downstream-dies direction has an actual test so far (Step 1). Add the missing direction now rather than relying on the symmetry argument alone.
 
@@ -3814,13 +3818,13 @@ def test_upstream_tunnel_drop_tears_down_downstream(pytestconfig, accel_cmd, acc
 
 (`-p 2001`/`cli_port=2001`/`cli_port=2101`, matching Task 7's fixed convention — different ports (17070/17071) from `test_switch_teardown.py` above, since pytest may run both in the same session and reused ports across tests have caused cross-test interference before. Imports collected at the top of the file rather than split inline, matching every other test file in this plan.)
 
-- [ ] **Step 6: Run, verify both directions pass**
+- [x] **Step 6: Run, verify both directions pass**
 
 Expected: PASS for both `test_switch_teardown.py` (downstream dies) and `test_switch_teardown_upstream.py` (upstream dies) — in both cases the switch instance's `active` count returns to `0` and the surviving leg is cleanly disconnected, confirming the single `l2tp_session_free()` choke point handles either direction without direction-specific code.
 
 Confirmed for real on a VM, after fixing the two race conditions documented above (in addition to the teardown hook itself): both tests pass individually, and the full `l2tp_switch` suite (15 tests as of this task) passes together with no regressions. Because Race 1 is timing-dependent, a single passing run does not prove it is fixed — `test_switch_teardown_upstream.py` was run 15 times back-to-back in a loop (bypassing pytest's own per-test overhead so each iteration exercises the same tight ICCN-then-StopCCN timing) with zero failures, versus reproducing on the very next attempt (1-in-3 to 1-in-5, inconsistently) before the fix. `test_switch_teardown.py` additionally confirms Step 4's claim experimentally: killing the downstream instance mid-call (no code path specific to "downstream" vs "upstream" dying) correctly cascades through the exact same `l2tp_session_free()` hook.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add accel-pppd/ctrl/l2tp/l2tp.c accel-pppd/ctrl/l2tp/l2tp_switch_peer_test.c \
@@ -3841,7 +3845,7 @@ git commit -m "fix(l2tp): tear down the paired leg when either side of a switch 
 **Interfaces:**
 - Produces: `l2tp switch show` (renamed from bare `l2tp switch` used in earlier tasks' scaffolding — this task finalizes the exact CLI surface documented in the spec) listing, per target, tunnel status/active-call-count/`bytes_in`/`bytes_out`, plus one line per active call with the same byte split; an aggregate `l2tp-switch:` block (`active:`/`lns_rx_bytes:`/`lns_tx_bytes:`) in `accel-cmd show stat`, matching that command's existing nested-block format; the same numbers (aggregate *and* per-target, via a new callback-based `l2tp_switch_stat_targets_foreach()` export) in accel-ppp's native `/metrics` endpoint (Prometheus and JSON), resolved lazily by `metrics.c` through `dlsym`, matching the existing `l2tp_stat_starting`/`l2tp_stat_active` mechanism.
 
-- [ ] **Step 1: Rename the CLI path to match the spec's documented `l2tp switch show`**
+- [x] **Step 1: Rename the CLI path to match the spec's documented `l2tp switch show`**
 
 The earlier tasks registered `l2tp switch` (2-level) for brevity. Change the registration in `l2tp_init()` to 3-level, matching `l2tp switch add`/`l2tp switch del`'s existing 3-level shape:
 
@@ -3852,15 +3856,15 @@ The earlier tasks registered `l2tp switch` (2-level) for brevity. Change the reg
 
 Update every test file from Tasks 1-8 that calls `accel_cmd, "l2tp switch"` to `accel_cmd, "l2tp switch show"` (grep `"l2tp switch\"` and `'l2tp switch'` across `tests/accel-pppd/l2tp_switch/*.py` and fix each call site).
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `tests/accel-pppd/l2tp_switch/test_switch_show.py`: reuse Task 7's `test_switch_splices_data_plane` setup (one active switched call, `helpers.start_instance` for both instances, the `--data-pattern` flag on the MK-simulator harness — see that test for the full setup this one mirrors), assert `l2tp switch show` includes a per-session line with the calling-number value (`472913`), both tunnel/session ID pairs, and a non-zero `bytes=` count once the harness's `DATA_PATTERN` write has gone through (`len("SWITCHOK") == 8`, so `bytes=8` once the switch has spliced that write through — allow >=8 in the assertion in case a stray retransmit or control-channel byte inflates the count slightly, i.e. assert the reported byte count is at least 8, not exactly 8).
 
-- [ ] **Step 3: Run, verify it fails**
+- [x] **Step 3: Run, verify it fails**
 
 Expected: FAIL — no per-session listing exists yet, only target/counter lines.
 
-- [ ] **Step 4: Implement per-session listing**
+- [x] **Step 4: Implement per-session listing**
 
 Since sessions aren't tracked in a flat global list (`l2tp_conn_t.sessions` is a per-tunnel tree via `tsearch`/`tdestroy`), iterate the switch targets' tunnels' `sessions` trees using `twalk` (already used for this purpose in `l2tp_tunnel_free_sessions` — check that function's existing `twalk`/`tdestroy` call for the exact idiom and mirror it):
 
@@ -3927,7 +3931,7 @@ Call it from `l2tp_switch_show_exec`, once per target with a live tunnel, and ex
 
 with `switch_show_walk`'s signature adjusted to `(const void *nodep, VISIT which, void *closure)` matching `twalk_r`'s callback type exactly (GNU's `twalk_r` closure parameter is the third callback argument, not cast through `int` as some older POSIX `twalk` prototypes do — verify against `<search.h>` on the build machine, since this detail has changed across glibc versions).
 
-- [ ] **Step 5: Add `show stat` counters**
+- [x] **Step 5: Add `show stat` counters**
 
 `show_stat_exec` (`l2tp.c` ~line 4743, registered as `cli_register_simple_cmd2(&show_stat_exec, NULL, 2, "show", "stat")`) prints a **nested** block structure, not flat `key: value` lines — `l2tp:\r\n  tunnels:\r\n    starting: %u\r\n    active: %u\r\n    finishing: %u\r\n`, then a `sessions (control channels):` block, then `sessions (data channels):`. Match that exactly by adding a fourth block, right after the existing `sessions (data channels):` block and before `return CLI_CMD_OK;`:
 
@@ -3944,7 +3948,7 @@ with `switch_show_walk`'s signature adjusted to `(const void *nodep, VISIT which
 
 This block is deliberately global/LNS-side-aggregate only, not per-target — `show stat` is accel-ppp's existing compact fixed-shape summary command, not something that already iterates arbitrary lists; per-target `active`/`rx_bytes`/`tx_bytes` belong on `l2tp switch show`'s own per-target lines (Step 4 above), which already iterates `l2tp_switch_targets`.
 
-- [ ] **Step 6: Export the same counters as native accel-ppp metrics, per target and in aggregate**
+- [x] **Step 6: Export the same counters as native accel-ppp metrics, per target and in aggregate**
 
 accel-ppp already ships a native Prometheus/JSON metrics endpoint — `accel-pppd/extra/metrics.c`, activated by listing `metrics` in `[modules]` and adding a `[metrics]` section (`accel-ppp.conf.5`, `.SH [metrics]`). It exposes `/metrics` over HTTP in `prometheus` (default) or `json` format, and per its own man page text, "the same numbers shown by `accel-cmd show stat`" — so this is a second, native consumer of exactly the counters this task just added, not an unrelated system.
 
@@ -4138,7 +4142,7 @@ Add `#include <stdint.h>` to `extra/metrics.c` if not already present, for `uint
 
 **External `accel_exporter` compatibility.** The ansible-deployed `accel_exporter` (a separate, vendored Go binary — `roles/accel_exporter` in the ansible repo, not part of this codebase) works by parsing `accel-cmd show stat`'s text output, not by talking to accel-ppp's native `/metrics` endpoint. This task's Step 5 only *adds* a new `l2tp-switch:` block to that text output — every line `accel_exporter` already parses is untouched, so it keeps working exactly as it does today; it simply won't surface the new l2tp-switch numbers (global or per-target) unless it is itself updated to recognize them, which is a change in that separate project, out of scope here. The native `[metrics]` module extended in this step is a real, lower-risk alternative for anyone who wants Prometheus scraping of these numbers without waiting on that: point Prometheus directly at accel-ppp's own `/metrics` (`format=prometheus`, the default) instead of `accel_exporter`. Document both facts in Task 10's end-user doc.
 
-- [ ] **Step 7: Run, verify it passes**
+- [x] **Step 7: Run, verify it passes**
 
 Build with the `metrics` module enabled (it already is — `extra/CMakeLists.txt` builds it unconditionally as `ADD_LIBRARY(metrics SHARED metrics.c)`, no special CMake flag needed), add `metrics`/`[metrics]` to a test instance's config, and `curl` its `/metrics` endpoint to confirm `accel_ppp_l2tp_switch_active`, `accel_ppp_l2tp_switch_lns_bytes_total{direction=...}`, `accel_ppp_l2tp_switch_target_up{target=...}`, `accel_ppp_l2tp_switch_target_active{target=...}`, and `accel_ppp_l2tp_switch_target_bytes_total{target=...,direction=...}` all appear with the expected values alongside the existing `accel_ppp_protocol_sessions{protocol="l2tp",...}` lines. Extend `test_switch_show.py` (or add a sibling `test_switch_metrics.py`) with this assertion, reusing Task 7's active-switched-call setup.
 
@@ -4148,7 +4152,7 @@ Added as a sibling `test_switch_metrics.py` rather than extending `test_switch_s
 
 Confirmed for real on a VM: `l2tp switch show`'s per-target line (`active=`/`bytes_in=`/`bytes_out=`) and per-call `call:` line, `show stat`'s new `l2tp-switch:` block, and `/metrics` in both `format=prometheus` (default) and `format=json` all appeared with matching, internally-consistent numbers after a real switched call spliced an 11-byte write through (`lns_rx_bytes`/target `tx_bytes` = 11, matching the write; `lns_tx_bytes`/target `rx_bytes` = the downstream LNS's own reply traffic spliced back). No implementation bugs found this time — every step matched the plan as written on the first attempt; the only issues were test-authoring mistakes on this session's own part (a wrong port number, the `[modules]`-merging assumption above), not code defects. Full `l2tp_switch` suite (17 tests as of this task) passes together with no regressions.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add accel-pppd/ctrl/l2tp/l2tp.c accel-pppd/extra/metrics.c tests/accel-pppd/l2tp_switch/
@@ -4167,7 +4171,7 @@ git commit -m "feat(l2tp): finalize l2tp switch show CLI, show-stat counters, an
 
 **Interfaces:** None new — this task closes out testing/documentation coverage for the whole feature.
 
-- [ ] **Step 1: Register the `l2tp_switch` marker**
+- [x] **Step 1: Register the `l2tp_switch` marker**
 
 In `tests/conftest.py`'s `pytest_configure`, alongside the existing three `config.addinivalue_line("markers", ...)` calls:
 
@@ -4180,7 +4184,7 @@ In `tests/conftest.py`'s `pytest_configure`, alongside the existing three `confi
 
 Add `@pytest.mark.l2tp_switch` above every `def test_*` in `tests/accel-pppd/l2tp_switch/*.py` from Tasks 1-9.
 
-- [ ] **Step 2: Extend `packet_test.c`'s stub dictionary**
+- [x] **Step 2: Extend `packet_test.c`'s stub dictionary**
 
 In `accel-pppd/ctrl/l2tp/packet_test.c`, extend the stub `dict[]` array (currently 6 entries, listed in the file's header comment) with the AVPs this feature captures/re-injects:
 
@@ -4233,7 +4237,7 @@ static void test_proxy_avp_round_trip(void)
 
 Add `test_proxy_avp_round_trip();` to `main()`'s existing sequence of test calls (`loopback_socket(); test_hidden_avp_length_prefix(); ...`), right alongside `test_roundtrip(0)`/`test_roundtrip(1)`.
 
-- [ ] **Step 3: Compile and run under ASan/UBSan**
+- [x] **Step 3: Compile and run under ASan/UBSan**
 
 ```bash
 cd accel-ppp
@@ -4247,7 +4251,7 @@ gcc -O1 -g -Wall -fno-strict-aliasing -D_GNU_SOURCE \
 
 Expected: no `FAIL` lines, clean ASan/UBSan exit.
 
-- [ ] **Step 4: Write `docs/l2tp_switching.md`**
+- [x] **Step 4: Write `docs/l2tp_switching.md`**
 
 ```markdown
 # L2TP Switching
@@ -4352,7 +4356,7 @@ counters or accounting on the downstream LNS itself.
   independently.
 ```
 
-- [ ] **Step 5: Run the complete l2tp_switch suite once more, end to end**
+- [x] **Step 5: Run the complete l2tp_switch suite once more, end to end**
 
 ```bash
 cd tests
@@ -4363,7 +4367,7 @@ Expected: all tests from Tasks 1-9 PASS together in one run (not just individual
 
 Task 10 matched the plan as written, no code bugs found. `packet_test.c`'s new `test_proxy_avp_round_trip()` passed clean under ASan/UBSan on the first build. `test_switch_cli.py` and `test_switch_config.py` each define test classes (`TestWithTarget`, `TestDuplicateLine`, `TestSelfLoopTarget`) rather than only bare functions — `@pytest.mark.l2tp_switch` is applied once to each class rather than to every individual method inside it, which is pytest's own standard idiom for applying one mark to a whole class's tests and is equivalent in effect to marking each method. Confirmed for real on a VM: `pytest -m l2tp_switch accel-pppd/l2tp_switch/` collects and passes all 17 tests (matching a plain unfiltered run of the same directory exactly) — nothing was silently left unmarked.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add accel-pppd/ctrl/l2tp/packet_test.c tests/conftest.py \

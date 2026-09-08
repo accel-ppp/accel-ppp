@@ -103,14 +103,66 @@ counters or accounting on the downstream LNS itself.
   downstream target's tunnel dropping — the other leg is torn down too.
   There is no partial/orphaned-leg state to clean up manually.
 - **Throughput on a single switched call is bounded by one synchronous
-  relay path, not by the network.** Unlike an ordinary PPP session (whose
-  data plane runs entirely in-kernel, attached to the generic PPP channel),
-  a switched call's bytes are relayed via a userspace `splice(2)` loop on
-  one of triton's worker threads. Under a sustained, very high packet rate
-  on a single call, the kernel's UDP receive buffer for that session can
-  fill faster than this loop drains it, and excess packets are dropped
-  silently at the kernel level (visible as `Udp: receive buffer errors` in
-  `netstat -su`, not as anything this feature reports itself). Ordinary
-  call volumes and realistically network-paced traffic do not approach
-  this ceiling; a single session sustaining an artificial, unpaced burst
-  of many thousands of packets per second is the scenario this affects.
+  relay path, and by the path's own UDP capacity — and a large enough
+  instantaneous burst can end the call, not just lose data.** Unlike an
+  ordinary PPP session (whose data plane runs entirely in-kernel, attached
+  to the generic PPP channel), a switched call's bytes are relayed via a
+  userspace `splice(2)` loop on one of triton's worker threads. Two
+  distinct failure modes were measured (real two-VM setup, one switched
+  call, one MK-side sender writing as fast as possible with no pacing):
+  - Below roughly 100 packets (1400 bytes each) written back-to-back with
+    no delay, everything is relayed with zero loss.
+  - Above that, the kernel's UDP receive buffer for the session can fill
+    faster than the relay loop drains it (excess packets dropped silently
+    at the kernel level, visible as `Udp: receive buffer errors` in
+    `netstat -su`, not as anything this feature reports itself); on a real
+    (non-loopback) network path, the relay's own outbound `splice(2)` call
+    can also fail outright under the same burst (`ENOMEM`, occasionally
+    `EBADF` on the paired leg as a direct side effect of the first leg's
+    teardown) — in that case the switch disconnects the call cleanly
+    (CDN sent, both legs torn down, matching the "a call ending always
+    tears down its pair" behavior above) rather than continuing degraded.
+    This is the intended, safe failure mode — not a crash or a leak — but
+    it means a large enough burst ends the call rather than merely
+    throttling it.
+
+  Ordinary call volumes and realistically network-paced traffic do not
+  approach either threshold; a single session sustaining an artificial,
+  unpaced burst of many thousands of packets per second is the scenario
+  this affects.
+
+  **Before assuming this is the switch's own limit, measure the path's
+  actual UDP capacity** — it is very often lower than what the same path
+  does over TCP, and that gap is easy to mistake for a software problem.
+  On the pair of cloud VMs used to measure the numbers above, a plain
+  `iperf3` TCP test reached 9.15 Gbit/s, but UDP on the *same* path
+  topped out around 1.2-1.4 Gbit/s aggregate — and adding parallel UDP
+  streams did not raise that ceiling, which points at the underlying
+  virtualized network path itself (packet-per-second handling for many
+  small UDP datagrams, not this feature's own single relay thread nor
+  either host's CPU). A switched call is carried over UDP end to end, so
+  it can never exceed whatever a plain UDP test between the same two
+  hosts already shows — no amount of tuning on this feature's own side
+  changes that ceiling if it's set by the path itself:
+
+  ```bash
+  # on the downstream LNS
+  iperf3 -s -p 5201
+
+  # on the switch host, from a shell -- NOT through the switch itself
+  iperf3 -c <downstream-lns-ip> -p 5201 -t 10                     # TCP baseline
+  iperf3 -c <downstream-lns-ip> -p 5201 -u -b 0 -t 10 -l 1400      # UDP, uncapped
+  iperf3 -c <downstream-lns-ip> -p 5201 -u -b 0 -P 4 -t 10 -l 1400 # UDP, 4 parallel streams
+  ```
+
+  Compare the three: if UDP is dramatically lower than TCP on the same
+  path, and adding parallel streams doesn't close the gap, the path
+  itself — not this feature — is the ceiling, and no amount of buffer
+  tuning here will raise it. If UDP scales up cleanly with more parallel
+  streams instead, the earlier single-stream number was CPU/generation
+  bound rather than a path limit, which is a different (and more
+  fixable, e.g. by giving the switch host more CPU) situation. Either
+  way, treat whatever this shows as the hard ceiling for any one
+  switched call's sustained throughput on that path, well before
+  looking at this feature's own relay design as the cause of a
+  throughput problem.
