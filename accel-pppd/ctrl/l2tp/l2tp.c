@@ -187,6 +187,29 @@ struct l2tp_sess_t
 	struct ppp_t ppp;
 
 	struct l2tp_switch_target_t *switch_target; /* NULL: normal session */
+	struct l2tp_switch_avps *switch_avps; /* captured from upstream ICCN */
+	struct l2tp_sess_t *switch_downstream; /* the outbound leg, once placed */
+	struct l2tp_sess_t *switch_upstream;   /* back-pointer from the outbound leg */
+};
+
+/* Full body defined here (not just the forward tag near the top of this
+ * file) because l2tp_send_ICCN() -- defined well before l2tp_recv_ICCN()
+ * and the capture/place-call helpers that also use this type -- needs to
+ * dereference ->count/->avp[] to re-inject captured AVPs, not just hold a
+ * pointer to it. A pointer field (l2tp_sess_t.switch_avps above) only
+ * needs the incomplete forward-declared type; member access needs the
+ * complete one available at every use site. */
+struct l2tp_switch_avp_t {
+	int id;
+	int M;
+	uint8_t *val;
+	int len;
+};
+
+struct l2tp_switch_avps {
+	struct l2tp_switch_avp_t avp[8]; /* Init/Last-Sent/Last-Recv LCP,
+					   * 5x Proxy-Authen-* */
+	int count;
 };
 
 struct l2tp_conn_t
@@ -252,15 +275,24 @@ static void apses_stop(void *data);
  * l2tp_create_tunnel_exec() does much further down in this file -- where
  * l2tp_send_SCCRQ() is actually defined. */
 static void l2tp_send_SCCRQ(void *peer_addr);
+/* l2tp-switch (Task 6): l2tp_switch_place_call(), defined right above
+ * l2tp_recv_ICCN below, places the downstream leg's call using the same
+ * function the manual "l2tp create session" CLI path already uses --
+ * l2tp_session_place_call() itself isn't defined until much further down
+ * in this file. */
+static int l2tp_session_place_call(struct l2tp_sess_t *sess);
 
-/* l2tp-switch: struct l2tp_sess_t (below) holds pointers to these before
- * their full bodies are defined (Tasks 6/7), and l2tp_session_free()'s
- * teardown hook (Task 8) calls the two functions below before their
- * natural definition point near the rest of the splice/pairing code
- * (Task 7, anchored after l2tp_session_connect ~1951) -- see Task 1 of
- * the implementation plan for why these live here together, matching
- * this file's own existing forward-declaration convention above. */
-struct l2tp_switch_avps;
+/* l2tp-switch: struct l2tp_sess_t (above) holds a pointer to
+ * struct l2tp_switch_link_t before its full body is defined (Task 7), and
+ * l2tp_session_free()'s teardown hook (Task 8) calls the two functions
+ * below before their natural definition point near the rest of the
+ * splice/pairing code (Task 7, anchored after l2tp_session_connect
+ * ~1951) -- see Task 1 of the implementation plan for why these live here
+ * together, matching this file's own existing forward-declaration
+ * convention above. (struct l2tp_switch_avps itself is fully defined
+ * just above, right after struct l2tp_sess_t -- Task 6 needed its actual
+ * body available this early, not just a forward tag, since
+ * l2tp_send_ICCN() dereferences it well before l2tp_recv_ICCN().) */
 struct l2tp_switch_link_t;
 
 static unsigned int l2tp_switch_active_total(void);
@@ -2644,6 +2676,20 @@ static int l2tp_send_ICRQ(struct l2tp_sess_t *sess)
 			    " adding data to packet failed\n");
 		goto out_err;
 	}
+	if (sess->calling_num &&
+	    l2tp_packet_add_string(pack, Calling_Number, sess->calling_num,
+				   1) < 0) {
+		log_session(log_error, sess, "impossible to send ICRQ:"
+			    " adding data to packet failed\n");
+		goto out_err;
+	}
+	if (sess->called_num &&
+	    l2tp_packet_add_string(pack, Called_Number, sess->called_num,
+				   1) < 0) {
+		log_session(log_error, sess, "impossible to send ICRQ:"
+			    " adding data to packet failed\n");
+		goto out_err;
+	}
 
 	if (l2tp_session_try_send(sess, pack) < 0) {
 		log_session(log_error, sess, "impossible to send ICRQ:"
@@ -2721,6 +2767,23 @@ static int l2tp_send_ICCN(struct l2tp_sess_t *sess)
 		log_session(log_error, sess, "impossible to send ICCN:"
 			    " adding data to packet failed\n");
 		goto out_err;
+	}
+
+	if (sess->switch_avps) {
+		int i;
+
+		for (i = 0; i < sess->switch_avps->count; i++) {
+			struct l2tp_switch_avp_t *a = &sess->switch_avps->avp[i];
+
+			if (l2tp_packet_add_octets(pack, a->id, a->val, a->len,
+						   a->M) < 0) {
+				log_session(log_error, sess,
+					    "impossible to send ICCN:"
+					    " re-injecting proxy AVP %d"
+					    " failed\n", a->id);
+				goto out_err;
+			}
+		}
 	}
 
 	l2tp_session_send(sess, pack);
@@ -3740,12 +3803,218 @@ static int l2tp_recv_ICRP(struct l2tp_sess_t *sess,
 		return -1;
 	}
 
+	if (sess->switch_upstream) {
+		l2tp_stat_inc(&l2tp_stat.switch_downstream_connected);
+		/* Task 7 replaces this with the kernel-socket-only connect
+		 * and pairing; for now the downstream leg is left in
+		 * STATE_ESTB without a running PPP engine or splice, which
+		 * is intentional for this task's scope. */
+		sess->state1 = STATE_ESTB;
+		return 0;
+	}
+
 	if (l2tp_session_connect(sess) < 0) {
 		log_session(log_error, sess, "impossible to handle ICRP:"
 			    " connecting session failed,"
 			    " disconnecting session\n");
 		l2tp_session_disconnect(sess, 2, 6);
 
+		return -1;
+	}
+
+	return 0;
+}
+
+static int l2tp_switch_capture_avp(struct l2tp_sess_t *sess,
+				   const struct l2tp_attr_t *attr)
+{
+	struct l2tp_switch_avp_t *slot;
+
+	if (!sess->switch_avps) {
+		sess->switch_avps = _malloc(sizeof(*sess->switch_avps));
+		if (!sess->switch_avps)
+			return -1;
+		memset(sess->switch_avps, 0, sizeof(*sess->switch_avps));
+	}
+
+	if (sess->switch_avps->count >=
+	    (int)(sizeof(sess->switch_avps->avp) /
+		  sizeof(sess->switch_avps->avp[0])))
+		return -1; /* more of these AVPs than RFC 2661 defines */
+
+	slot = &sess->switch_avps->avp[sess->switch_avps->count];
+	slot->id = attr->attr->id;
+	slot->M = attr->M;
+
+	/* attr->val is a union: which member is actually populated depends
+	 * on attr->attr->type (set by packet.c's parser from the dictionary
+	 * entry for this AVP id), not on how this function is called. Every
+	 * AVP this function is ever invoked for is octets, string, or int16
+	 * (Init/Last-*-LCP and Proxy-Authen-Challenge/Response are octets;
+	 * Proxy-Authen-Name is string; Proxy-Authen-Type/ID are int16) --
+	 * reading attr->val.octets unconditionally works for the first two
+	 * (both are just a pointer into real byte data, string vs uint8_t*
+	 * makes no difference for memcpy purposes) but for int16 it
+	 * reinterprets a small integer VALUE stored directly in the union as
+	 * if it were a pointer and crashes dereferencing it -- confirmed by
+	 * reproducing this exact segfault against a real accel-pppd on a VM
+	 * (Proxy-Authen-Type, sent whenever --proxy-username is used).
+	 * Serialize to the same on-the-wire byte representation
+	 * l2tp_packet_add_int16() itself would produce, so re-injecting via
+	 * l2tp_packet_add_octets() later (Step 6) round-trips correctly --
+	 * the wire format for an int16 AVP is just its 2 network-order
+	 * bytes, indistinguishable from an octets AVP of length 2 to
+	 * whichever end decodes it. */
+	switch (attr->attr->type) {
+	case ATTR_TYPE_INT16: {
+		uint16_t val = htons(attr->val.uint16);
+
+		slot->len = sizeof(val);
+		slot->val = _malloc(slot->len);
+		if (!slot->val)
+			return -1;
+		memcpy(slot->val, &val, slot->len);
+		break;
+	}
+	case ATTR_TYPE_OCTETS:
+	case ATTR_TYPE_STRING:
+	default:
+		slot->len = attr->length;
+		slot->val = _malloc(slot->len ? slot->len : 1);
+		if (!slot->val)
+			return -1;
+		memcpy(slot->val, attr->val.octets, slot->len);
+		break;
+	}
+
+	sess->switch_avps->count++;
+	return 0;
+}
+
+static void l2tp_switch_disconnect_upstream(void *data)
+{
+	struct l2tp_sess_t *upstream = data;
+
+	if (upstream->state1 != STATE_CLOSE)
+		l2tp_session_disconnect(upstream, 2, 6);
+
+	session_put(upstream); /* the temporary hold taken in
+				 * l2tp_switch_place_downstream_call() below */
+}
+
+static void l2tp_switch_place_call(void *data)
+{
+	struct l2tp_sess_t *upstream = data;
+	struct l2tp_conn_t *conn = upstream->switch_target->tunnel;
+	struct l2tp_sess_t *downstream;
+
+	/* This function runs in conn's context (the downstream target's
+	 * tunnel), scheduled via l2tp_switch_place_downstream_call() below --
+	 * NOT in upstream->paren_conn->ctx. Touching upstream's own state
+	 * (timers, send queue -- exactly what l2tp_session_disconnect()
+	 * does) from here would violate this codebase's per-tunnel-context
+	 * threading model, so every path that needs to disconnect upstream
+	 * crosses into its own context first via triton_context_call()
+	 * rather than calling l2tp_session_disconnect(upstream, ...) here
+	 * directly. */
+
+	if (!conn || conn->state != STATE_ESTB) {
+		log_session(log_error, upstream,
+			    "l2tp-switch: target tunnel not available,"
+			    " disconnecting upstream call\n");
+		goto err_no_pairing;
+	}
+
+	downstream = l2tp_tunnel_alloc_session(conn);
+	if (!downstream) {
+		log_session(log_error, upstream,
+			    "l2tp-switch: downstream session allocation"
+			    " failed\n");
+		goto err_no_pairing;
+	}
+
+	if (upstream->calling_num) {
+		downstream->calling_num = _malloc(upstream->calling_num_len + 1);
+		if (downstream->calling_num) {
+			memcpy(downstream->calling_num, upstream->calling_num,
+			      upstream->calling_num_len + 1);
+			downstream->calling_num_len = upstream->calling_num_len;
+		}
+	}
+	if (upstream->called_num) {
+		downstream->called_num = _malloc(upstream->called_num_len + 1);
+		if (downstream->called_num) {
+			memcpy(downstream->called_num, upstream->called_num,
+			      upstream->called_num_len + 1);
+			downstream->called_num_len = upstream->called_num_len;
+		}
+	}
+
+	/* Mirror the upstream leg's sequencing request onto the downstream
+	 * leg (spec §11: sequencing must match across legs, not fall back to
+	 * independent per-tunnel defaults). l2tp_send_ICCN already sends a
+	 * Sequencing_Required AVP whenever sess->send_seq is set -- no other
+	 * change is needed for the downstream leg to advertise the same
+	 * requirement MK made of the upstream leg. */
+	downstream->send_seq = upstream->send_seq;
+	downstream->recv_seq = upstream->recv_seq;
+
+	downstream->switch_upstream = upstream;
+	downstream->switch_avps = upstream->switch_avps;
+	upstream->switch_avps = NULL; /* ownership moves to the downstream leg */
+	upstream->switch_downstream = downstream;
+	session_hold(downstream);
+	session_hold(upstream);
+
+	if (l2tp_session_place_call(downstream) < 0) {
+		log_session(log_error, upstream,
+			    "l2tp-switch: placing downstream call failed\n");
+		/* downstream->switch_upstream == upstream was just set above,
+		 * so l2tp_session_free()'s Task 8 hook finds it and, via
+		 * l2tp_switch_teardown_peer(), correctly crosses into
+		 * upstream's own context to tear it down too -- nothing more
+		 * to do for upstream on this path. */
+		l2tp_session_free(downstream);
+		goto err_pairing_done;
+	}
+
+	l2tp_stat_inc(&l2tp_stat.switch_placed);
+	session_put(upstream); /* the temporary hold taken in
+				 * l2tp_switch_place_downstream_call() below --
+				 * the two pairing holds taken just above stay
+				 * intact for the life of the active pairing */
+	return;
+
+err_no_pairing:
+	/* No downstream leg exists yet -- upstream has no peer, so there is
+	 * nothing for a Task 8 hook to cascade to. Cross into upstream's own
+	 * context to disconnect it directly. */
+	if (triton_context_call(&upstream->paren_conn->ctx,
+				l2tp_switch_disconnect_upstream, upstream) < 0)
+		session_put(upstream); /* couldn't even schedule it; still
+					 * release our own hold */
+	return;
+
+err_pairing_done:
+	/* The Task 8 hook triggered by l2tp_session_free(downstream) above
+	 * already scheduled upstream's teardown in its own context; just
+	 * release the call-site's own temporary hold on upstream. */
+	session_put(upstream);
+}
+
+static int l2tp_switch_place_downstream_call(struct l2tp_sess_t *upstream)
+{
+	struct l2tp_conn_t *conn = upstream->switch_target->tunnel;
+
+	if (!conn)
+		return -1;
+
+	/* Placing the downstream call touches conn's own tunnel context,
+	 * which is not upstream's context -- cross via triton_context_call,
+	 * same as l2tp_create_session_exec() already does for the CLI path. */
+	session_hold(upstream);
+	if (triton_context_call(&conn->ctx, l2tp_switch_place_call, upstream) < 0) {
+		session_put(upstream);
 		return -1;
 	}
 
@@ -3771,6 +4040,7 @@ static int l2tp_recv_ICCN(struct l2tp_sess_t *sess,
 		case Random_Vector:
 		case TX_Speed:
 		case Framing_Type:
+			break;
 		case Init_Recv_LCP:
 		case Last_Sent_LCP:
 		case Last_Recv_LCP:
@@ -3779,6 +4049,25 @@ static int l2tp_recv_ICCN(struct l2tp_sess_t *sess,
 		case Proxy_Authen_Challenge:
 		case Proxy_Authen_ID:
 		case Proxy_Authen_Response:
+			/* These are the only AVPs actually worth re-injecting
+			 * into the downstream leg's own ICCN -- unlike
+			 * Message_Type/TX_Speed/Framing_Type above (whose
+			 * dictionary types are int16/int32, not octets;
+			 * l2tp_switch_capture_avp() unconditionally reads
+			 * attr->val.octets, which for those types
+			 * reinterprets a small integer as a pointer and
+			 * crashes on the memcpy -- confirmed by reproducing
+			 * this exact segfault on a real VM before narrowing
+			 * the case grouping to just these AVPs). */
+			if (sess->switch_target &&
+			    l2tp_switch_capture_avp(sess, attr) < 0) {
+				log_session(log_error, sess,
+					    "impossible to handle ICCN:"
+					    " capturing proxy AVP failed\n");
+				l2tp_session_disconnect(sess, 2, 6);
+				return -1;
+			}
+			break;
 		case Private_Group_ID:
 		case RX_Speed:
 			break;
@@ -3805,6 +4094,20 @@ static int l2tp_recv_ICCN(struct l2tp_sess_t *sess,
 		l2tp_session_disconnect(sess, 2, 8);
 
 		return -1;
+	}
+
+	if (sess->switch_target) {
+		if (l2tp_switch_place_downstream_call(sess) < 0) {
+			log_session(log_error, sess,
+				    "impossible to switch call:"
+				    " placing downstream call failed,"
+				    " disconnecting session\n");
+			l2tp_session_disconnect(sess, 2, 6);
+
+			return -1;
+		}
+
+		return 0;
 	}
 
 	if (l2tp_session_connect(sess)) {
@@ -5294,6 +5597,8 @@ static int l2tp_switch_show_exec(const char *cmd, char * const *fields,
 
 	cli_send(client, "calls:\r\n");
 	cli_sendv(client, "  matched: %u\r\n", l2tp_stat.switch_matched);
+	cli_sendv(client, "  placed: %u\r\n", l2tp_stat.switch_placed);
+	cli_sendv(client, "  connected: %u\r\n", l2tp_stat.switch_downstream_connected);
 
 	return CLI_CMD_OK;
 }

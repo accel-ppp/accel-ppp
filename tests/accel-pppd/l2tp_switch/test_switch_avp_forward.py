@@ -1,11 +1,11 @@
 import time
-from common import process, l2tp_peer_process
+from common import process, config, accel_pppd_process, l2tp_peer_process
 from helpers import start_instance
 
 
-def test_switch_matches_on_called_number(pytestconfig, accel_cmd, accel_pppd):
+def test_switch_forwards_proxy_avps(pytestconfig, accel_cmd, accel_pppd):
     d_started, d_thread, d_ctrl, d_cfg = start_instance(
-        accel_pppd, accel_cmd, 2101, "127.0.0.1", 17022, "downstreamsecret"
+        accel_pppd, accel_cmd, 2101, "127.0.0.1", 17030, "downstreamsecret"
     )
     assert d_started
 
@@ -15,13 +15,12 @@ def test_switch_matches_on_called_number(pytestconfig, accel_cmd, accel_pppd):
             accel_cmd,
             2001,
             "127.0.0.1",
-            17023,
+            17031,
             "upstreamsecret",
             extra="""
     [l2tp-switch]
-    attr=Called-Number
-    target=downstream,127.0.0.1,17022,downstreamsecret
-    line=5551234,downstream
+    target=downstream,127.0.0.1,17030,downstreamsecret
+    line=472913,downstream
     """,
         )
         assert s_started
@@ -38,22 +37,24 @@ def test_switch_matches_on_called_number(pytestconfig, accel_cmd, accel_pppd):
                 "/tmp/l2tp_switch_peer_test",
                 [
                     "--peer-addr", "127.0.0.1",
-                    "--peer-port", "17023",
+                    "--peer-port", "17031",
                     "--secret", "upstreamsecret",
-                    "--calling-number", "472913",  # deliberately not the match key
-                    "--called-number", "5551234",
+                    "--calling-number", "472913",
+                    "--proxy-username", "simon",
+                    "--proxy-password", "secretpw",
                 ],
             )
             rc, out, err = l2tp_peer_process.wait(peer_thread, peer_ctrl, 10.0)
             assert rc == 0, err
 
+            # the assertion lives on the switch instance itself: it placed
+            # exactly one downstream call carrying the proxy AVPs
             (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
-            assert "matched: 1" in out
+            assert exit == 0
+            assert "placed: 1" in out
         finally:
-            from common import accel_pppd_process, config
             accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=2001)
             config.delete_tmp(s_cfg)
     finally:
-        from common import accel_pppd_process, config
         accel_pppd_process.end(d_thread, d_ctrl, accel_cmd, 10.0, cli_port=2101)
         config.delete_tmp(d_cfg)

@@ -177,6 +177,8 @@ static struct sockaddr_in peer_addr;
 static const char *secret = "";
 static const char *calling_number = "472913";
 static const char *called_number;
+static const char *proxy_username;
+static const char *proxy_password;
 static uint16_t local_tid = 0x1234;
 static uint16_t local_sid = 0x5678;
 
@@ -232,13 +234,15 @@ int main(int argc, char **argv)
 		{"secret", required_argument, 0, 's'},
 		{"calling-number", required_argument, 0, 'c'},
 		{"called-number", required_argument, 0, 'n'},
+		{"proxy-username", required_argument, 0, 'u'},
+		{"proxy-password", required_argument, 0, 'w'},
 		{0, 0, 0, 0},
 	};
 
 	peer_addr.sin_family = AF_INET;
 	peer_addr.sin_port = htons(1701);
 
-	while ((opt = getopt_long(argc, argv, "a:p:s:c:n:", opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "a:p:s:c:n:u:w:", opts, NULL)) != -1) {
 		switch (opt) {
 		case 'a':
 			if (inet_aton(optarg, &peer_addr.sin_addr) == 0)
@@ -256,10 +260,17 @@ int main(int argc, char **argv)
 		case 'n':
 			called_number = optarg;
 			break;
+		case 'u':
+			proxy_username = optarg;
+			break;
+		case 'w':
+			proxy_password = optarg;
+			break;
 		default:
 			return die("usage: --peer-addr A --peer-port P"
 				   " --secret S [--calling-number C]"
-				   " [--called-number N]");
+				   " [--called-number N]"
+				   " [--proxy-username U] [--proxy-password W]");
 		}
 	}
 
@@ -387,6 +398,17 @@ int main(int argc, char **argv)
 		return die("ICCN alloc failed");
 	l2tp_packet_add_int32(pack, TX_Speed, 1000, 1);
 	l2tp_packet_add_int32(pack, Framing_Type, 3, 1);
+	if (proxy_username) {
+		/* Proxy-Authen-Type is int16 per dict/dictionary.rfc2661 (id 29),
+		 * not an octet string -- 2 = PPP_PAP is sufficient here since this
+		 * harness only needs to prove the AVP survives the switch intact,
+		 * not exercise real PAP semantics. */
+		l2tp_packet_add_int16(pack, Proxy_Authen_Type, 2, 1);
+		l2tp_packet_add_string(pack, Proxy_Authen_Name, proxy_username, 1);
+		if (proxy_password)
+			l2tp_packet_add_string(pack, Proxy_Authen_Response,
+					       proxy_password, 1);
+	}
 	pack->hdr.tid = htons(peer_tid);
 	pack->hdr.sid = htons(peer_sid);
 	pack->hdr.Ns = htons(my_ns);
