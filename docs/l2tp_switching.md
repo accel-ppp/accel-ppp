@@ -103,28 +103,39 @@ counters or accounting on the downstream LNS itself.
   downstream target's tunnel dropping — the other leg is torn down too.
   There is no partial/orphaned-leg state to clean up manually.
 - **Throughput on a single switched call is bounded by one synchronous
-  relay path, and by the path's own UDP capacity — and a large enough
-  instantaneous burst can end the call, not just lose data.** Unlike an
-  ordinary PPP session (whose data plane runs entirely in-kernel, attached
-  to the generic PPP channel), a switched call's bytes are relayed via a
-  userspace `splice(2)` loop on one of triton's worker threads. Two
-  distinct failure modes were measured (real two-VM setup, one switched
-  call, one MK-side sender writing as fast as possible with no pacing):
-  - Below roughly 100 packets (1400 bytes each) written back-to-back with
-    no delay, everything is relayed with zero loss.
-  - Above that, the kernel's UDP receive buffer for the session can fill
-    faster than the relay loop drains it (excess packets dropped silently
-    at the kernel level, visible as `Udp: receive buffer errors` in
-    `netstat -su`, not as anything this feature reports itself); on a real
-    (non-loopback) network path, the relay's own outbound `splice(2)` call
-    can also fail outright under the same burst (`ENOMEM`, occasionally
-    `EBADF` on the paired leg as a direct side effect of the first leg's
-    teardown) — in that case the switch disconnects the call cleanly
-    (CDN sent, both legs torn down, matching the "a call ending always
-    tears down its pair" behavior above) rather than continuing degraded.
-    This is the intended, safe failure mode — not a crash or a leak — but
-    it means a large enough burst ends the call rather than merely
-    throttling it.
+  relay path, and by the path's own UDP capacity.** Unlike an ordinary PPP
+  session (whose data plane runs entirely in-kernel, attached to the
+  generic PPP channel), a switched call's bytes are relayed via a
+  userspace `splice(2)` loop on one of triton's worker threads, through
+  sockets sized at 4 MiB (`SO_RCVBUF`/`SO_SNDBUF`, forced past the usual
+  `net.core.rmem_max`/`wmem_max` default of ~208 KiB via
+  `SO_RCVBUFFORCE`/`SO_SNDBUFFORCE`) specifically to absorb bursts well
+  beyond ordinary call traffic. Measured on a real two-VM setup, one
+  switched call, one MK-side sender writing as fast as possible with no
+  pacing:
+  - Bursts up to at least 2,000 back-to-back 1400-byte writes (2.8 MB) are
+    relayed with **zero loss**, and the call stays up.
+  - Far larger bursts (tested up to 100,000 writes, 140 MB, requested at
+    ~410 MB/s of local write() calls) no longer end the call at all — the
+    kernel's UDP receive buffer can still fill faster than the relay
+    drains it under a burst this extreme, and the relay's own outbound
+    `splice(2)` call can still hit transient `ENOMEM`/`ENOBUFS` under
+    real (non-loopback) network pressure, but both are now handled as
+    recoverable: excess *received* bytes are simply not there to relay
+    (ordinary, silent UDP loss, visible only in `netstat -su`'s
+    `Udp: receive buffer errors`), and a transient outbound `ENOMEM`/
+    `ENOBUFS` is retried with a short backoff (up to ~1s total) rather
+    than immediately disconnecting the call. In the 100 MB/140 MB test
+    above, roughly 40% of the burst was actually delivered — the rest
+    lost to the receive-side buffer filling faster than the relay could
+    drain it — but the call itself survived the entire burst with no
+    disconnect and no daemon impact.
+  - A large enough *sustained* burst can still eventually exhaust the
+    bounded outbound retry budget and disconnect the call (the original,
+    intentional safe failure mode — CDN sent, both legs torn down,
+    matching "a call ending always tears down its pair" above) — this now
+    takes meaningfully more sustained overload to reach than before, not
+    a single short spike.
 
   Ordinary call volumes and realistically network-paced traffic do not
   approach either threshold; a single session sustaining an artificial,
@@ -136,33 +147,72 @@ counters or accounting on the downstream LNS itself.
   does over TCP, and that gap is easy to mistake for a software problem.
   On the pair of cloud VMs used to measure the numbers above, a plain
   `iperf3` TCP test reached 9.15 Gbit/s, but UDP on the *same* path
-  topped out around 1.2-1.4 Gbit/s aggregate — and adding parallel UDP
-  streams did not raise that ceiling, which points at the underlying
-  virtualized network path itself (packet-per-second handling for many
-  small UDP datagrams, not this feature's own single relay thread nor
-  either host's CPU). A switched call is carried over UDP end to end, so
-  it can never exceed whatever a plain UDP test between the same two
-  hosts already shows — no amount of tuning on this feature's own side
-  changes that ceiling if it's set by the path itself:
+  topped out around 1.2-1.4 Gbit/s — and neither adding parallel UDP
+  streams nor the sending host's own CPU explained the ceiling (both
+  cores sat mostly idle throughout). A switched call is carried over UDP
+  end to end, so it can never exceed whatever a plain UDP test between
+  the same two hosts already shows — no amount of tuning on this
+  feature's own side changes that ceiling if it's set by the path
+  itself. Run all four of these (`mpstat` needs `sysstat` installed):
 
   ```bash
   # on the downstream LNS
   iperf3 -s -p 5201
 
-  # on the switch host, from a shell -- NOT through the switch itself
-  iperf3 -c <downstream-lns-ip> -p 5201 -t 10                     # TCP baseline
-  iperf3 -c <downstream-lns-ip> -p 5201 -u -b 0 -t 10 -l 1400      # UDP, uncapped
-  iperf3 -c <downstream-lns-ip> -p 5201 -u -b 0 -P 4 -t 10 -l 1400 # UDP, 4 parallel streams
+  # on the switch host, in one shell -- NOT through the switch itself
+  iperf3 -c <downstream-lns-ip> -p 5201 -t 10                        # TCP baseline
+  iperf3 -c <downstream-lns-ip> -p 5201 -u -b 0 -t 10 -l 1400         # UDP, uncapped
+  iperf3 -c <downstream-lns-ip> -p 5201 -u -b 0 -P 4 -t 10 -l 1400    # UDP, 4 parallel streams
+  iperf3 -c <downstream-lns-ip> -p 5201 -u -b 0 -t 10 -l <path-MTU-safe-max>  # UDP, larger payload
+
+  # in a second shell on the switch host, while the *uncapped single-stream*
+  # UDP test above is running:
+  mpstat -P ALL 1 8
   ```
 
-  Compare the three: if UDP is dramatically lower than TCP on the same
-  path, and adding parallel streams doesn't close the gap, the path
-  itself — not this feature — is the ceiling, and no amount of buffer
-  tuning here will raise it. If UDP scales up cleanly with more parallel
-  streams instead, the earlier single-stream number was CPU/generation
-  bound rather than a path limit, which is a different (and more
-  fixable, e.g. by giving the switch host more CPU) situation. Either
-  way, treat whatever this shows as the hard ceiling for any one
-  switched call's sustained throughput on that path, well before
-  looking at this feature's own relay design as the cause of a
-  throughput problem.
+  (For the last `iperf3` line, pick a payload as large as the path allows
+  without IP fragmentation — `<MTU> - 28` for a plain, non-jumbo path, e.g.
+  `1472` for a standard 1500-byte-MTU path; check `ip link show` for the
+  outbound interface's actual MTU first. A fragmented payload still gives
+  a usable data point, just a noisier one — fragmentation itself adds
+  overhead and a small amount of loss, since losing any one fragment
+  drops the whole datagram.)
+
+  Read the four results together, in this order:
+  1. **UDP far below TCP on the same path** is the first sign of a
+     UDP-specific ceiling — expected, not itself conclusive of *why*.
+  2. **`mpstat` during the single-stream UDP run** is the most decisive
+     signal. If a core is pegged near 100%, the ceiling is CPU/syscall
+     overhead on whichever host is generating or receiving the traffic —
+     a real, fixable constraint (more CPU, or a more efficient relay). If
+     every core stays mostly idle while throughput is already capped,
+     CPU is *not* the bottleneck, no matter what the other tests show.
+  3. **Parallel streams (`-P 4`) not raising the aggregate** is
+     ambiguous on its own — it's also what you'd see on a CPU-bound path
+     with only 1-2 cores available, since oversubscribing a small core
+     count doesn't multiply throughput either. Only meaningful once read
+     together with the `mpstat` result from step 2.
+  4. **Throughput scaling up with a larger payload while wire-level
+     packets-per-second stays roughly the same** (compute pps from the
+     reported datagram count and interval, accounting for fragmentation
+     if the payload didn't fit in one IP packet) is the signature of a
+     packets-per-second rate limit somewhere in the path, independent of
+     both hosts. This is exactly what was measured on the cloud VM pair
+     above: ~101,000 pps at a 1400-byte payload and ~1.13 Gbit/s vs.
+     ~127,000 wire-level pps (after accounting for fragmentation) at a
+     larger payload and ~1.30 Gbit/s — the packet *rate* stayed in the
+     same band while the bitrate moved with packet size, and CPU stayed
+     idle throughout. That combination points at a PPS-based
+     policer/rate-limiter in the network path — a common anti-UDP-flood
+     protection at cloud and hosting providers — rather than either
+     host's own processing capacity or a raw bandwidth cap. No change to
+     this feature, and no amount of additional CPU on either host, moves
+     a ceiling enforced outside both of them; the only lever is the
+     network path itself (a different route, or asking the provider
+     about UDP policing on the account/interface).
+
+  Whichever combination of results you get, treat it as the hard ceiling
+  for any one switched call's sustained throughput on that specific path
+  — and only reach for a switch-side fix (more `SO_RCVBUF`/`SO_SNDBUF`, a
+  less single-threaded relay) once `mpstat` actually shows a host's CPU,
+  not the network, as the constraint.
