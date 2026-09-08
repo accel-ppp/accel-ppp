@@ -339,20 +339,31 @@ static int parse_line(const char *val)
 }
 
 extern in_addr_t l2tp_conf_get_bind_addr(void); /* Task 2 adds this to l2tp.c */
+extern uint16_t l2tp_conf_get_bind_port(void); /* Task 5 adds this to l2tp.c */
 
 static int validate_no_self_loop(void)
 {
 	in_addr_t bind_addr = l2tp_conf_get_bind_addr();
+	uint16_t bind_port = l2tp_conf_get_bind_port();
 	struct l2tp_switch_target_t *t;
 
 	if (bind_addr == INADDR_ANY)
 		return 0;
 
 	list_for_each_entry(t, &l2tp_switch_targets, entry) {
-		if (t->peer_addr.sin_addr.s_addr == bind_addr) {
-			log_error("l2tp-switch: target \"%s\" peer-addr equals"
-				  " this host's own [l2tp] bind address\n",
-				  t->name);
+		/* Both the IP *and* the port must match this host's own
+		 * [l2tp] listener for this to actually be a tunnel-to-itself
+		 * loop -- an IP-only comparison would reject any target that
+		 * merely shares an address with the switch's own bind (e.g.
+		 * a downstream instance colocated on the same host at a
+		 * different port, which is exactly how this feature's own
+		 * test suite runs a switch and downstream side by side on
+		 * 127.0.0.1). */
+		if (t->peer_addr.sin_addr.s_addr == bind_addr &&
+		    ntohs(t->peer_addr.sin_port) == bind_port) {
+			log_error("l2tp-switch: target \"%s\" peer-addr:port"
+				  " equals this host's own [l2tp]"
+				  " bind:port\n", t->name);
 			return -1;
 		}
 	}
@@ -413,9 +424,21 @@ in_addr_t l2tp_conf_get_bind_addr(void)
 
 	return opt ? inet_addr(opt) : htonl(INADDR_ANY);
 }
+
+/* Parsed fresh via conf_get_opt(), like l2tp_conf_get_bind_addr() above --
+ * not read from the conf_port global, which start_udp_server() below only
+ * populates from "[l2tp] port=" *after* l2tp_switch_conf_load() has already
+ * run (l2tp_init() calls them in that order), so conf_port would still be
+ * stuck at its L2TP_PORT default at self-loop-validation time otherwise. */
+uint16_t l2tp_conf_get_bind_port(void)
+{
+	const char *opt = conf_get_opt("l2tp", "port");
+
+	return (opt && atoi(opt) > 0) ? atoi(opt) : L2TP_PORT;
+}
 ```
 
-Add this function next to `start_udp_server()` in `l2tp.c`. It returns `INADDR_ANY` when no `bind=` is configured, matching how `l2tp_switch_conf.c`'s `validate_no_self_loop()` already treats `INADDR_ANY` as "skip the check."
+Add these functions next to `start_udp_server()` in `l2tp.c`. `l2tp_conf_get_bind_addr()` returns `INADDR_ANY` when no `bind=` is configured, matching how `l2tp_switch_conf.c`'s `validate_no_self_loop()` already treats `INADDR_ANY` as "skip the check." `l2tp_conf_get_bind_port()` is added by Task 5, not this task — it doesn't exist yet at this point in the plan, but is documented here alongside its sibling since both belong to the same self-loop check and a reader implementing Step 3 needs the full picture. **This function did not exist when this task was originally written** — see Task 5's bug note for why `validate_no_self_loop()` needed it added.
 
 - [ ] **Step 4: Wire into `CMakeLists.txt`**
 
@@ -1756,7 +1779,7 @@ def start_instance(accel_pppd, accel_cmd, cli_port, l2tp_bind, l2tp_port, secret
     """
     )
     started, thread, ctrl = accel_pppd_process.start(
-        accel_pppd, ["-c" + cfg], accel_cmd, 5.0
+        accel_pppd, ["-c" + cfg], accel_cmd, 5.0, cli_port=cli_port
     )
     return started, thread, ctrl, cfg
 
@@ -1786,7 +1809,7 @@ def test_switch_tags_matching_call(pytestconfig, accel_cmd, accel_pppd):
         try:
             # wait for the persistent downstream tunnel (Task 3)
             for _ in range(50):
-                (exit, out, err) = process.run([accel_cmd, "l2tp switch"])
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
                 if "[up]" in out:
                     break
                 time.sleep(0.1)
@@ -1805,15 +1828,17 @@ def test_switch_tags_matching_call(pytestconfig, accel_cmd, accel_pppd):
             assert rc == 0, err
 
             # the switch instance's own accel-cmd should show one pending/switched call
-            (exit, out, err) = process.run([accel_cmd, "l2tp switch"])
+            (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
             assert "matched: 1" in out
         finally:
-            accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0)
+            accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=2001)
             config.delete_tmp(s_cfg)
     finally:
-        accel_pppd_process.end(d_thread, d_ctrl, accel_cmd, 10.0)
+        accel_pppd_process.end(d_thread, d_ctrl, accel_cmd, 10.0, cli_port=2101)
         config.delete_tmp(d_cfg)
 ```
+
+**Bug found running this exact code against real accel-pppd instances on a VM: same `accel_pppd_process.start()`/`end()` port-mismatch as Task 3's bug note (`cli_port=` didn't exist yet when this task's test was first drafted).** `start_instance()` is shared across both the downstream (2101) and switch (2001) instances here, so it must always pass `cli_port=cli_port` through, and every direct `process.run([accel_cmd, ...])` call against the switch instance needs `-p 2001` explicitly rather than relying on it happening to be accel-cmd's default (fragile, and inconsistent with how the downstream instance has to be addressed) -- fixed throughout the listing above.
 
 **Also add a `--called-number` option to the harness now** (`l2tp_switch_peer_test.c`, Task 4), following the exact same incremental-extension pattern Tasks 6/7/8 already use for `--proxy-username`/`--data-pattern`/`--send-stopccn` — every test so far only exercises the *default* `attr=Calling-Number`, and `attr=` being configurable to name any string-typed AVP (§4 of the spec, the whole reason it isn't a hardcoded enum) has no test proving it actually works with a different AVP:
 
@@ -1823,6 +1848,12 @@ static const char *called_number;
 
 /* add to the getopt_long array */
 {"called-number", required_argument, 0, 'n'},
+
+/* add "n:" to the existing getopt_long() short-option string
+ * ("a:p:s:c:" -> "a:p:s:c:n:") -- without it, --called-number's long
+ * form still works (glibc's getopt_long() doesn't require a long
+ * option's short equivalent to appear in the optstring to return its
+ * val), but -n as a short flag would not parse correctly */
 
 /* add to the switch statement */
 case 'n':
@@ -1840,7 +1871,7 @@ Add `tests/accel-pppd/l2tp_switch/test_switch_match_called_number.py`, identical
 ```python
 import time
 from common import process, l2tp_peer_process
-from helpers import start_instance
+from test_switch_match import start_instance  # see the Task 5 helpers.py note below
 
 
 def test_switch_matches_on_called_number(pytestconfig, accel_cmd, accel_pppd):
@@ -1868,7 +1899,7 @@ def test_switch_matches_on_called_number(pytestconfig, accel_cmd, accel_pppd):
 
         try:
             for _ in range(50):
-                (exit, out, err) = process.run([accel_cmd, "l2tp switch"])
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
                 if "[up]" in out:
                     break
                 time.sleep(0.1)
@@ -1887,19 +1918,19 @@ def test_switch_matches_on_called_number(pytestconfig, accel_cmd, accel_pppd):
             rc, out, err = l2tp_peer_process.wait(peer_thread, peer_ctrl, 10.0)
             assert rc == 0, err
 
-            (exit, out, err) = process.run([accel_cmd, "l2tp switch"])
+            (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
             assert "matched: 1" in out
         finally:
             from common import accel_pppd_process, config
-            accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0)
+            accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=2001)
             config.delete_tmp(s_cfg)
     finally:
         from common import accel_pppd_process, config
-        accel_pppd_process.end(d_thread, d_ctrl, accel_cmd, 10.0)
+        accel_pppd_process.end(d_thread, d_ctrl, accel_cmd, 10.0, cli_port=2101)
         config.delete_tmp(d_cfg)
 ```
 
-(`--calling-number` deliberately set to a value that is *not* in the switch table — if matching were accidentally still keying off Calling-Number instead of the configured `attr=Called-Number`, this test would fail to match, catching exactly that regression.)
+(`--calling-number` deliberately set to a value that is *not* in the switch table — if matching were accidentally still keying off Calling-Number instead of the configured `attr=Called-Number`, this test would fail to match, catching exactly that regression. Note the `from test_switch_match import start_instance` line — not `from helpers import start_instance` as an earlier draft had it — see the plan-ordering bug note after Step 4 below for why, and Task 6's helpers.py refactor for when this import changes again.)
 
 - [ ] **Step 3: Run, verify it fails**
 
@@ -2007,15 +2038,24 @@ Increment `switch_matched` via the existing `l2tp_stat_inc()` helper (`l2tp_stat
 
 (Reading `l2tp_stat.switch_matched` directly here, not through `l2tp_stat_get()`'s snapshot — `l2tp_switch_show_exec` is a new command with no existing snapshot convention to match, so a direct atomic load is simplest; `show_stat_exec` keeps using its own established snapshot pattern in Task 9.)
 
+**Real, pre-existing bug found running this task's test against a real accel-pppd on a VM — in Task 1's already-committed `validate_no_self_loop()`, not anything new here.** That check compared only `t->peer_addr.sin_addr.s_addr == bind_addr`, ignoring port entirely. This task's own test needs the switch instance on a non-default `[l2tp] bind=127.0.0.1 port=17021` (to avoid colliding with the downstream instance's own listener) while pointing a target at `127.0.0.1:17020` — same IP, different port, not actually a loop. With the IP-only check, the daemon rejected this as a false self-loop and `_exit(EXIT_FAILURE)`ed at startup, 100% reproducibly (confirmed by manually stripping the test config down option-by-option until isolating `bind=`+`port=` together as the trigger). Any deployment running a switch and one of its own targets on the same host at different ports — exactly this test suite's own pattern — would have hit this.
+
+Fixed by adding `l2tp_conf_get_bind_port()` to `l2tp.c` (documented in Task 1 Step 3 above, since that's where its sibling `l2tp_conf_get_bind_addr()` lives) and updating `validate_no_self_loop()` in `l2tp_switch_conf.c` to require *both* the IP and the port to match before rejecting a target as a loop. Re-verified: the true self-loop case (Task 1's own `TestSelfLoopTarget`, where the target's port genuinely matches the switch's own default `L2TP_PORT`) still correctly rejects; the false-positive case (this task's test) now starts and matches correctly. Full suite re-run: 11/11 passing.
+
+**Also found: a plan-ordering issue in this task's own test files.** The originally-written `test_switch_match_called_number.py` (below) imported `from helpers import start_instance` — but `helpers.py` isn't created until Task 6's Step 2. Fixed for this task by importing directly from the sibling test module instead (`from test_switch_match import start_instance`); Task 6's refactor into `helpers.py` should update *both* test files' imports, not just `test_switch_match.py`'s, when it runs.
+
 - [ ] **Step 5: Run, verify it passes**
 
-Expected: PASS.
+Expected: PASS. Confirmed for real on a VM: `test_switch_match.py` and `test_switch_match_called_number.py` (see the `--called-number` addendum above) both pass, and the full `l2tp_switch` suite (11 tests as of this task) passes together with no regressions.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add accel-pppd/ctrl/l2tp/l2tp.c \
-        tests/accel-pppd/l2tp_switch/test_switch_match.py
+        accel-pppd/ctrl/l2tp/l2tp_switch_conf.c \
+        accel-pppd/ctrl/l2tp/l2tp_switch_peer_test.c \
+        tests/accel-pppd/l2tp_switch/test_switch_match.py \
+        tests/accel-pppd/l2tp_switch/test_switch_match_called_number.py
 git commit -m "feat(l2tp): tag ICRQ-matched calls with their switch target"
 ```
 
@@ -2063,7 +2103,7 @@ Add to `struct l2tp_sess_t` (`l2tp.c` ~line 127):
 
 - [ ] **Step 2: Write the failing test**
 
-`tests/accel-pppd/l2tp_switch/test_switch_avp_forward.py` extends Task 5's `start_instance` helper (move it to `conftest.py` as a fixture-free helper function importable by both test files — create `tests/accel-pppd/l2tp_switch/helpers.py` with `start_instance` moved there verbatim, and update `test_switch_match.py`'s import accordingly in this same step):
+`tests/accel-pppd/l2tp_switch/test_switch_avp_forward.py` extends Task 5's `start_instance` helper (move it to `conftest.py` as a fixture-free helper function importable by every test file that needs it — create `tests/accel-pppd/l2tp_switch/helpers.py` with `start_instance` moved there verbatim, and update `test_switch_match.py`'s import accordingly in this same step. Also update `test_switch_match_called_number.py`'s `from test_switch_match import start_instance` to `from helpers import start_instance` here too — it was pointed at the sibling test module as an interim fix in Task 5, since `helpers.py` didn't exist yet at that point):
 
 ```python
 # tests/accel-pppd/l2tp_switch/helpers.py
@@ -2099,7 +2139,7 @@ def start_instance(accel_pppd, accel_cmd, cli_port, l2tp_bind, l2tp_port, secret
     return started, thread, ctrl, cfg
 ```
 
-Update `test_switch_match.py`'s top to `from helpers import start_instance` and delete its now-duplicated local definition.
+Update `test_switch_match.py`'s top to `from helpers import start_instance` and delete its now-duplicated local definition. Also update `test_switch_match_called_number.py`'s import from `from test_switch_match import start_instance` to `from helpers import start_instance`.
 
 Add `--proxy-username`/`--proxy-password` options to `l2tp_switch_peer_test.c` (Task 4) that add `Proxy_Authen_Type`/`Proxy_Authen_Name`/`Proxy_Authen_Response` AVPs to the ICCN it sends:
 
