@@ -184,6 +184,7 @@ static const char *proxy_password;
 static const char *data_pattern;
 static int send_stopccn;
 static int wait_cdn;
+static const char *second_call_number;
 static uint16_t local_tid = 0x1234;
 static uint16_t local_sid = 0x5678;
 
@@ -244,13 +245,14 @@ int main(int argc, char **argv)
 		{"data-pattern", required_argument, 0, 'd'},
 		{"send-stopccn", no_argument, 0, 'x'},
 		{"wait-cdn", no_argument, 0, 'W'},
+		{"second-call", required_argument, 0, 'S'},
 		{0, 0, 0, 0},
 	};
 
 	peer_addr.sin_family = AF_INET;
 	peer_addr.sin_port = htons(1701);
 
-	while ((opt = getopt_long(argc, argv, "a:p:s:c:n:u:w:d:xW", opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "a:p:s:c:n:u:w:d:xWS:", opts, NULL)) != -1) {
 		switch (opt) {
 		case 'a':
 			if (inet_aton(optarg, &peer_addr.sin_addr) == 0)
@@ -283,13 +285,16 @@ int main(int argc, char **argv)
 		case 'W':
 			wait_cdn = 1;
 			break;
+		case 'S':
+			second_call_number = optarg;
+			break;
 		default:
 			return die("usage: --peer-addr A --peer-port P"
 				   " --secret S [--calling-number C]"
 				   " [--called-number N]"
 				   " [--proxy-username U] [--proxy-password W]"
 				   " [--data-pattern D] [--send-stopccn]"
-				   " [--wait-cdn]");
+				   " [--wait-cdn] [--second-call C]");
 		}
 	}
 
@@ -612,6 +617,64 @@ int main(int argc, char **argv)
 
 		if (!got_cdn)
 			return die("timed out waiting for CDN");
+	}
+
+	if (second_call_number) {
+		/* A second call on the *same* tunnel, with a calling number
+		 * that (by test setup) doesn't match any [l2tp-switch] line=
+		 * entry -- exercises the switch instance's own normal,
+		 * locally-terminated call path side by side with a switched
+		 * one, to confirm one has no effect on the other. Own session
+		 * ID (local_sid + 1): the tunnel is shared, but session IDs
+		 * are not. */
+		uint16_t second_local_sid = local_sid + 1;
+		uint16_t second_peer_sid;
+
+		pack = l2tp_packet_alloc(2, Message_Type_Incoming_Call_Request,
+					 &peer_addr, 0, secret, strlen(secret));
+		if (!pack)
+			return die("second ICRQ alloc failed");
+		l2tp_packet_add_int16(pack, Assigned_Session_ID, second_local_sid, 1);
+		l2tp_packet_add_int32(pack, Call_Serial_Number, 2, 1);
+		l2tp_packet_add_string(pack, Calling_Number, second_call_number, 1);
+		pack->hdr.tid = htons(peer_tid);
+		pack->hdr.sid = 0;
+		pack->hdr.Ns = htons(my_ns);
+		pack->hdr.Nr = htons(peer_next_nr);
+		if (send_and_recv(fd, pack, &reply) < 0)
+			return die("second ICRQ/ICRP exchange failed");
+		my_ns++;
+		peer_next_nr = ntohs(reply->hdr.Ns) + 1;
+
+		second_peer_sid = 0;
+		{
+			struct l2tp_attr_t *a;
+
+			list_for_each_entry(a, &reply->attrs, entry)
+				if (a->attr && a->attr->id == Assigned_Session_ID)
+					second_peer_sid = a->val.uint16;
+		}
+		l2tp_packet_free(reply);
+
+		if (!second_peer_sid)
+			return die("second ICRP carried no Assigned-Session-ID");
+
+		pack = l2tp_packet_alloc(2, Message_Type_Incoming_Call_Connected,
+					 &peer_addr, 0, secret, strlen(secret));
+		if (!pack)
+			return die("second ICCN alloc failed");
+		l2tp_packet_add_int32(pack, TX_Speed, 1000, 1);
+		l2tp_packet_add_int32(pack, Framing_Type, 3, 1);
+		pack->hdr.tid = htons(peer_tid);
+		pack->hdr.sid = htons(second_peer_sid);
+		pack->hdr.Ns = htons(my_ns);
+		pack->hdr.Nr = htons(peer_next_nr);
+		if (l2tp_packet_send(fd, pack) < 0)
+			return die("second ICCN send failed");
+		l2tp_packet_free(pack);
+		my_ns++;
+
+		printf("second_call sid=%hu\n", second_local_sid);
 	}
 
 	printf("ok tid=%hu sid=%hu\n", peer_tid, peer_sid);
