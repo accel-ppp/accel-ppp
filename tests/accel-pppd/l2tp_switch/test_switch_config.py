@@ -5,7 +5,7 @@ from common import process
 def test_l2tp_switch_show_empty(accel_pppd_instance, accel_cmd):
     assert accel_pppd_instance
 
-    (exit, out, err) = process.run([accel_cmd, "l2tp switch"])
+    (exit, out, err) = process.run([accel_cmd, "l2tp switch show"])
 
     assert exit == 0
     assert "targets:" in out
@@ -24,7 +24,7 @@ class TestWithTarget:
     def test_l2tp_switch_show_target(self, accel_pppd_instance, accel_cmd):
         assert accel_pppd_instance
 
-        (exit, out, err) = process.run([accel_cmd, "l2tp switch"])
+        (exit, out, err) = process.run([accel_cmd, "l2tp switch show"])
 
         assert exit == 0
         assert "acme -> 203.0.113.50:1701" in out

@@ -28,7 +28,7 @@ def test_switch_matches_on_called_number(pytestconfig, accel_cmd, accel_pppd):
 
         try:
             for _ in range(50):
-                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch show"])
                 if "[up]" in out:
                     break
                 time.sleep(0.1)
@@ -47,7 +47,7 @@ def test_switch_matches_on_called_number(pytestconfig, accel_cmd, accel_pppd):
             rc, out, err = l2tp_peer_process.wait(peer_thread, peer_ctrl, 10.0)
             assert rc == 0, err
 
-            (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+            (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch show"])
             assert "matched: 1" in out
         finally:
             from common import accel_pppd_process, config

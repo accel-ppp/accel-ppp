@@ -347,6 +347,48 @@ unsigned int __export l2tp_stat_active(void)
 	return __atomic_load_n(&l2tp_stat.data_active, __ATOMIC_RELAXED);
 }
 
+unsigned int __export l2tp_switch_stat_active(void)
+{
+	return l2tp_switch_active_total(); /* summed across targets, not a
+					     * stored counter -- see the note
+					     * on struct l2tp_stat_t above */
+}
+
+uint64_t __export l2tp_switch_stat_lns_rx_bytes(void)
+{
+	return __atomic_load_n(&l2tp_stat.switch_lns_rx_bytes, __ATOMIC_RELAXED);
+}
+
+uint64_t __export l2tp_switch_stat_lns_tx_bytes(void)
+{
+	return __atomic_load_n(&l2tp_stat.switch_lns_tx_bytes, __ATOMIC_RELAXED);
+}
+
+typedef void (*l2tp_switch_target_stat_cb)(const char *name, int up,
+					   unsigned int active,
+					   uint64_t rx_bytes, uint64_t tx_bytes,
+					   void *arg);
+
+/* metrics.c cannot iterate l2tp_switch_targets itself -- that list, and
+ * struct l2tp_switch_target_t's layout, are internal to this module;
+ * sharing them across the module boundary would tie the two modules'
+ * binary layouts together, exactly what the dlsym-based design elsewhere
+ * in this file avoids. Exporting an iteration function instead means
+ * metrics.c only ever needs a function pointer plus plain scalars. */
+void __export l2tp_switch_stat_targets_foreach(l2tp_switch_target_stat_cb cb,
+					       void *arg)
+{
+	struct l2tp_switch_target_t *t;
+
+	list_for_each_entry(t, &l2tp_switch_targets, entry) {
+		cb(t->name, t->tunnel != NULL,
+		   __atomic_load_n(&t->active, __ATOMIC_RELAXED),
+		   __atomic_load_n(&t->rx_bytes, __ATOMIC_RELAXED),
+		   __atomic_load_n(&t->tx_bytes, __ATOMIC_RELAXED),
+		   arg);
+	}
+}
+
 
 #define log_tunnel(log_func, conn, fmt, ...)				\
 	do {								\
@@ -5730,6 +5772,13 @@ static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt,
 	cli_sendv(client, "    active: %u\r\n", stat.data_active);
 	cli_sendv(client, "    finishing: %u\r\n", stat.data_finishing);
 
+	cli_send(client, "  l2tp-switch:\r\n");
+	cli_sendv(client, "    active: %u\r\n", l2tp_switch_active_total());
+	cli_sendv(client, "    lns_rx_bytes: %llu\r\n",
+		 (unsigned long long)stat.switch_lns_rx_bytes);
+	cli_sendv(client, "    lns_tx_bytes: %llu\r\n",
+		 (unsigned long long)stat.switch_lns_tx_bytes);
+
 	return CLI_CMD_OK;
 }
 
@@ -6071,17 +6120,54 @@ static void load_config(void)
 	}
 }
 
+static void switch_show_walk(const void *nodep, VISIT which, void *closure)
+{
+	struct l2tp_sess_t *sess = *(struct l2tp_sess_t **)nodep;
+	void *client = closure;
+
+	if (which != postorder && which != leaf)
+		return;
+	if (!sess->switch_upstream)
+		return; /* only list downstream legs -- one line per call */
+
+	/* sess->switch_link is this (downstream) leg's own link: it reads
+	 * from the downstream socket and writes to upstream, i.e. it's the
+	 * "target rx / upstream tx" direction (from_upstream == 0). The
+	 * other direction is the upstream leg's own link, reachable via
+	 * sess->switch_upstream->switch_link. Both are read here purely for
+	 * display -- see l2tp_switch_target_t for the persistent, per-target
+	 * totals these feed into once the call ends. */
+	cli_sendv(client, "  call: %s tunnel %hu-%hu / %hu-%hu"
+			   " bytes_in=%llu bytes_out=%llu\r\n",
+		 sess->switch_upstream->calling_num ?
+			 sess->switch_upstream->calling_num : "?",
+		 sess->switch_upstream->paren_conn->tid,
+		 sess->switch_upstream->paren_conn->peer_tid,
+		 sess->paren_conn->tid, sess->paren_conn->peer_tid,
+		 (unsigned long long)(sess->switch_link ?
+			 sess->switch_link->bytes : 0),
+		 (unsigned long long)(sess->switch_upstream->switch_link ?
+			 sess->switch_upstream->switch_link->bytes : 0));
+}
+
 static int l2tp_switch_show_exec(const char *cmd, char * const *fields,
 				 int fields_cnt, void *client)
 {
 	struct l2tp_switch_target_t *t;
 
 	cli_send(client, "targets:\r\n");
-	list_for_each_entry(t, &l2tp_switch_targets, entry)
-		cli_sendv(client, "  %s -> %s:%hu [%s]\r\n", t->name,
-			 inet_ntoa(t->peer_addr.sin_addr),
+	list_for_each_entry(t, &l2tp_switch_targets, entry) {
+		cli_sendv(client, "  %s -> %s:%hu [%s] active=%u"
+				   " bytes_in=%llu bytes_out=%llu\r\n",
+			 t->name, inet_ntoa(t->peer_addr.sin_addr),
 			 ntohs(t->peer_addr.sin_port),
-			 t->tunnel ? "up" : "down");
+			 t->tunnel ? "up" : "down",
+			 __atomic_load_n(&t->active, __ATOMIC_RELAXED),
+			 (unsigned long long)__atomic_load_n(&t->rx_bytes, __ATOMIC_RELAXED),
+			 (unsigned long long)__atomic_load_n(&t->tx_bytes, __ATOMIC_RELAXED));
+		if (t->tunnel)
+			twalk_r(t->tunnel->sessions, switch_show_walk, client);
+	}
 
 	cli_send(client, "calls:\r\n");
 	cli_sendv(client, "  matched: %u\r\n", l2tp_stat.switch_matched);
@@ -6160,8 +6246,8 @@ static void l2tp_init(void)
 	cli_register_simple_cmd2(l2tp_create_session_exec,
 				 l2tp_create_session_help, 3,
 				 "l2tp", "create", "session");
-	cli_register_simple_cmd2(l2tp_switch_show_exec, NULL, 2,
-				 "l2tp", "switch");
+	cli_register_simple_cmd2(l2tp_switch_show_exec, NULL, 3,
+				 "l2tp", "switch", "show");
 	cli_register_simple_cmd2(l2tp_switch_add_exec, NULL, 3,
 				 "l2tp", "switch", "add");
 	cli_register_simple_cmd2(l2tp_switch_del_exec, NULL, 3,

@@ -62,6 +62,54 @@ static int proto_resolve(struct proto_stat *p)
 	return p->starting && p->active;
 }
 
+/* l2tp-switch stats don't fit proto_stats[]'s fixed one-starting/one-active
+ * per-protocol shape: this needs a global aggregate (two byte counters) and
+ * a per-target breakdown (four numbers per target, over an unbounded,
+ * runtime-configured list this file has no static knowledge of) -- so these
+ * are small, purpose-built resolvers next to it, following the same lazy-
+ * dlsym idiom rather than reshaping the existing table. */
+typedef uint64_t (*l2tp_switch_bytes_fn)(void);
+typedef void (*l2tp_switch_target_stat_cb)(const char *name, int up,
+					   unsigned int active,
+					   uint64_t rx_bytes, uint64_t tx_bytes,
+					   void *arg);
+typedef void (*l2tp_switch_targets_foreach_fn)(l2tp_switch_target_stat_cb, void *);
+
+static struct {
+	proto_stat_fn active;
+	l2tp_switch_bytes_fn lns_rx_bytes;
+	l2tp_switch_bytes_fn lns_tx_bytes;
+} l2tp_switch_stat;
+
+static l2tp_switch_targets_foreach_fn l2tp_switch_targets_foreach;
+
+static int l2tp_switch_stat_resolve(void)
+{
+	if (!triton_module_loaded("l2tp"))
+		return 0;
+	if (!l2tp_switch_stat.active)
+		l2tp_switch_stat.active = (proto_stat_fn)(uintptr_t)
+			dlsym(RTLD_DEFAULT, "l2tp_switch_stat_active");
+	if (!l2tp_switch_stat.lns_rx_bytes)
+		l2tp_switch_stat.lns_rx_bytes = (l2tp_switch_bytes_fn)(uintptr_t)
+			dlsym(RTLD_DEFAULT, "l2tp_switch_stat_lns_rx_bytes");
+	if (!l2tp_switch_stat.lns_tx_bytes)
+		l2tp_switch_stat.lns_tx_bytes = (l2tp_switch_bytes_fn)(uintptr_t)
+			dlsym(RTLD_DEFAULT, "l2tp_switch_stat_lns_tx_bytes");
+	return l2tp_switch_stat.active && l2tp_switch_stat.lns_rx_bytes
+	    && l2tp_switch_stat.lns_tx_bytes;
+}
+
+static int l2tp_switch_targets_resolve(void)
+{
+	if (!triton_module_loaded("l2tp"))
+		return 0;
+	if (!l2tp_switch_targets_foreach)
+		l2tp_switch_targets_foreach = (l2tp_switch_targets_foreach_fn)(uintptr_t)
+			dlsym(RTLD_DEFAULT, "l2tp_switch_stat_targets_foreach");
+	return l2tp_switch_targets_foreach != NULL;
+}
+
 enum metrics_format {
 	METRICS_FORMAT_PROMETHEUS,
 	METRICS_FORMAT_JSON,
@@ -508,6 +556,19 @@ static void emit_prom_gauge(struct strbuf *sb, const char *name,
 	strbuf_appendf(sb, "%s %llu\n", name, value);
 }
 
+static void emit_prom_target_stat(const char *name, int up, unsigned int active,
+				  uint64_t rx_bytes, uint64_t tx_bytes, void *arg)
+{
+	struct strbuf *sb = arg;
+
+	strbuf_appendf(sb, "accel_ppp_l2tp_switch_target_up{target=\"%s\"} %d\n", name, up);
+	strbuf_appendf(sb, "accel_ppp_l2tp_switch_target_active{target=\"%s\"} %u\n", name, active);
+	strbuf_appendf(sb, "accel_ppp_l2tp_switch_target_bytes_total{target=\"%s\",direction=\"rx\"} %" PRIu64 "\n",
+		       name, rx_bytes);
+	strbuf_appendf(sb, "accel_ppp_l2tp_switch_target_bytes_total{target=\"%s\",direction=\"tx\"} %" PRIu64 "\n",
+		       name, tx_bytes);
+}
+
 static const char *session_state_name(int state)
 {
 	switch (state) {
@@ -658,6 +719,31 @@ static void render_prometheus(struct strbuf *sb)
 		strbuf_appendf(sb, "accel_ppp_protocol_sessions{protocol=\"%s\",state=\"active\"} %u\n",
 			       p->module, p->active());
 	}
+
+	if (l2tp_switch_stat_resolve()) {
+		emit_prom_gauge(sb, "accel_ppp_l2tp_switch_active",
+				"Currently bridged L2TP switch calls",
+				l2tp_switch_stat.active());
+		strbuf_appendf(sb, "# HELP accel_ppp_l2tp_switch_lns_bytes_total"
+				   " Bytes spliced to/from MK, aggregated across all targets\n");
+		strbuf_appendf(sb, "# TYPE accel_ppp_l2tp_switch_lns_bytes_total counter\n");
+		strbuf_appendf(sb, "accel_ppp_l2tp_switch_lns_bytes_total{direction=\"rx\"} %" PRIu64 "\n",
+			       l2tp_switch_stat.lns_rx_bytes());
+		strbuf_appendf(sb, "accel_ppp_l2tp_switch_lns_bytes_total{direction=\"tx\"} %" PRIu64 "\n",
+			       l2tp_switch_stat.lns_tx_bytes());
+	}
+	if (l2tp_switch_targets_resolve()) {
+		strbuf_appendf(sb, "# HELP accel_ppp_l2tp_switch_target_up"
+				   " Whether a switch target's downstream tunnel is up\n");
+		strbuf_appendf(sb, "# TYPE accel_ppp_l2tp_switch_target_up gauge\n");
+		strbuf_appendf(sb, "# HELP accel_ppp_l2tp_switch_target_active"
+				   " Currently bridged calls for a switch target\n");
+		strbuf_appendf(sb, "# TYPE accel_ppp_l2tp_switch_target_active gauge\n");
+		strbuf_appendf(sb, "# HELP accel_ppp_l2tp_switch_target_bytes_total"
+				   " Bytes spliced to/from a switch target's downstream LNS\n");
+		strbuf_appendf(sb, "# TYPE accel_ppp_l2tp_switch_target_bytes_total counter\n");
+		l2tp_switch_targets_foreach(emit_prom_target_stat, sb);
+	}
 }
 
 /* Length of the well formed UTF-8 sequence starting at s, 0 if the bytes
@@ -767,6 +853,30 @@ static void emit_json_proto(struct strbuf *sb, const char *name, int *first,
 	*first = 0;
 	strbuf_appendf(sb, "\"%s\":{\"starting\":%u,\"active\":%u}",
 		       name, starting, active);
+}
+
+/* l2tp_switch_target_stat_cb only carries one void *arg, but the per-target
+ * JSON callback needs both the output buffer and a running "have I emitted
+ * one yet" flag for the leading-comma convention emit_json_proto uses above
+ * -- bundle both here rather than smuggling two things through a bare
+ * pointer. */
+struct json_target_ctx {
+	struct strbuf *sb;
+	int first;
+};
+
+static void emit_json_target_stat(const char *name, int up, unsigned int active,
+				  uint64_t rx_bytes, uint64_t tx_bytes, void *arg)
+{
+	struct json_target_ctx *ctx = arg;
+
+	if (!ctx->first)
+		strbuf_appendf(ctx->sb, ",");
+	ctx->first = 0;
+
+	strbuf_appendf(ctx->sb, "\"%s\":{\"up\":%s,\"active\":%u,"
+			       "\"rx_bytes\":%" PRIu64 ",\"tx_bytes\":%" PRIu64 "}",
+		       name, up ? "true" : "false", active, rx_bytes, tx_bytes);
 }
 
 static void append_json_field(struct strbuf *sb, int *first, const char *name,
@@ -883,6 +993,24 @@ static void render_json(struct strbuf *sb)
 		emit_json_proto(sb, p->module, &first, p->starting(), p->active());
 	}
 	strbuf_appendf(sb, "}");
+
+	if (l2tp_switch_stat_resolve()) {
+		strbuf_appendf(sb, ",\"l2tp_switch\":{\"active\":%u,"
+				   "\"lns_rx_bytes\":%" PRIu64 ","
+				   "\"lns_tx_bytes\":%" PRIu64,
+			      l2tp_switch_stat.active(),
+			      l2tp_switch_stat.lns_rx_bytes(),
+			      l2tp_switch_stat.lns_tx_bytes());
+		if (l2tp_switch_targets_resolve()) {
+			struct json_target_ctx ctx = { .sb = sb, .first = 1 };
+
+			strbuf_appendf(sb, ",\"targets\":{");
+			l2tp_switch_targets_foreach(emit_json_target_stat, &ctx);
+			strbuf_appendf(sb, "}");
+		}
+		strbuf_appendf(sb, "}");
+	}
+
 	if (conf_sessions)
 		render_json_sessions(sb);
 

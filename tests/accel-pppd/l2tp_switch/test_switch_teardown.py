@@ -27,7 +27,7 @@ def test_downstream_drop_tears_down_upstream(pytestconfig, accel_cmd, accel_pppd
 
         try:
             for _ in range(50):
-                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch show"])
                 if "[up]" in out:
                     break
                 time.sleep(0.1)
@@ -50,7 +50,7 @@ def test_downstream_drop_tears_down_upstream(pytestconfig, accel_cmd, accel_pppd
 
             active = None
             for _ in range(50):
-                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch show"])
                 if "active: 1" in out:
                     active = 1
                     break
@@ -67,7 +67,7 @@ def test_downstream_drop_tears_down_upstream(pytestconfig, accel_cmd, accel_pppd
 
             active = None
             for _ in range(50):
-                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch show"])
                 assert exit == 0
                 if "active: 0" in out:
                     active = 0

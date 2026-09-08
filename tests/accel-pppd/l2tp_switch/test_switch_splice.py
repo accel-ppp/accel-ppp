@@ -30,7 +30,7 @@ def test_switch_splices_data_plane(pytestconfig, accel_cmd, accel_pppd):
 
         try:
             for _ in range(50):
-                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch show"])
                 if "[up]" in out:
                     break
                 time.sleep(0.1)

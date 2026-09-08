@@ -27,7 +27,7 @@ def test_switch_forwards_proxy_avps(pytestconfig, accel_cmd, accel_pppd):
 
         try:
             for _ in range(50):
-                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch show"])
                 if "[up]" in out:
                     break
                 time.sleep(0.1)
@@ -49,7 +49,7 @@ def test_switch_forwards_proxy_avps(pytestconfig, accel_cmd, accel_pppd):
 
             # the assertion lives on the switch instance itself: it placed
             # exactly one downstream call carrying the proxy AVPs
-            (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+            (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch show"])
             assert exit == 0
             assert "placed: 1" in out
         finally:

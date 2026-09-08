@@ -66,7 +66,7 @@ def test_switch_tunnel_comes_up(pytestconfig, accel_cmd, accel_pppd):
         try:
             up = False
             for _ in range(50):
-                (exit, out, err) = process.run([accel_cmd, "l2tp switch"])
+                (exit, out, err) = process.run([accel_cmd, "l2tp switch show"])
                 assert exit == 0
                 if "downstream -> 127.0.0.1:12345 [up]" in out:
                     up = True

@@ -28,7 +28,7 @@ def test_switch_tags_matching_call(pytestconfig, accel_cmd, accel_pppd):
         try:
             # wait for the persistent downstream tunnel (Task 3)
             for _ in range(50):
-                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+                (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch show"])
                 if "[up]" in out:
                     break
                 time.sleep(0.1)
@@ -47,7 +47,7 @@ def test_switch_tags_matching_call(pytestconfig, accel_cmd, accel_pppd):
             assert rc == 0, err
 
             # the switch instance's own accel-cmd should show one pending/switched call
-            (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch"])
+            (exit, out, err) = process.run([accel_cmd, "-p", "2001", "l2tp switch show"])
             assert "matched: 1" in out
         finally:
             accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=2001)
