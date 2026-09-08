@@ -11,27 +11,43 @@ touched for a switched call.
 
 ```
 [l2tp-switch]
-attr=Calling-Number
 target=<name>,<peer-addr>,<peer-port>,<secret>
-line=<value>,<target-name>
+match=<attr-name>,<mode>,<value>,<target-name>
 ```
 
-- `attr=<name>` — which L2TP AVP identifies a line, by its name in this
-  build's AVP dictionary (`Calling-Number`, `Called-Number`, `Sub-Address`,
-  ...). Must be a string-typed AVP. Defaults to `Calling-Number`.
 - `target=<name>,<peer-addr>,<peer-port>,<secret>` — a downstream LNS.
   Repeatable. accel-ppp brings up one persistent outbound tunnel per
   target at startup and reconnects automatically if it drops.
-- `line=<value>,<target-name>` — routes one `attr=`-identified line to one
-  target. Repeatable; several lines may point at the same target. A value
-  must not appear in more than one `line=` entry.
+- `match=<attr-name>,<mode>,<value>,<target-name>` — routes calls to one
+  target based on the value of one L2TP AVP. Repeatable; several rules
+  may point at the same target.
+  - `<attr-name>` — the AVP to match against, by its name in this
+    build's AVP dictionary (`Calling-Number`, `Called-Number`,
+    `Sub-Address`, `Proxy-Authen-Name`, ...). Must be a string-typed
+    AVP.
+  - `<mode>` — `exact` (the AVP's value must equal `<value>` exactly)
+    or `prefix` (the AVP's value must start with `<value>`; useful for
+    routing on a realm/prefix baked into a proxied username, e.g.
+    `Proxy-Authen-Name,prefix,downstream-,downstream` matches any
+    username starting with `downstream-`). Matching is case-sensitive.
+  - Rules are checked whenever the named AVP is available: Calling-Number
+    and Called-Number arrive in the incoming call's ICRQ, so those rules
+    are evaluated at ICRQ time; Proxy-Authen-Name only arrives in ICCN,
+    so rules on it are evaluated then instead — after any ICRQ-time
+    match has already had a chance to apply. A call already assigned a
+    target by an ICRQ-time rule is not re-evaluated at ICCN time.
+  - Two rules on the same AVP must not overlap: the same `<value>` must
+    not appear twice, and no rule's value may be a prefix of (or
+    prefixed by) another rule's value — either would make the outcome
+    ambiguous for at least one possible call. Config load fails fast on
+    any such overlap.
 
 ## Runtime management
 
 ```
-l2tp switch show                    # list targets, tunnel status, active calls
-l2tp switch add <value> <target>    # route a line to a target without a restart
-l2tp switch del <value>             # stop routing a line
+l2tp switch show                                    # list targets, tunnel status, active calls
+l2tp switch add <attr-name> <mode> <value> <target>  # add a match rule without a restart
+l2tp switch del <attr-name> <mode> <value>           # remove a match rule
 ```
 
 `target=` definitions are base-config only; changing a target's
