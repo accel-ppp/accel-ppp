@@ -15,6 +15,11 @@
  * that exercises packet.c's parser directly rather than over a socket,
  * and whose stub-dictionary approach this file copies (real dict.c is
  * not linked here either -- see the note above this listing).
+ *
+ * --real-ppp swaps the usual --data-pattern raw-byte probe for a real
+ * pppd, handed the bearer socket the same way xl2tpd hands it to its own
+ * LAC-side pppd -- see run_real_ppp()'s own comment. Requires an
+ * /etc/ppp/pap-secrets entry for --proxy-username beforehand.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +33,10 @@
 #include <netinet/in.h>
 #include <linux/if_pppox.h>
 #include <time.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
 
 #include "triton.h"
 #include "log.h"
@@ -184,14 +193,166 @@ static const char *proxy_password;
 static const char *data_pattern;
 static int send_stopccn;
 static int wait_cdn;
+static int real_ppp;
 static const char *second_call_number;
-static uint16_t local_tid = 0x1234;
-static uint16_t local_sid = 0x5678;
+/* Randomized per-process rather than fixed: the kernel's L2TP core keys
+ * tunnels by tunnel_id alone (global per network namespace), not per
+ * socket/fd -- two concurrent invocations of this harness both pointed at
+ * the same switch endpoint (e.g. a multi-target concurrency test) would
+ * otherwise collide in-kernel on a shared fixed tid, one failing its data
+ * socket connect() with no L2TP-level explanation at all. Confirmed on a
+ * real two-target run: one leg got exactly that failure until this became
+ * randomized. */
+static uint16_t local_tid;
+static uint16_t local_sid;
 
 static int die(const char *msg)
 {
 	log_error("%s\n", msg);
 	return 1;
+}
+
+/* Spawns a real pppd, handed the already-connected pppol2tp data socket by
+ * fd number -- exactly how xl2tpd hands its own LAC-side pppd the bearer
+ * (confirmed against a real xl2tpd invocation: "pppd plugin pppol2tp.so
+ * pppol2tp <fd> passive nodetach ..."). Unlike xl2tpd, this harness is the
+ * one constructing the ICRQ/ICCN, so it can actually set Calling-Number and
+ * Proxy-Authen-Name/Response, then let this pppd perform genuine LCP/PAP
+ * negotiation over the same bearer -- xl2tpd can never exercise this
+ * feature's matching at all because it never fills in those AVPs itself.
+ *
+ * "passive" is deliberately omitted: that flag means "wait for the peer to
+ * speak first", appropriate for xl2tpd's LNS-facing pppd. This harness
+ * plays the calling side, so its pppd must initiate LCP itself, exactly
+ * like a real subscriber's client would.
+ *
+ * Requires /etc/ppp/pap-secrets to already contain a "<proxy_username> * ..."
+ * entry -- pppd's PAP secret lookup path is not configurable via the
+ * command line, so the caller (a test fixture or the operator) must have
+ * written it there beforehand.
+ *
+ * Returns 0 and prints "ppp_ip_up: 1" plus the negotiated local/remote IPs
+ * if IPCP actually completed (proof of a genuine, working PPP session all
+ * the way to the far end); returns 0 and prints "ppp_ip_up: 0" if pppd ran
+ * but never reached that point (auth rejected, LNS refused, etc. -- not a
+ * harness failure, just a negative result to report); returns non-zero only
+ * for a harness-side problem (fork/exec/pipe failure). */
+static int run_real_ppp(int data_fd)
+{
+	int outpipe[2];
+	pid_t pid;
+	char buf[8192];
+	size_t used = 0;
+	int ip_up = 0;
+	time_t deadline;
+
+	if (pipe(outpipe) < 0)
+		return die("pipe() failed");
+
+	pid = fork();
+	if (pid < 0)
+		return die("fork() failed");
+
+	if (pid == 0) {
+		char fdbuf[16];
+		int flags;
+
+		snprintf(fdbuf, sizeof(fdbuf), "%d", data_fd);
+
+		dup2(outpipe[1], STDOUT_FILENO);
+		dup2(outpipe[1], STDERR_FILENO);
+		close(outpipe[0]);
+		close(outpipe[1]);
+
+		/* pppd's pppol2tp plugin takes the fd by number and expects
+		 * to find it still open post-exec. */
+		flags = fcntl(data_fd, F_GETFD);
+		if (flags >= 0)
+			fcntl(data_fd, F_SETFD, flags & ~FD_CLOEXEC);
+
+		{
+			char *child_argv[] = {
+				"/usr/sbin/pppd",
+				"plugin", "pppol2tp.so",
+				"pppol2tp", fdbuf,
+				"nodetach",
+				"noauth",
+				"debug",
+				"novj", "novjccomp",
+				"lcp-echo-interval", "0",
+				"user", (char *)proxy_username,
+				NULL,
+			};
+			execv(child_argv[0], child_argv);
+		}
+		_exit(127);
+	}
+
+	close(outpipe[1]);
+
+	/* Bounded wait: real LCP/PAP/IPCP over a live path takes a few
+	 * seconds; this is not meant to hang a soak run if the far end
+	 * never responds. */
+	deadline = time(NULL) + 20;
+	while (time(NULL) < deadline && used < sizeof(buf) - 1) {
+		struct pollfd pfd = { .fd = outpipe[0], .events = POLLIN };
+		int remaining_ms = (int)((deadline - time(NULL)) * 1000);
+		ssize_t n;
+
+		if (remaining_ms <= 0)
+			break;
+		if (poll(&pfd, 1, remaining_ms) <= 0)
+			break;
+		n = read(outpipe[0], buf + used, sizeof(buf) - 1 - used);
+		if (n <= 0)
+			break;
+		used += (size_t)n;
+		buf[used] = '\0';
+		if (strstr(buf, "local  IP address") ||
+		    strstr(buf, "local IP address")) {
+			ip_up = 1;
+			/* Keep draining a little longer so "remote IP
+			 * address" (printed right after) makes it into the
+			 * captured log too, but don't wait for full EOF --
+			 * a long-lived session (soak mode) never closes the
+			 * pipe on its own. */
+			usleep(300000);
+			struct pollfd pfd2 = { .fd = outpipe[0], .events = POLLIN };
+			if (poll(&pfd2, 1, 500) > 0) {
+				n = read(outpipe[0], buf + used,
+					sizeof(buf) - 1 - used);
+				if (n > 0) {
+					used += (size_t)n;
+					buf[used] = '\0';
+				}
+			}
+			break;
+		}
+	}
+
+	kill(pid, SIGTERM);
+	{
+		int waited_ms = 0;
+
+		while (waited_ms < 2000) {
+			int status;
+			pid_t r = waitpid(pid, &status, WNOHANG);
+
+			if (r == pid)
+				break;
+			usleep(100000);
+			waited_ms += 100;
+		}
+		if (waitpid(pid, NULL, WNOHANG) != pid)
+			kill(pid, SIGKILL);
+		waitpid(pid, NULL, 0);
+	}
+	close(outpipe[0]);
+
+	fputs(buf, stderr);
+	printf("ppp_ip_up: %d\n", ip_up);
+
+	return 0;
 }
 
 static int send_and_recv(int fd, struct l2tp_packet_t *pack,
@@ -246,13 +407,24 @@ int main(int argc, char **argv)
 		{"send-stopccn", no_argument, 0, 'x'},
 		{"wait-cdn", no_argument, 0, 'W'},
 		{"second-call", required_argument, 0, 'S'},
+		{"real-ppp", no_argument, 0, 'R'},
 		{0, 0, 0, 0},
 	};
 
 	peer_addr.sin_family = AF_INET;
 	peer_addr.sin_port = htons(1701);
 
-	while ((opt = getopt_long(argc, argv, "a:p:s:c:n:u:w:d:xWS:", opts, NULL)) != -1) {
+	{
+		unsigned seed = (unsigned)getpid() ^ (unsigned)time(NULL);
+
+		srandom(seed);
+		/* Keep both well clear of 0 (used as a "not yet assigned"
+		 * sentinel elsewhere in this file) and of each other. */
+		local_tid = 1024 + (uint16_t)(random() % 60000);
+		local_sid = 1024 + (uint16_t)(random() % 60000);
+	}
+
+	while ((opt = getopt_long(argc, argv, "a:p:s:c:n:u:w:d:xWS:R", opts, NULL)) != -1) {
 		switch (opt) {
 		case 'a':
 			if (inet_aton(optarg, &peer_addr.sin_addr) == 0)
@@ -288,13 +460,17 @@ int main(int argc, char **argv)
 		case 'S':
 			second_call_number = optarg;
 			break;
+		case 'R':
+			real_ppp = 1;
+			break;
 		default:
 			return die("usage: --peer-addr A --peer-port P"
 				   " --secret S [--calling-number C]"
 				   " [--called-number N]"
 				   " [--proxy-username U] [--proxy-password W]"
 				   " [--data-pattern D] [--send-stopccn]"
-				   " [--wait-cdn] [--second-call C]");
+				   " [--wait-cdn] [--second-call C]"
+				   " [--real-ppp]");
 		}
 	}
 
@@ -449,7 +625,10 @@ int main(int argc, char **argv)
 	l2tp_packet_free(pack);
 	my_ns++;
 
-	if (data_pattern) {
+	if (real_ppp && (!proxy_username || !proxy_password))
+		return die("--real-ppp requires --proxy-username and --proxy-password");
+
+	if (data_pattern || real_ppp) {
 		struct sockaddr_pppol2tp pppox_addr;
 		int data_fd, reg_fd, lns_mode = 0;
 
@@ -525,20 +704,26 @@ int main(int argc, char **argv)
 			      &lns_mode, sizeof(lns_mode)) < 0)
 			return die("data socket setsockopt(LNSMODE) failed");
 
-		{
+		if (real_ppp) {
+			/* run_real_ppp() takes ownership of data_fd -- it is
+			 * inherited by the pppd child and closed by the
+			 * parent right after fork(). */
+			if (run_real_ppp(data_fd) != 0)
+				return 1;
+		} else {
 			ssize_t n = write(data_fd, data_pattern, strlen(data_pattern));
 
 			if (n < 0)
 				return die("data socket write() failed");
+
+			close(data_fd);
+
+			/* Give the kernel a moment to finish encapsulating and
+			 * emitting the queued datagram before the process (and
+			 * so `fd`, the UDP socket the tunnel/session are keyed
+			 * to) exits and tears down the underlying socket. */
+			usleep(200000);
 		}
-
-		close(data_fd);
-
-		/* Give the kernel a moment to finish encapsulating and
-		 * emitting the queued datagram before the process (and so
-		 * `fd`, the UDP socket the tunnel/session are keyed to)
-		 * exits and tears down the underlying socket. */
-		usleep(200000);
 	}
 
 	if (send_stopccn) {
