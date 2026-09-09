@@ -10,6 +10,10 @@
 #define min(x, y) ((x) < (y) ? (x) : (y))
 #endif
 
+#ifndef max
+#define max(x, y) ((x) > (y) ? (x) : (y))
+#endif
+
 /*
  * Fixed-size memcpy() lets the compiler emit efficient unaligned accesses on
  * architectures that support them without imposing alignment or aliasing
