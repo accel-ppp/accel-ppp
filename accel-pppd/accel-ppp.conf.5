@@ -980,6 +980,50 @@ Specifies the name of the IPv6 pool to use for allocating client addresses.
 .TP
 .BI "ipv6-pool-delegate=" pool_name
 Specifies the name of the IPv6 prefix delegation pool to use.
+.SH [l2tp-switch]
+.br
+Configuration of the L2TP switch feature (RFC 2661 section 5.1): for a
+configured subset of incoming L2TP calls, relay the Proxy LCP/Auth AVPs and
+PPP frames to a second, downstream L2TP LNS instead of terminating PPP and
+RADIUS locally.
+.TP
+.BI "target=" name,peer-addr,peer-port,secret
+Defines a downstream LNS. Repeatable. accel-ppp brings up one persistent
+outbound tunnel per target at startup and reconnects automatically if it
+drops.
+.TP
+.BI "match=" attr-name,mode,value,target-name
+Routes calls to one target based on the value of one L2TP AVP. Repeatable;
+several rules may point at the same target.
+.br
+.B attr-name
+is the AVP to match against, by its name in this build's AVP dictionary
+(Calling-Number, Called-Number, Proxy-Authen-Name, ...); it must be a
+string-typed AVP.
+.br
+.B mode
+is
+.B exact
+(the AVP's value must equal
+.B value
+exactly) or
+.B prefix
+(the AVP's value must start with
+.BR value ", case-sensitively; useful for routing on a realm baked into a"
+proxied username).
+.br
+Calling-Number and Called-Number rules are evaluated when the incoming
+call's ICRQ is received; Proxy-Authen-Name rules are evaluated at ICCN
+time instead, since that AVP only arrives then. A call already assigned a
+target by an ICRQ-time rule is not re-evaluated at ICCN time.
+.br
+Two rules on the same AVP must not overlap (the same
+.B value
+twice, or one rule's value a prefix of another's) -- config load fails on
+any such overlap.
+.br
+See docs/l2tp_switching.md for CLI management (\fBl2tp switch show|add|del\fR),
+observability, and operational constraints.
 .SH [sstp]
 .br
 Configuration of SSTP module.

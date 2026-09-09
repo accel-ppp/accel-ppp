@@ -11,6 +11,7 @@
 
 ### Features
 - New `metrics` module: HTTP endpoint exposing the same numbers as `accel-cmd show stat` at `/metrics`, in either Prometheus exposition or JSON format. Configurable listen address and optional IPv4 CIDR allow-list.
+- L2TP: switch mode (RFC 2661 section 5.1) -- relay a configured subset of incoming calls to a downstream LNS instead of terminating PPP/RADIUS locally, selecting the target per call by Calling-Number, Called-Number, or a realm/prefix in the proxied username (`[l2tp-switch]`, `l2tp switch show|add|del`). See docs/l2tp_switching.md.
 
 ## 1.14.0 - 2026-01-24
 

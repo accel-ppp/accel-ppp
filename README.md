@@ -15,6 +15,10 @@ Features
 * Modular architecture and a multi-threaded I/O core
 * PPTP, PPPoE (including TR-101), L2TPv2, SSTP, and IPoE. ACCEL-PPP does not
   provide integrated IPsec for L2TPv2; deploy IPsec separately when required.
+* L2TP switching: relay a configured subset of incoming L2TPv2 calls to a
+  downstream LNS instead of terminating PPP/RADIUS locally, selecting the
+  target per call by Calling-Number, Called-Number, or a realm/prefix in the
+  proxied username
 * RADIUS authentication and accounting, including Disconnect Messages and
   Change of Authorization (DM/CoA)
 * PAP, CHAP-MD5, MS-CHAPv1, and MS-CHAPv2 authentication
@@ -103,6 +107,27 @@ consulted in module registration order.
 
 For DM/CoA deployments, configure dae-allowed in the [radius] section to
 restrict permitted source addresses.
+
+
+L2TP switching
+==============
+
+For a configured subset of incoming L2TPv2 calls, accel-ppp can relay the
+Proxy LCP/Auth AVPs and PPP frames to a second, downstream LNS instead of
+terminating PPP and RADIUS locally (RFC 2661 section 5.1). Enable l2tp in
+[modules] and add an [l2tp-switch] section:
+
+    [l2tp-switch]
+    target=acme,203.0.113.50,1701,targetsecret
+    match=Calling-Number,exact,472913,acme
+
+Targets are persistent, auto-reconnecting outbound tunnels; match rules route
+calls to a target by any string-typed AVP (Calling-Number, Called-Number, or
+a realm/prefix embedded in the proxied username), in exact or prefix mode.
+Manage rules at runtime with `l2tp switch show|add|del` over the CLI. See
+docs/l2tp_switching.md for the full configuration reference, observability
+(native Prometheus/JSON metrics), and operational constraints, and
+"man 5 accel-ppp.conf" for the [l2tp-switch] option reference.
 
 
 Built-in shaper
