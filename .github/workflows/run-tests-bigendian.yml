@@ -11,7 +11,7 @@ jobs:
 
   Test-in-Alpine-s390x:
     #if: ${{ false }} # disable for now
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     name: Test in Qemu (s390x Alpine)
 
     steps:
@@ -26,15 +26,7 @@ jobs:
           NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true
           sudo -E apt -y install wget openssh-client screen
           libglib2.0-dev libfdt-dev libpixman-1-dev zlib1g-dev libslirp-dev ninja-build
-      - name: Build Qemu 9.1.2
-        # Qemu 8.2 from Ubuntu24.04 has critical s390x-related bugs so Qemu9 is required
-        run: |
-          wget -nv https://github.com/qemu/qemu/archive/refs/tags/v9.1.2.tar.gz
-          tar -xf v9.1.2.tar.gz
-          cd qemu-9.1.2
-          ./configure --target-list=s390x-softmmu --enable-slirp
-          make -j
-          sudo make install
+          qemu-system-s390x qemu-utils qemu-system-data
       - name: Prepare qemu files
         run: |
           ssh-keygen -t ed25519 -q -N "" -f ssh-key
