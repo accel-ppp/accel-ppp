@@ -223,9 +223,15 @@ static int def_get_ifindex(const char *ifname)
 {
 	struct kern_net *n = container_of(net, typeof(*n), net);
 	struct ifreq ifr;
+	size_t len;
+
+	if (!ifname || (len = strnlen(ifname, IFNAMSIZ)) >= IFNAMSIZ) {
+		log_ppp_error("invalid interface name\n");
+		return -1;
+	}
 
 	memset(&ifr, 0, sizeof(ifr));
-	strcpy(ifr.ifr_name, ifname);
+	memcpy(ifr.ifr_name, ifname, len);
 
 	if (ioctl(n->sock, SIOCGIFINDEX, &ifr)) {
 		log_ppp_error("ioctl(SIOCGIFINDEX): %s\n", strerror(errno));

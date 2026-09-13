@@ -146,16 +146,16 @@ static void disconnect_request(struct radius_pd_t *rpd)
 }
 
 #ifdef HAVE_VRF
-int rad_update_vrf(struct radius_pd_t *rpd, const char *vrf_name)
+static int rad_update_vrf(struct radius_pd_t *rpd, const char *vrf_name, int len)
 {
-	if (*vrf_name == '0') {
+	if (len == 1 && *vrf_name == '0') {
 		// Delete interface from VRF
 		if (!ap_session_vrf(rpd->ses, NULL, 0))
 			return 1;
 	}
 	else {
 		// Add interface to VRF
-		if(!ap_session_vrf(rpd->ses, vrf_name, -1))
+		if(!ap_session_vrf(rpd->ses, vrf_name, len))
 			return 1;
 	}
 
@@ -215,7 +215,7 @@ static void coa_request(struct radius_pd_t *rpd)
 #ifdef HAVE_VRF
 		attr = rad_packet_find_attr(rpd->dm_coa_req, "Accel-PPP", "Accel-VRF-Name");
 		if (attr){
-			if(!rad_update_vrf(rpd, attr->val.string)){
+			if(!rad_update_vrf(rpd, attr->val.string, attr->len)){
 				goto out;
 			}
 		}

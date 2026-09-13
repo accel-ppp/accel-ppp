@@ -5,6 +5,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <assert.h>
+#include <openssl/md5.h>
+#include <openssl/crypto.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -16,6 +18,49 @@
 #include "memdebug.h"
 
 #define HMAC_MD5_LEN 16
+
+/* Keep the signing secret and authenticator with the packet across reloads. */
+static int rad_req_set_RA(struct rad_req_t *req)
+{
+	char *secret = rad_server_secret_dup(req->serv);
+	MD5_CTX ctx;
+
+	if (!secret)
+		return -1;
+
+	memset(req->RA, 0, sizeof(req->RA));
+	if (rad_packet_build(req->pack, req->RA)) {
+		_free(secret);
+		return -1;
+	}
+
+	MD5_Init(&ctx);
+	MD5_Update(&ctx, req->pack->buf, req->pack->len);
+	MD5_Update(&ctx, secret, strlen(secret));
+	MD5_Final(req->pack->buf + 4, &ctx);
+	memcpy(req->RA, req->pack->buf + 4, sizeof(req->RA));
+	_free(req->pack->secret);
+	req->pack->secret = (uint8_t *)secret;
+	return 0;
+}
+
+static int verify_response_authenticator(struct rad_req_t *req, struct rad_packet_t *pack)
+{
+	uint8_t expected[MD5_DIGEST_LENGTH];
+	MD5_CTX ctx;
+
+	if (!pack || !pack->buf || pack->len < 20 ||
+	    !req->pack->buf || !req->pack->secret)
+		return -1;
+
+	MD5_Init(&ctx);
+	MD5_Update(&ctx, pack->buf, 4);
+	MD5_Update(&ctx, req->pack->buf + 4, 16);
+	MD5_Update(&ctx, pack->buf + 20, pack->len - 20);
+	MD5_Update(&ctx, req->pack->secret, strlen((char *)req->pack->secret));
+	MD5_Final(expected, &ctx);
+	return CRYPTO_memcmp(expected, pack->buf + 4, sizeof(expected));
+}
 
 static int make_socket(struct rad_req_t *req);
 static mempool_t req_pool;
@@ -75,12 +120,15 @@ static struct rad_req_t *__rad_req_alloc(struct radius_pd_t *rpd, int code, cons
 	if (!req->pack)
 		goto out_err;
 
-	if (code == CODE_ACCESS_REQUEST && conf_blast_protection) {
-		uint8_t buf[HMAC_MD5_LEN] = {0};
-		req->pack->message_authenticator = 1;
+	if (code == CODE_ACCESS_REQUEST) {
 		req->pack->secret = (uint8_t *)rad_server_secret_dup(req->serv);
 		if (!req->pack->secret)
 			goto out_err;
+	}
+
+	if (code == CODE_ACCESS_REQUEST && conf_blast_protection) {
+		uint8_t buf[HMAC_MD5_LEN] = {0};
+		req->pack->message_authenticator = 1;
 		if (rad_packet_add_octets(req->pack, NULL, "Message-Authenticator", buf, HMAC_MD5_LEN)) {
 			_free(req->pack->secret);
 			req->pack->secret = NULL;
@@ -380,6 +428,10 @@ int __rad_req_send(struct rad_req_t *req, int async)
 	if (req->before_send && req->before_send(req))
 		goto out_err;
 
+	/* Re-sign accounting after server selection, including retries without delay-time. */
+	if (req->pack->code == CODE_ACCOUNTING_REQUEST && rad_req_set_RA(req))
+		goto out_err;
+
 	if (!req->pack->buf && rad_packet_build(req->pack, req->RA))
 		goto out_err;
 
@@ -461,12 +513,15 @@ int rad_req_read(struct triton_md_handler_t *h)
 		if (rad_packet_recv(h->fd, &pack, NULL))
 			return 0;
 
+		if (!pack)
+			return 0;
+		if (pack->id != req->pack->id || verify_response_authenticator(req, pack)) {
+			rad_packet_free(pack);
+			continue;
+		}
+
 		rad_server_reply(req->serv);
-
-		if (pack->id == req->pack->id)
-			break;
-
-		rad_packet_free(pack);
+		break;
 	}
 
 	req->reply = pack;
