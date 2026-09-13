@@ -2,6 +2,25 @@
 
 These tests are done for Ubuntu and Debian distros. Please use latest stable Debian or Ubuntu to run the tests.
 
+## Kernel module installation test
+
+The kernel module installation regression test is rootless and does not need
+kernel headers. It uses a fake kernel build tree to verify that `ipoe`,
+`vlan_mon`, and `ppposeq` are installed from their actual build directories,
+honor `DESTDIR`, and make installation fail when `modules_install` fails.
+
+Run it through CTest after configuring the project:
+
+```bash
+ctest --test-dir build --output-on-failure -R '^kernel-module-install$'
+```
+
+It can also be run directly from the repository root:
+
+```bash
+sh tests/kernel-module-install/test.sh cmake
+```
+
 ## Preparations
 
 Install pytest

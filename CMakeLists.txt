@@ -101,3 +101,14 @@ if (BUILD_VLAN_MON_DRIVER)
 endif ()
 
 CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
+
+include(CTest)
+
+if (BUILD_TESTING)
+	add_test(
+		NAME kernel-module-install
+		COMMAND sh
+			${CMAKE_CURRENT_SOURCE_DIR}/tests/kernel-module-install/test.sh
+			${CMAKE_COMMAND}
+	)
+endif ()
