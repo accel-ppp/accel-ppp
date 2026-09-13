@@ -16,6 +16,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - distro: Ubuntu-26.04
+            image: https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64v3.img
+            untar: false
+            format: qcow2
+
           - distro: Ubuntu-24.04
             image: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
             untar: false
@@ -33,11 +38,6 @@ jobs:
 
           - distro: Debian12
             image: https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.tar.xz
-            untar: true
-            format: raw
-
-          - distro: Debian11
-            image: https://cdimage.debian.org/images/cloud/bullseye/latest/debian-11-generic-amd64.tar.xz
             untar: true
             format: raw
 
