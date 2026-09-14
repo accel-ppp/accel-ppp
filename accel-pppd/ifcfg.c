@@ -79,7 +79,7 @@ void ap_session_ifup(struct ap_session *ses)
 	}
 }
 
-void __export ap_session_accounting_started(struct ap_session *ses)
+static void ap_session_set_interface(struct ap_session *ses)
 {
 	struct ipv6db_addr_t *a;
 	struct ifreq ifr;
@@ -87,16 +87,6 @@ void __export ap_session_accounting_started(struct ap_session *ses)
 	struct in6_ifreq ifr6;
 	struct npioctl np;
 	struct ppp_t *ppp;
-
-	if (ses->stop_time)
-		return;
-
-	if (--ses->acct_start)
-		return;
-
-	triton_event_fire(EV_SES_PRE_UP, ses);
-	if (ses->stop_time)
-		return;
 
 	memset(&ifr, 0, sizeof(ifr));
 	strcpy(ifr.ifr_name, ses->ifname);
@@ -188,6 +178,23 @@ void __export ap_session_accounting_started(struct ap_session *ses)
 		}
 #endif
 	}
+}
+
+void __export ap_session_accounting_started(struct ap_session *ses)
+{
+
+	if (ses->stop_time)
+		return;
+
+	if (--ses->acct_start)
+		return;
+
+	triton_event_fire(EV_SES_PRE_UP, ses);
+	if (ses->stop_time)
+		return;
+
+	if (strlen(ses->ifname))
+		ap_session_set_interface(ses);
 
 	ses->ctrl->started(ses);
 
@@ -349,6 +356,16 @@ int __export ap_session_rename(struct ap_session *ses, const char *ifname, int l
 #ifdef HAVE_VRF
 int __export ap_session_vrf(struct ap_session *ses, const char *vrf_name, int len)
 {
+	if (ses->ifindex < 1) {
+		/* no accel-ppp interface */
+
+		if (!len) {
+			_free(ses->vrf_name);
+			ses->vrf_name = NULL;
+		}
+		return 0;
+	}
+
 	if (len == -1)
 		len = strlen(vrf_name);
 
