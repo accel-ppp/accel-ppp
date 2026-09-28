@@ -634,7 +634,10 @@ static void lcp_recv_echo_repl(struct ppp_lcp_t *lcp, uint8_t *data, int size)
 static void send_echo_reply(struct ppp_lcp_t *lcp)
 {
 	struct lcp_hdr_t *hdr = (struct lcp_hdr_t*)lcp->ppp->buf;
-	//uint32_t magic = *(uint32_t *)(hdr + 1);
+	uint16_t len = ntohs(hdr->len);
+
+	if (len > lcp->ppp->mtu)
+		return;
 
 	lcp->echo_sent = 0;
 	lcp->last_echo_ts = _time();
@@ -646,7 +649,7 @@ static void send_echo_reply(struct ppp_lcp_t *lcp)
 	if (conf_ppp_verbose)
 		log_ppp_debug("send [LCP EchoRep id=%x <magic %08x>]\n", hdr->id, lcp->magic);
 
-	ppp_chan_send(lcp->ppp, hdr, min(ntohs(hdr->len), lcp->ppp->mtu) + 2);
+	ppp_chan_send(lcp->ppp, hdr, len + 2);
 }
 
 static void send_echo_request(struct triton_timer_t *t)

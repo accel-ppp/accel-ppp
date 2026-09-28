@@ -349,12 +349,21 @@ int __export ap_session_rename(struct ap_session *ses, const char *ifname, int l
 #ifdef HAVE_VRF
 int __export ap_session_vrf(struct ap_session *ses, const char *vrf_name, int len)
 {
-	if (len == -1)
-		len = strlen(vrf_name);
-
 	int vrf_ifindex = 0;
+	char name[IFNAMSIZ];
+
+	if (len == -1)
+		len = vrf_name ? strnlen(vrf_name, IFNAMSIZ) : 0;
+	if (len < 0 || len >= IFNAMSIZ || (len && !vrf_name) ||
+	    (len && memchr(vrf_name, 0, len))) {
+		log_ppp_error("invalid vrf name\n");
+		return -1;
+	}
 
 	if (len) {
+		memcpy(name, vrf_name, len);
+		name[len] = 0;
+		vrf_name = name;
 		vrf_ifindex = ses->net->get_ifindex(vrf_name);
 		if (vrf_ifindex < 0) {
 			log_ppp_error("vrf '%s' not found\n", vrf_name);

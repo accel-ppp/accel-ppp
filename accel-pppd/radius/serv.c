@@ -11,7 +11,6 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include <openssl/md5.h>
 
 #include "log.h"
 #include "triton.h"
@@ -315,9 +314,18 @@ void rad_server_req_exit(struct rad_req_t *req)
 int rad_server_realloc(struct rad_req_t *req)
 {
 	struct rad_server_t *s = __rad_server_get(req->type, req->serv, 0, 0);
+	char *secret;
 
 	if (!s)
 		return -1;
+
+	secret = rad_server_secret_dup(s);
+	if (!secret) {
+		rad_server_put(s, req->type);
+		return -1;
+	}
+	_free(req->pack->secret);
+	req->pack->secret = (uint8_t *)secret;
 
 	if (req->serv)
 		rad_server_put(req->serv, req->type);
@@ -449,30 +457,6 @@ void rad_server_stat_interim_query(struct rad_server_t *s, unsigned int dt)
 	stat_accm_add(s->stat.interim_query_5m, dt);
 }
 
-static int req_set_RA(struct rad_req_t *req)
-{
-	char *secret;
-	MD5_CTX ctx;
-
-	secret = rad_server_secret_dup(req->serv);
-	if (!secret)
-		return -1;
-
-	if (rad_packet_build(req->pack, req->RA)) {
-		_free(secret);
-		return -1;
-	}
-
-	MD5_Init(&ctx);
-	MD5_Update(&ctx, req->pack->buf, req->pack->len);
-	MD5_Update(&ctx, secret, strlen(secret));
-	MD5_Final(req->pack->buf + 4, &ctx);
-
-	_free(secret);
-
-	return 0;
-}
-
 static void acct_on_sent(struct rad_req_t *req, int res)
 {
 	if (!res && !req->hnd.tpd) {
@@ -556,10 +540,8 @@ static void send_acct_on(struct rad_server_t *s)
 		if (rad_packet_add_ipaddr(req->pack, NULL, "NAS-IP-Address", conf_nas_ip_address))
 			goto out_err;
 
-	if (req_set_RA(req))
+	if (__rad_req_send(req, 0))
 		goto out_err;
-
-	__rad_req_send(req, 0);
 
 	triton_timer_add(&s->ctx, &req->timeout, 0);
 

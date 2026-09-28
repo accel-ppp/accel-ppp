@@ -545,9 +545,16 @@ int rad_proc_attrs(struct rad_req_t *req)
 			} else if (attr->vendor->id == VENDOR_Accel_PPP) {
 				switch (attr->attr->id) {
 					case Accel_VRF_Name:
+						if (attr->len < 0 || attr->len >= IFNAMSIZ ||
+						    memchr(attr->val.string, 0, attr->len)) {
+							log_ppp_warn("radius: invalid Accel-VRF-Name, rejecting Access-Accept\n");
+							return -1;
+						}
 						if (rpd->ses->vrf_name)
 							_free(rpd->ses->vrf_name);
 						rpd->ses->vrf_name = _malloc(attr->len + 1);
+						if (!rpd->ses->vrf_name)
+							return -1;
 						memcpy(rpd->ses->vrf_name, attr->val.string, attr->len);
 						rpd->ses->vrf_name[attr->len] = 0;
 						break;

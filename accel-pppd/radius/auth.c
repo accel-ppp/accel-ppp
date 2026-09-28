@@ -22,7 +22,7 @@ static int decrypt_chap_mppe_keys(struct rad_req_t *req, struct rad_attr_t *attr
 	uint8_t md5[MD5_DIGEST_LENGTH];
 	uint8_t sha1[SHA_DIGEST_LENGTH];
 	uint8_t plain[32];
-	char *secret;
+	const char *secret;
 	int i;
 
 	if (attr->len != 32) {
@@ -30,7 +30,7 @@ static int decrypt_chap_mppe_keys(struct rad_req_t *req, struct rad_attr_t *attr
 		return -1;
 	}
 
-	secret = rad_server_secret_dup(req->serv);
+	secret = (const char *)req->pack->secret;
 	if (!secret)
 		return -1;
 
@@ -59,7 +59,6 @@ static int decrypt_chap_mppe_keys(struct rad_req_t *req, struct rad_attr_t *attr
 	SHA1_Final(sha1, &sha1_ctx);
 
 	memcpy(key, sha1, 16);
-	_free(secret);
 
 	return 0;
 }
@@ -69,7 +68,7 @@ static int decrypt_mppe_key(struct rad_req_t *req, struct rad_attr_t *attr, uint
 	MD5_CTX md5_ctx;
 	uint8_t md5[16];
 	uint8_t plain[32];
-	char *secret;
+	const char *secret;
 	int i;
 
 	if (attr->len != 34) {
@@ -82,7 +81,7 @@ static int decrypt_mppe_key(struct rad_req_t *req, struct rad_attr_t *attr, uint
 		return -1;
 	}
 
-	secret = rad_server_secret_dup(req->serv);
+	secret = (const char *)req->pack->secret;
 	if (!secret)
 		return -1;
 
@@ -99,7 +98,6 @@ static int decrypt_mppe_key(struct rad_req_t *req, struct rad_attr_t *attr, uint
 
 	if (plain[0] != 16) {
 		log_ppp_warn("radius: %s: incorrect key length (%i)\n", attr->attr->name, plain[0]);
-		_free(secret);
 		return -1;
 	}
 
@@ -111,7 +109,6 @@ static int decrypt_mppe_key(struct rad_req_t *req, struct rad_attr_t *attr, uint
 	plain[16] ^= md5[0];
 
 	memcpy(key, plain + 1, 16);
-	_free(secret);
 
 	return 0;
 }
@@ -288,17 +285,16 @@ int rad_auth_pap(struct radius_pd_t *rpd, const char *username, va_list args)
 	const char *passwd = va_arg(args, const char *);
 	uint8_t *epasswd;
 	int epasswd_len;
-	char *secret;
+	const char *secret;
 
 	if (!req)
 		return PWDB_DENIED;
 
-	secret = rad_server_secret_dup(req->serv);
+	secret = (const char *)req->pack->secret;
 	if (!secret)
 		return PWDB_DENIED;
 
 	epasswd = encrypt_password(passwd, secret, req->RA, &epasswd_len);
-	_free(secret);
 	if (!epasswd)
 		return PWDB_DENIED;
 
