@@ -385,6 +385,10 @@ jobs:
           -DKDIR=/usr/src/linux-headers-`uname -r` 
           -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE ..
 
+      - name: Test kernel module installation
+        working-directory: ./build
+        run: ctest --output-on-failure -R '^kernel-module-install$'
+
       - name: make && make install
         working-directory: ./build
         run: make && sudo make install

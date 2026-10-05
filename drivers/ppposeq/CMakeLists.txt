@@ -15,5 +15,9 @@ ADD_CUSTOM_TARGET(ppposeq_drv ALL
 )
 
 IF (NOT DEFINED CPACK_TYPE)
-	INSTALL(CODE "EXECUTE_PROCESS(COMMAND make -C ${KDIR} M=${CMAKE_CURRENT_BINARY_DIR}/driver modules_install)")
+	INSTALL(CODE "
+		set(KERNEL_BUILD_DIR [==[${KDIR}]==])
+		set(KERNEL_MODULE_BUILD_DIR [==[${CMAKE_CURRENT_BINARY_DIR}/driver]==])
+		include([==[${CMAKE_SOURCE_DIR}/cmake/install-kernel-module.cmake]==])
+	")
 ENDIF()
