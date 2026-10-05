@@ -9,6 +9,7 @@
 #include "radius.h"
 #include "ppp.h"
 #include "ipdb.h"
+#include "ipv6_dns.h"
 #include "pwdb.h"
 
 struct rad_server_t;
@@ -65,7 +66,7 @@ struct radius_pd_t {
 	struct ipv4db_item_t ipv4_addr;
 	struct ipv6db_item_t ipv6_addr;
 	struct ipv6db_prefix_t ipv6_dp;
-	struct ipv6db_item_t ipv6_dns;
+	struct ipv6_dns_t ipv6_dns;
 	int acct_interim_interval;
 	int acct_interim_jitter;
 
