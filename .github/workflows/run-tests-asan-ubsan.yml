@@ -21,6 +21,10 @@ jobs:
             sanitizer: "undefined"
             env_name: "UBSAN_OPTIONS"
             env_value: "print_stacktrace=1"
+          - distro: "ubuntu-latest"
+            sanitizer: "thread"
+            env_name: "TSAN_OPTIONS"
+            env_value: "halt_on_error=1:second_deadlock_stack=1:report_thread_leaks=0"
 
     runs-on: ${{ matrix.distro }}
     steps:
@@ -30,7 +34,8 @@ jobs:
           NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
           git build-essential cmake gcc linux-headers-`uname -r`
           libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip
-          iproute2 ppp pppoe isc-dhcp-client
+          iproute2 ppp pppoe isc-dhcp-client tcpdump &&
+          (sudo apt -y install linux-modules-extra-`uname -r` || true)
 
       - name: Install testing tools (using pip)
         run: >
@@ -62,7 +67,9 @@ jobs:
 
       - name: Run standalone unit tests (with ${{ matrix.sanitizer }})
         env:
-          ${{ matrix.env_name }}: ${{ matrix.env_value }}
+          # github.workspace is not available inside the matrix definition,
+          # so the TSAN suppressions path is appended here.
+          ${{ matrix.env_name }}: ${{ matrix.env_value }}${{ matrix.sanitizer == 'thread' && format(':suppressions={0}/tests/tsan.supp', github.workspace) || '' }}
         run: |
           ctest --test-dir build --output-on-failure
           gcc -O1 -g -Wall -fno-strict-aliasing -D_GNU_SOURCE \
@@ -88,16 +95,18 @@ jobs:
         run: |
           sudo insmod build/drivers/vlan_mon/driver/vlan_mon.ko
           sudo insmod build/drivers/ipoe/driver/ipoe.ko
-          sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko
+          (sudo modprobe l2tp_ppp || echo ::warning::l2tp_ppp_module_unavailable_the_l2tp_switch_tests_will_fail) && sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko
           lsmod | grep ipoe
           lsmod | grep vlan_mon
           lsmod | grep ppposeq
 
       - name: Run tests
-        timeout-minutes: 5
+        timeout-minutes: 20
         working-directory: ./tests
         env:
-          ${{ matrix.env_name }}: ${{ matrix.env_value }}
+          # github.workspace is not available inside the matrix definition,
+          # so the TSAN suppressions path is appended here.
+          ${{ matrix.env_name }}: ${{ matrix.env_value }}${{ matrix.sanitizer == 'thread' && format(':suppressions={0}/tests/tsan.supp', github.workspace) || '' }}
         run: sudo -E python3 -m pytest -Wall --order-dependencies -v
 
       - name: Check dmesg for kernel issues

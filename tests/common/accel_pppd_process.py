@@ -15,15 +15,22 @@ def accel_pppd_thread_func(accel_pppd_control):
     print("accel_pppd_thread_func: after wait")
 
 
-def start(accel_pppd, args, accel_cmd, max_wait_time):
+def start(accel_pppd, args, accel_cmd, max_wait_time, cli_port=None, env=None):
     print("accel_pppd_start: begin")
-    accel_pppd_process = Popen([accel_pppd] + args, stdout=PIPE, stderr=PIPE)
+    accel_pppd_process = Popen([accel_pppd] + args, stdout=PIPE, stderr=PIPE, env=env)
     accel_pppd_control = {"process": accel_pppd_process}
     accel_pppd_thread = Thread(
         target=accel_pppd_thread_func,
         args=[accel_pppd_control],
     )
     accel_pppd_thread.start()
+
+    # accel-cmd defaults to port 2001; cli_port is needed when [cli] tcp=
+    # uses another port, e.g. for a second simultaneous instance.
+    check_cmd = [accel_cmd]
+    if cli_port is not None:
+        check_cmd += ["-p", str(cli_port)]
+    check_cmd += ["show version"]
 
     # wait until accel-pppd replies to 'show version'
     # accel-pppd needs some time to be accessible
@@ -37,7 +44,7 @@ def start(accel_pppd, args, accel_cmd, max_wait_time):
             )
             is_started = False
             break
-        (exit, out, err) = process.run([accel_cmd, "show version"])
+        (exit, out, err) = process.run(check_cmd)
         if exit != 0:  # does not reply
             time.sleep(0.1)
             sleep_time += 0.1
@@ -49,15 +56,19 @@ def start(accel_pppd, args, accel_cmd, max_wait_time):
     return (is_started, accel_pppd_thread, accel_pppd_control)
 
 
-def end(accel_pppd_thread, accel_pppd_control, accel_cmd, max_wait_time):
+def end(accel_pppd_thread, accel_pppd_control, accel_cmd, max_wait_time, cli_port=None):
     print("accel_pppd_end: begin")
     if accel_pppd_control["process"].poll() is not None: # terminated
         print("accel_pppd_end: already terminated. nothing to do")
-        accel_pppd_thread.join() 
+        accel_pppd_thread.join()
         return
 
+    shutdown_cmd = [accel_cmd]
+    if cli_port is not None:
+        shutdown_cmd += ["-p", str(cli_port)]
+    shutdown_cmd += ["shutdown hard"]
     process.run(
-        [accel_cmd, "shutdown hard"]
+        shutdown_cmd
     )  # send shutdown hard command (in coverage mode it helps saving coverage data)
     print("accel_pppd_end: after shutdown hard")
 

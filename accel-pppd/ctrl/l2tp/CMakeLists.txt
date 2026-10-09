@@ -4,11 +4,17 @@ ADD_DEFINITIONS(-DDICTIONARY="${CMAKE_INSTALL_PREFIX}/share/accel-ppp/l2tp/dicti
 
 ADD_LIBRARY(l2tp SHARED
 	l2tp.c
+	l2tp_switch_conf.c
 	dict.c
 	packet.c
 	#	netlink.c
 )
-TARGET_LINK_LIBRARIES(l2tp ${crypto_lib})
+# musl resolves all symbols at dlopen(), so connlimit must be linked explicitly
+IF (MUSL)
+	TARGET_LINK_LIBRARIES(l2tp connlimit ${crypto_lib})
+ELSE (MUSL)
+	TARGET_LINK_LIBRARIES(l2tp ${crypto_lib})
+ENDIF (MUSL)
 #TARGET_LINK_LIBRARIES(l2tp nl nl-genl)
 
 INSTALL(TARGETS l2tp LIBRARY DESTINATION lib${LIB_SUFFIX}/accel-ppp)

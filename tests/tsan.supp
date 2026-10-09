@@ -1,0 +1,18 @@
+# ThreadSanitizer suppressions for the CI "thread" leg (run-tests-asan-ubsan.yml).
+#
+# These are races in the logging and triton core (mempool counters, contexts
+# and timers handed between worker threads). They trigger on any log_*() call,
+# independent of the l2tp-switch code, and halt_on_error=1 would abort the
+# daemon on the first one. Entries are by function, so a race in l2tp.c or
+# l2tp_switch_conf.c still fails the run.
+race:mempool_alloc
+race:mempool_free
+race:unpack_msg
+race:general_log
+race:triton_thread
+race:triton_context_unregister
+race:triton_queue_ctx
+race:md_thread
+race:timer_thread
+race:triton_timer_del
+race:ap_shutdown_soft

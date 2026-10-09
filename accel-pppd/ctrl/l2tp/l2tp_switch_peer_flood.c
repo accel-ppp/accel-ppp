@@ -1,0 +1,147 @@
+#include "l2tp_switch_peer_test.h"
+
+#define FLOOD_BATCH 64
+
+int fin_flood_on = FIN_FLOOD_OFF;
+int fin_flood_stopccn_ms;
+int fin_flood_start_ms;
+int fin_flood_len_ms;
+
+/* "A:S:W": ms after the anchor to send StopCCN, start the flood, and flood length */
+int parse_fin_flood(const char *spec)
+{
+	if (sscanf(spec, "%d:%d:%d", &fin_flood_stopccn_ms,
+		   &fin_flood_start_ms, &fin_flood_len_ms) != 3 ||
+	    fin_flood_stopccn_ms < 0 || fin_flood_start_ms < 0 ||
+	    fin_flood_len_ms <= 0)
+		return die("invalid --fin-flood (expected A:S:W, all in ms)");
+
+	return 0;
+}
+
+static int send_stopccn_now(int fd, const struct sockaddr_in *their_addr,
+			    uint16_t their_tid, uint16_t our_tid,
+			    uint16_t ns, uint16_t nr)
+{
+	struct l2tp_avp_result_code rc = { htons(1), htons(6) };
+	struct l2tp_packet_t *pack;
+
+	pack = l2tp_packet_alloc(2, Message_Type_Stop_Ctrl_Conn_Notify,
+				 their_addr, 0, secret, strlen(secret));
+	if (!pack)
+		return die("StopCCN alloc failed");
+	l2tp_packet_add_int16(pack, Assigned_Tunnel_ID, our_tid, 1);
+	l2tp_packet_add_octets(pack, Result_Code, (uint8_t *)&rc, sizeof(rc), 1);
+	pack->hdr.tid = htons(their_tid);
+	pack->hdr.sid = 0;
+	pack->hdr.Ns = htons(ns);
+	pack->hdr.Nr = htons(nr);
+	if (l2tp_packet_send(fd, pack) < 0) {
+		l2tp_packet_free(pack);
+		return die("StopCCN send failed");
+	}
+	l2tp_packet_free(pack);
+
+	return 0;
+}
+
+static int init_junk(struct mmsghdr *msgs, struct iovec *iov,
+		     struct l2tp_hdr_t *wire,
+		     const struct sockaddr_in *their_addr)
+{
+	struct l2tp_packet_t *junk;
+	int i;
+
+	junk = l2tp_packet_alloc(2, 0, their_addr, 0, NULL, 0);
+	if (!junk)
+		return die("flood junk alloc failed");
+	junk->hdr.tid = htons(0xffff);
+	junk->hdr.sid = 0;
+	*wire = junk->hdr;
+	wire->length = htons(sizeof(*wire));
+	wire->flags = htons(junk->hdr.flags);
+	l2tp_packet_free(junk);
+
+	iov->iov_base = wire;
+	iov->iov_len = sizeof(*wire);
+	memset(msgs, 0, FLOOD_BATCH * sizeof(*msgs));
+	for (i = 0; i < FLOOD_BATCH; i++) {
+		msgs[i].msg_hdr.msg_name = (void *)their_addr;
+		msgs[i].msg_hdr.msg_namelen = sizeof(*their_addr);
+		msgs[i].msg_hdr.msg_iov = iov;
+		msgs[i].msg_hdr.msg_iovlen = 1;
+	}
+
+	return 0;
+}
+
+/* triton runs timers and md handlers before pending context calls */
+int run_fin_flood(int fd, const struct sockaddr_in *their_addr,
+		  uint16_t their_tid, uint16_t our_tid,
+		  uint16_t ns, uint16_t nr)
+{
+	double started = now_monotonic();
+	double stop_at = started + (double)fin_flood_stopccn_ms / 1000.0;
+	double flood_from = started + (double)fin_flood_start_ms / 1000.0;
+	double flood_until = flood_from + (double)fin_flood_len_ms / 1000.0;
+	struct mmsghdr msgs[FLOOD_BATCH];
+	struct l2tp_hdr_t wire;
+	struct iovec iov;
+	unsigned long sent = 0;
+	int stopped = 0, flooding = 0;
+
+	if (init_junk(msgs, &iov, &wire, their_addr))
+		return 1;
+
+	for (;;) {
+		double now = now_monotonic();
+
+		if (!stopped && now >= stop_at) {
+			if (send_stopccn_now(fd, their_addr, their_tid, our_tid,
+					     ns, nr))
+				return 1;
+			stopped = 1;
+			printf("event=fin_flood_stopccn t=%.6f\n", now_monotonic());
+			fflush(stdout);
+		}
+		if (stopped && now >= flood_until)
+			break;
+		if (now >= flood_from && now < flood_until) {
+			int n;
+
+			if (!flooding) {
+				flooding = 1;
+				printf("event=fin_flood_start t=%.6f\n", now);
+				fflush(stdout);
+			}
+			n = sendmmsg(fd, msgs, FLOOD_BATCH, 0);
+			if (n > 0)
+				sent += (unsigned long)n;
+			continue;
+		}
+		usleep(500);
+	}
+
+	printf("event=fin_flood_end t=%.6f junk=%lu\n", now_monotonic(), sent);
+	fflush(stdout);
+
+	return 0;
+}
+
+int busy_flood_ms;
+
+int run_busy_flood(int fd, const struct sockaddr_in *their_addr, int ms)
+{
+	double until = now_monotonic() + (double)ms / 1000.0;
+	struct mmsghdr msgs[FLOOD_BATCH];
+	struct l2tp_hdr_t wire;
+	struct iovec iov;
+
+	if (init_junk(msgs, &iov, &wire, their_addr))
+		return 1;
+
+	while (now_monotonic() < until)
+		sendmmsg(fd, msgs, FLOOD_BATCH, 0);
+
+	return 0;
+}
