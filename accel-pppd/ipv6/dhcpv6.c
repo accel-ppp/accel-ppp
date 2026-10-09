@@ -413,11 +413,11 @@ static void dhcpv6_send_reply(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, i
 					goto out;
 			} else {
 
-				if (req->hdr->type == D6_REQUEST || req->rapid_commit) {
+				if (req->hdr->type == D6_REQUEST || req->rapid_commit)
 					pd->dp_iaid = ia_na->iaid;
-					if (!pd->dp_active)
-						insert_dp_routes(ses, pd, &req->addr.sin6_addr);
-				}
+
+				if (!pd->dp_active && code == D6_REPLY)
+					insert_dp_routes(ses, pd, &req->addr.sin6_addr);
 
 				f2 = 1;
 
@@ -655,6 +655,8 @@ static void dhcpv6_send_reply2(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, 
 			if (f3) {
 				pd->dp_iaid = ia_na->iaid;
 				f2 = 1;
+				if (!pd->dp_active)
+					insert_dp_routes(ses, pd, &req->addr.sin6_addr);
 			}
 		// Option Request
 		} else if (ntohs(opt->hdr->code) == D6_OPTION_ORO) {
