@@ -4044,18 +4044,12 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 	/* passing val.octets for any AVP type is safe, rules are limited to
 	 * string AVPs */
 	l2tp_switch_match_lock();
-	list_for_each_entry(attr, &pack->attrs, entry) {
-		sess->switch_target = l2tp_switch_match_locked(attr->attr,
-							       attr->val.octets,
-							       attr->length);
-		if (sess->switch_target) {
-			l2tp_stat_inc(&l2tp_stat.switch_matched);
-			log_tunnel(log_info1, conn,
-				   "call matches l2tp-switch"
-				   " target \"%s\"\n",
-				   sess->switch_target->name);
-			break;
-		}
+	sess->switch_target = l2tp_switch_match_attrs_locked(&pack->attrs);
+	if (sess->switch_target) {
+		l2tp_stat_inc(&l2tp_stat.switch_matched);
+		log_tunnel(log_info1, conn,
+			   "call matches l2tp-switch target \"%s\"\n",
+			   sess->switch_target->name);
 	}
 	l2tp_switch_match_unlock();
 
@@ -5368,23 +5362,18 @@ static int l2tp_recv_ICCN(struct l2tp_sess_t *sess,
 
 	log_session(log_info2, sess, "handling ICCN\n");
 
+	/* some AVPs worth routing on (Proxy-Authen-Name) only appear in ICCN */
 	l2tp_switch_match_lock();
-	list_for_each_entry(attr, &pack->attrs, entry) {
-		/* some AVPs worth routing on (Proxy-Authen-Name) only
-		 * appear in ICCN */
-		if (!sess->switch_target) {
-			sess->switch_target = l2tp_switch_match_locked(attr->attr,
-								       attr->val.octets,
-								       attr->length);
-			if (sess->switch_target) {
-				l2tp_stat_inc(&l2tp_stat.switch_matched);
-				log_session(log_info1, sess,
-					    "call matches l2tp-switch"
-					    " target \"%s\"\n",
-					    sess->switch_target->name);
-			}
+	if (!sess->switch_target) {
+		sess->switch_target = l2tp_switch_match_attrs_locked(&pack->attrs);
+		if (sess->switch_target) {
+			l2tp_stat_inc(&l2tp_stat.switch_matched);
+			log_session(log_info1, sess,
+				    "call matches l2tp-switch target \"%s\"\n",
+				    sess->switch_target->name);
 		}
-
+	}
+	list_for_each_entry(attr, &pack->attrs, entry) {
 		switch (attr->attr->id) {
 		case Message_Type:
 		case Random_Vector:

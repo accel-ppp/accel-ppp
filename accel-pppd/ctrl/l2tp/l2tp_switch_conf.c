@@ -146,6 +146,22 @@ struct l2tp_switch_target_t *l2tp_switch_match_locked(const struct l2tp_dict_att
 	return NULL;
 }
 
+/* Rules are tried in configuration order, so the peer's AVP order does not
+ * pick the target */
+struct l2tp_switch_target_t *l2tp_switch_match_attrs_locked(const struct list_head *attrs)
+{
+	struct l2tp_switch_rule_t *r;
+	struct l2tp_attr_t *attr;
+
+	list_for_each_entry(r, &l2tp_switch_rules, entry)
+		list_for_each_entry(attr, attrs, entry)
+			if (r->attr == attr->attr &&
+			    rule_matches_value(r, attr->val.octets, attr->length))
+				return r->target;
+
+	return NULL;
+}
+
 void l2tp_switch_match_lock(void)
 {
 	pthread_rwlock_rdlock(&l2tp_switch_rules_lock);

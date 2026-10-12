@@ -69,6 +69,8 @@ void l2tp_switch_match_lock(void);
 void l2tp_switch_match_unlock(void);
 struct l2tp_switch_target_t *l2tp_switch_match_locked(const struct l2tp_dict_attr_t *attr,
 						      const uint8_t *val, int len);
+/* Highest-priority (earliest configured) rule matching any AVP in attrs */
+struct l2tp_switch_target_t *l2tp_switch_match_attrs_locked(const struct list_head *attrs);
 int l2tp_switch_rule_add(const char *attr_name, const char *mode_name,
 			 const uint8_t *val, int len, const char *target_name);
 int l2tp_switch_rule_del(const char *attr_name, const char *mode_name,
