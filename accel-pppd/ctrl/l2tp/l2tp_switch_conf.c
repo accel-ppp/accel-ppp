@@ -2,6 +2,9 @@
 #include <string.h>
 #include <pthread.h>
 #include <ctype.h>
+#include <errno.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
 
 #include "log.h"
@@ -481,20 +484,45 @@ static int parse_match(const char *val)
 extern in_addr_t l2tp_conf_get_bind_addr(void);
 extern uint16_t l2tp_conf_get_bind_port(void);
 
+/* A wildcard bind listens on every local address, so any local one loops */
+static int addr_is_local(in_addr_t addr)
+{
+	struct ifaddrs *ifa_list, *ifa;
+	int local = 0;
+
+	if (addr == htonl(INADDR_ANY) || (ntohl(addr) >> 24) == IN_LOOPBACKNET)
+		return 1;
+
+	if (getifaddrs(&ifa_list) < 0) {
+		log_error("l2tp-switch: getifaddrs() failed: %s\n",
+			  strerror(errno));
+		return 0;
+	}
+	for (ifa = ifa_list; ifa && !local; ifa = ifa->ifa_next) {
+		const struct sockaddr_in *sin = (const struct sockaddr_in *)ifa->ifa_addr;
+
+		local = sin && sin->sin_family == AF_INET &&
+			sin->sin_addr.s_addr == addr;
+	}
+	freeifaddrs(ifa_list);
+
+	return local;
+}
+
 static int validate_no_self_loop(void)
 {
 	in_addr_t bind_addr = l2tp_conf_get_bind_addr();
 	uint16_t bind_port = l2tp_conf_get_bind_port();
 	struct l2tp_switch_target_t *t;
 
-	if (bind_addr == INADDR_ANY)
-		return 0;
-
 	list_for_each_entry(t, &l2tp_switch_targets, entry) {
-		if (t->peer_addr.sin_addr.s_addr == bind_addr &&
-		    ntohs(t->peer_addr.sin_port) == bind_port) {
+		in_addr_t peer = t->peer_addr.sin_addr.s_addr;
+		int loops = bind_addr == htonl(INADDR_ANY) ?
+			    addr_is_local(peer) : peer == bind_addr;
+
+		if (loops && ntohs(t->peer_addr.sin_port) == bind_port) {
 			log_error("l2tp-switch: target \"%s\" peer-addr:port"
-				  " equals this host's own [l2tp]"
+				  " is this host's own [l2tp]"
 				  " bind:port\n", t->name);
 			return -1;
 		}
