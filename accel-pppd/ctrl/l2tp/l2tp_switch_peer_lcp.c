@@ -20,7 +20,7 @@ int run_real_ppp(int data_fd)
 {
 	int outpipe[2];
 	pid_t pid;
-	char buf[8192];
+	char buf[8192] = "";
 	size_t used = 0;
 	int ip_up = 0;
 	time_t deadline;
