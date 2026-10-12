@@ -105,19 +105,19 @@ int run_real_ppp(int data_fd)
 	kill(pid, SIGTERM);
 	{
 		int waited_ms = 0;
+		int reaped = 0;
 
-		while (waited_ms < 2000) {
-			int status;
-			pid_t r = waitpid(pid, &status, WNOHANG);
-
-			if (r == pid)
-				break;
-			usleep(100000);
-			waited_ms += 100;
+		while (waited_ms < 2000 && !reaped) {
+			reaped = waitpid(pid, NULL, WNOHANG) == pid;
+			if (!reaped) {
+				usleep(100000);
+				waited_ms += 100;
+			}
 		}
-		if (waitpid(pid, NULL, WNOHANG) != pid)
+		if (!reaped) {
 			kill(pid, SIGKILL);
-		waitpid(pid, NULL, 0);
+			waitpid(pid, NULL, 0);
+		}
 	}
 	close(outpipe[0]);
 
