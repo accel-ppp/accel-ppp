@@ -10,6 +10,7 @@
 #include "log.h"
 #include "triton.h"
 #include "l2tp.h"
+#include "attr_defs.h"
 #include "l2tp_switch_conf.h"
 
 #include "memdebug.h"
@@ -162,6 +163,59 @@ struct l2tp_switch_target_t *l2tp_switch_match_attrs_locked(const struct list_he
 	return NULL;
 }
 
+/* printable ASCII is shown as is, anything else as \xNN */
+static int format_rule_value(char *out, size_t size, const uint8_t *val, int len)
+{
+	size_t n = 0;
+	int i;
+
+	for (i = 0; i < len; i++) {
+		if (val[i] > 0x20 && val[i] < 0x7f && val[i] != '\\')
+			n += snprintf(out + n, n < size ? size - n : 0, "%c", val[i]);
+		else
+			n += snprintf(out + n, n < size ? size - n : 0, "\\x%02x", val[i]);
+	}
+
+	return n;
+}
+
+/* One "  <attr> <mode> <value> -> <target>" line per rule, in match order, as
+ * a string for the caller to free; built under the lock and sent after it is
+ * released, so a slow CLI client cannot hold up call matching. NULL if
+ * there are no rules or on allocation failure. */
+char *l2tp_switch_rules_format(void)
+{
+	struct l2tp_switch_rule_t *r;
+	size_t size = 1, used = 0;
+	char *buf;
+
+	pthread_rwlock_rdlock(&l2tp_switch_rules_lock);
+
+	list_for_each_entry(r, &l2tp_switch_rules, entry)
+		size += strlen(r->attr->name) + strlen(r->target->name) +
+			4 * (size_t)r->len + 32;
+
+	buf = _malloc(size);
+	if (!buf)
+		goto out;
+	buf[0] = '\0';
+
+	list_for_each_entry(r, &l2tp_switch_rules, entry) {
+		char val[4 * 255 + 1];
+		int n = r->len > 255 ? 255 : r->len;
+
+		format_rule_value(val, sizeof(val), r->val, n);
+		used += snprintf(buf + used, size - used, "  %s %s %s -> %s\r\n",
+				 r->attr->name,
+				 r->mode == L2TP_SWITCH_MATCH_EXACT ? "exact" : "prefix",
+				 val, r->target->name);
+	}
+out:
+	pthread_rwlock_unlock(&l2tp_switch_rules_lock);
+
+	return buf;
+}
+
 void l2tp_switch_match_lock(void)
 {
 	pthread_rwlock_rdlock(&l2tp_switch_rules_lock);
@@ -204,6 +258,20 @@ static const struct l2tp_dict_attr_t *resolve_match_attr(const char *attr_name)
 	if (!attr || attr->type != ATTR_TYPE_STRING) {
 		log_error("l2tp-switch: \"%s\" is not a known string-typed"
 			  " AVP\n", attr_name);
+		return NULL;
+	}
+
+	/* the matcher only sees these AVPs: ICRQ and ICCN carry no others */
+	switch (attr->id) {
+	case Called_Number:
+	case Calling_Number:
+	case Sub_Address:
+	case Proxy_Authen_Name:
+		break;
+	default:
+		log_error("l2tp-switch: %s never appears in an ICRQ or ICCN,"
+			  " use Calling-Number, Called-Number, Sub-Address or"
+			  " Proxy-Authen-Name\n", attr_name);
 		return NULL;
 	}
 
@@ -441,7 +509,7 @@ static int parse_target(const char *val)
 
 	t->peer_addr.sin_family = AF_INET;
 	t->peer_addr.sin_port = htons((uint16_t)p);
-	if (inet_aton(addr, &t->peer_addr.sin_addr) == 0) {
+	if (inet_pton(AF_INET, addr, &t->peer_addr.sin_addr) != 1) {
 		char *redacted = redact_target(name, addr, port, mode_str);
 
 		log_error("l2tp-switch: invalid peer-addr in target=\"%s\"\n",

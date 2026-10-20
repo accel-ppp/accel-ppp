@@ -71,6 +71,8 @@ struct l2tp_switch_target_t *l2tp_switch_match_locked(const struct l2tp_dict_att
 						      const uint8_t *val, int len);
 /* Highest-priority (earliest configured) rule matching any AVP in attrs */
 struct l2tp_switch_target_t *l2tp_switch_match_attrs_locked(const struct list_head *attrs);
+/* Free with _free(); NULL on allocation failure */
+char *l2tp_switch_rules_format(void);
 int l2tp_switch_rule_add(const char *attr_name, const char *mode_name,
 			 const uint8_t *val, int len, const char *target_name);
 int l2tp_switch_rule_del(const char *attr_name, const char *mode_name,

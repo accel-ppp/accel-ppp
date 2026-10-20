@@ -111,7 +111,7 @@
 - Added Ubuntu 26.04 coverage and removed Debian 11 jobs. Continue testing
   32-bit and big-endian platforms and ASan/UBSan builds. Fix test-interface
   MAC races, big-endian VM setup flakes, and coverage counter handling.
-- L2TP switching (RFC 2661 section 5.1): selected incoming calls are relayed to a downstream LNS instead of being terminated locally. Targets and match rules (Calling-Number, Called-Number or proxied username) are set in the new `[l2tp-switch]` section and managed with `l2tp switch show|add|del`. See docs/l2tp_switching.md.
+- L2TP switching: selected incoming L2TPv2 calls are relayed to a downstream LNS instead of being terminated locally. Targets and match rules (Calling-Number, Called-Number or proxied username) are set in the new `[l2tp-switch]` section and managed with `l2tp switch show|add|del`. See docs/l2tp_switching.md.
 
 ## 1.14.0 - 2026-01-24
 

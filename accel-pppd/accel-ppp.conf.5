@@ -984,9 +984,9 @@ Specifies the name of the IPv6 pool to use for allocating client addresses.
 Specifies the name of the IPv6 prefix delegation pool to use.
 .SH [l2tp-switch]
 .br
-Configuration of L2TP switching (RFC 2661 section 5.1). Selected incoming
-calls are relayed to a downstream LNS instead of being terminated locally.
-Targets and match rules are read at startup and are not re-read on reload.
+Configuration of L2TP switching. Selected incoming L2TPv2 calls are relayed to
+a downstream LNS instead of being terminated locally. The whole section,
+including the timing options, is read at startup and is not re-read on reload.
 .TP
 .BI "target=" name,peer-addr,peer-port,secret[,mode]
 Defines a downstream LNS. May be repeated. Fields are separated by commas
@@ -996,8 +996,10 @@ and
 .I secret
 cannot contain a comma.
 .I name
-may contain letters, digits, '_', '-' and '.'. A malformed line is a fatal
-configuration error.
+may contain letters, digits, '_', '-' and '.'.
+.I peer-addr
+must be a dotted-quad IPv4 address; shorthand such as 127.1 and hexadecimal or
+octal octets are rejected. A malformed line is a fatal configuration error.
 .I mode
 is
 .B on-demand
@@ -1020,8 +1022,8 @@ Specifies the delay in seconds between connection attempts to a target whose tun
 .BI "match=" attr-name,mode,value,target-name
 Sends calls to a target based on the value of an L2TP AVP. May be repeated.
 .I attr-name
-is the AVP name (Calling-Number, Called-Number, Proxy-Authen-Name, ...) and
-must be a string AVP.
+is the AVP name and must be one of Calling-Number, Called-Number,
+Sub-Address or Proxy-Authen-Name, the only matchable AVPs in an ICRQ or ICCN.
 .I mode
 is
 .B exact
@@ -1029,8 +1031,8 @@ or
 .BR prefix .
 Matching is case-sensitive. Calling-Number and Called-Number are matched when
 the ICRQ is received, Proxy-Authen-Name when the ICCN is received. Rules on
-the same AVP must not overlap, that is, no value may equal or be a prefix of
-another.
+the same AVP must not overlap, that is, no value may be matched by two rules.
+Two exact rules overlap only if their values are equal.
 .PP
 Rules can be listed and changed at runtime with
 .B l2tp switch show|add|del

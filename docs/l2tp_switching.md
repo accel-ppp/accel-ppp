@@ -1,7 +1,7 @@
 # L2TP switching
 
-accel-ppp can act as an L2TP switch (RFC 2661 section 5.1) for a configured
-subset of incoming calls. Instead of terminating PPP locally, it forwards the
+accel-ppp can act as an L2TP switch for a configured subset of incoming
+L2TPv2 calls (RFC 2661, which does not define switching itself). Instead of terminating PPP locally, it forwards the
 Proxy LCP/Auth AVPs from the incoming call's ICCN to a second, outbound call
 toward a downstream LNS and relays the PPP frames between the two tunnels.
 PPP negotiation and RADIUS are not used for a switched call.
@@ -20,8 +20,10 @@ reconnect-interval=<seconds>
 `target=` defines a downstream LNS and may be repeated. Fields are separated
 by commas with no escaping, so none may be empty and `name` and `secret`
 cannot contain a comma. `name` may contain only letters, digits, `_`, `-`
-and `.`, because it is used as a metrics label. A malformed `target=` or
-`match=` line is a fatal configuration error. The optional last field is the
+and `.`, because it is used as a metrics label. `peer-addr` must be a
+dotted-quad IPv4 address such as `203.0.113.50`: shorthand like `127.1` and
+hexadecimal or octal octets are rejected. A malformed `target=` or `match=`
+line is a fatal configuration error. The optional last field is the
 mode:
 
 - `on-demand` (default): the tunnel to the target is opened when a call needs
@@ -35,12 +37,14 @@ mode:
 
 `idle-linger` is the time in seconds an on-demand tunnel stays open after
 its last call ends (default 20). `connect-timeout` is the time in seconds a
-call waits for an on-demand tunnel to connect (default 10). `reconnect-interval`
+call waits for an on-demand tunnel to connect (default 10); a call whose
+tunnel closes just as it is being placed waits again for a new one. `reconnect-interval`
 is the delay in seconds between connection attempts to a target whose tunnel
 is down (default 5). All three accept 1-3600.
 
-`target=` and `match=` lines are read at startup and are not re-read on
-configuration reload. Changing a target's address or secret requires a
+The `[l2tp-switch]` section is read at startup and is not re-read on
+configuration reload: that covers `target=`, `match=`, `idle-linger`,
+`connect-timeout` and `reconnect-interval`. Changing a target's address or secret requires a
 restart.
 
 ## Match rules
@@ -48,9 +52,11 @@ restart.
 `match=` selects the target for a call from the value of one AVP. It may be
 repeated, and several rules may name the same target.
 
-- `attr-name` is the AVP name from the build's AVP dictionary
-  (`Calling-Number`, `Called-Number`, `Sub-Address`, `Proxy-Authen-Name`,
-  and so on). The AVP must be string-typed.
+- `attr-name` is the AVP name: `Calling-Number`, `Called-Number`,
+  `Sub-Address` or `Proxy-Authen-Name`. Those are the only AVPs a call's
+  ICRQ and ICCN carry that can be matched; any other name, such as
+  `Host-Name` or `Vendor-Name` (which appear only in the tunnel setup), is
+  a fatal configuration error.
 - `mode` is `exact` or `prefix`. With `prefix` the AVP value must start with
   `value`, which is useful for a realm or prefix in a proxied username:
   `Proxy-Authen-Name,prefix,downstream-,downstream` matches every username
@@ -60,9 +66,10 @@ Calling-Number and Called-Number arrive in the ICRQ and are matched then.
 Proxy-Authen-Name arrives in the ICCN and is matched then. A call that an
 ICRQ rule has already assigned to a target is not matched again at ICCN.
 
-Two rules on the same AVP must not overlap. The same value may not appear
-twice, and no value may be a prefix of another. Configuration loading fails
-if they do.
+Two rules on the same AVP must not overlap, that is, no value may be matched
+by two rules. A `prefix` rule may not cover the value of another rule, and
+two `exact` rules overlap only if their values are equal, so `abc` and `abcd`
+can coexist as `exact` rules. Configuration loading fails if rules overlap.
 
 ## CLI
 
@@ -73,7 +80,8 @@ l2tp switch del <attr-name> <mode> <value>
 ```
 
 `show` lists each target with its tunnel status, number of bridged calls and
-byte counters, followed by one indented line per active call. `add` and `del`
+byte counters, followed by one indented line per active call, then the match
+rules in the order they are tried, then call totals. `add` and `del`
 change match rules at runtime. These changes are not written to the
 configuration file.
 
@@ -154,6 +162,12 @@ LNS is waiting for a live exchange and needs to be configured to accept
 
 ## Operational constraints
 
+- The proxied authentication values the upstream LAC sends in its ICCN
+  (name, challenge, response, and the cleartext password of a PAP exchange)
+  are repeated to the downstream LNS. They are hidden on the wire only if
+  `hide-avps=1` is set in `[l2tp]`, which applies to every tunnel, upstream
+  and downstream. Without it they cross the downstream path in the clear.
+
 - The MRU negotiated upstream is passed to the downstream LNS in the Proxy
   LCP AVPs and is not renegotiated. The path to each downstream LNS needs at
   least as much MTU as the upstream path.
@@ -164,3 +178,10 @@ LNS is waiting for a live exchange and needs to be configured to accept
   has a throughput limit. The sockets use 4 MiB buffers, and a call is
   ended with a CDN if the outbound `splice(2)` keeps failing with `ENOMEM`
   or `ENOBUFS` for about a second.
+- Switched calls have no PPP session, but `max-sessions` and `max-starting`
+  in `[common]` still apply to them. A call counts as starting from its
+  match until the relay is up, and as active from then on.
+- Switched calls take part in a graceful shutdown. `shutdown soft` waits for
+  them to end, and SIGTERM or `shutdown` ends them with a CDN (result code 3,
+  administrative) before the daemon exits. New calls are refused while the
+  shutdown is pending.

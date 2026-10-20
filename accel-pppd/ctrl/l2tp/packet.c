@@ -527,6 +527,14 @@ int l2tp_packet_send(int sock, struct l2tp_packet_t *pack)
 			mempool_free(buf);
 			return -1;
 		}
+		/* the length field has 10 bits, masking would corrupt the
+		 * AVP and all that follow */
+		if (sizeof(*avp) + attr->length > L2TP_AVP_LEN_MASK) {
+			log_error("l2tp: cann't send packet (AVP %i is too long)\n",
+				  attr->attr->id);
+			mempool_free(buf);
+			return -1;
+		}
 		avp = (struct l2tp_avp_t *)ptr;
 		avp->type = htons(attr->attr->id);
 		avp->flags = htons((attr->M ? L2TP_AVP_FLAG_M : 0) |
@@ -587,6 +595,7 @@ int encode_attr(const struct l2tp_packet_t *pack, struct l2tp_attr_t *attr,
 	uint8_t md5[MD5_DIGEST_LENGTH];
 	MD5_CTX md5_ctx;
 	uint16_t pad_len;
+	unsigned int max_len;
 	uint16_t attr_type;
 	uint16_t blocks_left;
 	uint16_t last_block_len;
@@ -615,6 +624,17 @@ int encode_attr(const struct l2tp_packet_t *pack, struct l2tp_attr_t *attr,
 	/* Use at least 16 bytes of padding */
 	pad_len = (pad_len & 0x007F) + 16;
 
+	/* The AVP length field has 10 bits and includes the header: shrink
+	 * the padding to fit, down to its minimum */
+	max_len = L2TP_AVP_LEN_MASK - sizeof(struct l2tp_avp_t);
+	if (sizeof(val_len) + val_len + 16 > max_len) {
+		log_error("l2tp: impossible to hide AVP:"
+			  " value too long (%u bytes)\n", val_len);
+		goto err;
+	}
+	if (sizeof(val_len) + val_len + pad_len > max_len)
+		pad_len = max_len - sizeof(val_len) - val_len;
+
 	/* Generate Hidden AVP Subformat:
 	 *   -original AVP size (2 bytes, network byte order)
 	 *   -original AVP value ('val_len' bytes)
@@ -629,7 +649,8 @@ int encode_attr(const struct l2tp_packet_t *pack, struct l2tp_attr_t *attr,
 	}
 
 	*(uint16_t *)attr->val.octets = htons(val_len);
-	memcpy(attr->val.octets + sizeof(val_len), val, val_len);
+	if (val_len)
+		memcpy(attr->val.octets + sizeof(val_len), val, val_len);
 
 	if (u_randbuf(attr->val.octets + sizeof(val_len) + val_len,
 		      pad_len, &err) < 0) {
@@ -899,7 +920,13 @@ int l2tp_packet_add_octets(struct l2tp_packet_t *pack, int id, const uint8_t *va
 	if (!attr)
 		return -1;
 
-	if (size == 0) {
+	/* a hidden AVP is never empty: it carries the original length and
+	 * padding */
+	if (size > L2TP_AVP_LEN_MASK) {
+		log_error("l2tp: AVP %i value too long (%i bytes)\n", id, size);
+		goto err;
+	}
+	if (size == 0 && !attr->H) {
 		attr->length = size;
 		attr->val.octets = NULL;
 	} else if (attr->H) {
@@ -910,12 +937,15 @@ int l2tp_packet_add_octets(struct l2tp_packet_t *pack, int id, const uint8_t *va
 			goto err;
 	} else {
 		attr->length = size;
-		attr->val.octets = _malloc(size);
+		/* terminated, in case the AVP is a string: it is printed
+		 * with %s */
+		attr->val.octets = _malloc(size + 1);
 		if (!attr->val.octets) {
 			log_emerg("l2tp: out of memory\n");
 			goto err;
 		}
 		memcpy(attr->val.octets, val, attr->length);
+		attr->val.octets[size] = 0;
 	}
 	list_add_tail(&attr->entry, &pack->attrs);
 

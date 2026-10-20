@@ -167,11 +167,39 @@ struct l2tp_sess_t
 
 	struct l2tp_switch_target_t *switch_target;
 	struct l2tp_switch_avps *switch_avps;
+	/* result of the CDN received on this leg, then handed to the other leg
+	 * for the CDN it sends in turn; 0 if there is none */
+	uint16_t switch_cdn_res;
+	uint16_t switch_cdn_err;
+	/* set while this matched call is counted in l2tp_switch_starting */
+	int switch_starting;
+	/* EV_CTRL_STARTED was fired, so EV_CTRL_FINISHED is due */
+	unsigned int ctrl_started:1;
+	/* on l2tp_switch_calls from the match until the session is freed */
+	struct list_head switch_call_entry;
 	struct l2tp_sess_t *switch_downstream;
 	struct l2tp_sess_t *switch_upstream;
 	struct l2tp_switch_link_t *switch_link;
 	struct list_head switch_pending_entry;
 };
+
+/*
+ * state1 of a switched leg is stored on one tunnel's context and loaded on
+ * another's (and by the shutdown hook), so every access goes through these.
+ * Relaxed is enough: readers only compare against STATE_CLOSE and the pair
+ * lock orders a later unpair after the earlier CLOSE.
+ */
+/* acquire/release: a leg that sees the other one in STATE_CLOSE also sees
+ * what it stored before closing (switch_cdn_res, switch_cdn_err) */
+static inline int l2tp_sess_state(const struct l2tp_sess_t *sess)
+{
+	return __atomic_load_n(&sess->state1, __ATOMIC_ACQUIRE);
+}
+
+static inline void l2tp_sess_set_state(struct l2tp_sess_t *sess, int state)
+{
+	__atomic_store_n(&sess->state1, state, __ATOMIC_RELEASE);
+}
 
 struct l2tp_switch_avp_t {
 	int id;
@@ -179,11 +207,19 @@ struct l2tp_switch_avp_t {
 	uint8_t *val;
 	int len;
 	int is_int16;
+	int is_int32;
 };
 
 struct l2tp_switch_avps {
-	struct l2tp_switch_avp_t avp[8];
+	/* the proxy AVPs (8) and the other optional ICCN ones */
+	struct l2tp_switch_avp_t avp[12];
 	int count;
+
+	/* from the upstream ICCN, for the downstream one */
+	uint32_t tx_speed;
+	uint32_t framing;
+	unsigned int have_tx_speed:1;
+	unsigned int have_framing:1;
 };
 
 struct l2tp_conn_t
@@ -208,6 +244,8 @@ struct l2tp_conn_t
 	uint16_t lns_mode:1;
 	uint16_t hide_avps:1;
 	uint16_t port_set:1;
+	/* reached STATE_ESTB at some point */
+	uint16_t was_estb:1;
 	uint16_t challenge_len;
 	uint8_t *challenge;
 	size_t secret_len;
@@ -259,6 +297,93 @@ static void l2tp_switch_place_call_on(struct l2tp_sess_t *upstream,
 static int l2tp_switch_target_arm_idle_linger(struct l2tp_switch_target_t *target,
 					      struct l2tp_conn_t *conn);
 static void l2tp_switch_target_idle_timer(struct triton_timer_t *t);
+static int l2tp_switch_target_is_persistent(const struct l2tp_switch_target_t *target);
+static void l2tp_switch_target_detach(struct l2tp_conn_t *conn);
+static int l2tp_switch_requeue_call(struct l2tp_sess_t *upstream);
+static void l2tp_switch_target_connect(struct l2tp_switch_target_t *target);
+
+/* switched calls have no ap_session, so the core never counts them as
+ * starting: from the match until the relay is up they are counted here */
+static unsigned int l2tp_switch_starting;
+
+/* the upstream legs of all matched calls, for the graceful shutdown, which
+ * has to wait for them and cannot find them through the ap_session list */
+static LIST_HEAD(l2tp_switch_calls);
+static pthread_mutex_t l2tp_switch_calls_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* hops queued to a tunnel context and not yet run or cancelled: a shutdown
+ * must not complete under one, it still sends CDNs and logs while triton
+ * closes the log contexts */
+static unsigned int l2tp_switch_hops_pending;
+
+/* ap_shutdown is set before the shutdown walk takes l2tp_switch_calls_lock,
+ * so a call that is refused here is not in the list for the walk to miss and
+ * one that is accepted is seen by it. Returns -1 when a shutdown is pending;
+ * the call is then not counted or listed. */
+static int l2tp_switch_starting_begin(struct l2tp_sess_t *sess)
+{
+	pthread_mutex_lock(&l2tp_switch_calls_lock);
+	if (ap_shutdown) {
+		pthread_mutex_unlock(&l2tp_switch_calls_lock);
+		return -1;
+	}
+	if (list_empty(&sess->switch_call_entry))
+		list_add_tail(&sess->switch_call_entry, &l2tp_switch_calls);
+	pthread_mutex_unlock(&l2tp_switch_calls_lock);
+
+	if (!__atomic_exchange_n(&sess->switch_starting, 1, __ATOMIC_RELAXED))
+		__atomic_add_fetch(&l2tp_switch_starting, 1, __ATOMIC_RELAXED);
+
+	return 0;
+}
+
+/* callable from any context; may complete a pending shutdown */
+static void l2tp_switch_call_forget(struct l2tp_sess_t *sess)
+{
+	int forgot = 0;
+
+	pthread_mutex_lock(&l2tp_switch_calls_lock);
+	if (!list_empty(&sess->switch_call_entry)) {
+		list_del_init(&sess->switch_call_entry);
+		forgot = 1;
+	}
+	pthread_mutex_unlock(&l2tp_switch_calls_lock);
+
+	if (forgot)
+		ap_shutdown_check();
+}
+
+static int l2tp_switch_shutdown_busy(void)
+{
+	int busy;
+
+	pthread_mutex_lock(&l2tp_switch_calls_lock);
+	busy = !list_empty(&l2tp_switch_calls);
+	pthread_mutex_unlock(&l2tp_switch_calls_lock);
+
+	return busy ||
+	       __atomic_load_n(&l2tp_switch_hops_pending, __ATOMIC_ACQUIRE) != 0;
+}
+
+/* idempotent, callable from any context */
+static void l2tp_switch_starting_end(struct l2tp_sess_t *sess)
+{
+	if (__atomic_exchange_n(&sess->switch_starting, 0, __ATOMIC_RELAXED))
+		__atomic_sub_fetch(&l2tp_switch_starting, 1, __ATOMIC_RELAXED);
+}
+
+static unsigned int l2tp_starting_in_use(void)
+{
+	return ap_session_stat_starting() +
+	       __atomic_load_n(&l2tp_switch_starting, __ATOMIC_RELAXED);
+}
+
+/* switched calls hold sockets and buffers like any other call */
+static unsigned int l2tp_sessions_in_use(void)
+{
+	return ap_session_stat_active() + l2tp_starting_in_use() +
+	       l2tp_switch_active_total();
+}
 
 static void l2tp_stat_inc(unsigned int *stat)
 {
@@ -842,7 +967,7 @@ static int l2tp_tunnel_send(struct l2tp_conn_t *conn,
 static int l2tp_session_send(struct l2tp_sess_t *sess,
 			     struct l2tp_packet_t *pack)
 {
-	if (sess->state1 == STATE_CLOSE) {
+	if (l2tp_sess_state(sess) == STATE_CLOSE) {
 		log_session(log_info2, sess,
 			    "discarding outgoing message,"
 			    " session is closing\n");
@@ -864,7 +989,11 @@ static int l2tp_session_send(struct l2tp_sess_t *sess,
 static int l2tp_session_try_send(struct l2tp_sess_t *sess,
 				 struct l2tp_packet_t *pack)
 {
-	if (sess->paren_conn->send_queue_len >= sess->paren_conn->peer_rcv_wnd_sz)
+	/* a switched call has a peer waiting on it and up to
+	 * L2TP_SWITCH_PENDING_MAX of them can be placed at once: they queue
+	 * and go out as the window opens */
+	if (!sess->switch_upstream &&
+	    sess->paren_conn->send_queue_len >= sess->paren_conn->peer_rcv_wnd_sz)
 		return -1;
 
 	l2tp_session_send(sess, pack);
@@ -1181,7 +1310,7 @@ static struct l2tp_switch_unpaired l2tp_switch_unpair(struct l2tp_sess_t *sess,
 
 	pthread_mutex_lock(&l2tp_switch_pair_lock);
 	if (close_it)
-		sess->state1 = STATE_CLOSE;
+		l2tp_sess_set_state(sess, STATE_CLOSE);
 	u.peer = sess->switch_downstream ? sess->switch_downstream :
 		 sess->switch_upstream;
 	u.link = sess->switch_link;
@@ -1220,6 +1349,15 @@ struct l2tp_switch_hop {
 	void *arg;
 };
 
+/* last statement of a hop: whatever it logged is out, so a shutdown that was
+ * waiting for it can complete */
+static void l2tp_switch_hop_done(void)
+{
+	if (__atomic_sub_fetch(&l2tp_switch_hops_pending, 1,
+			       __ATOMIC_ACQ_REL) == 0)
+		ap_shutdown_check();
+}
+
 static void l2tp_switch_hop_run(void *data)
 {
 	struct l2tp_switch_hop *hop = data;
@@ -1233,19 +1371,24 @@ static void l2tp_switch_hop_run(void *data)
 	_free(hop);
 
 	func(arg);
+	l2tp_switch_hop_done();
 }
 
 /* returns 0 if func or cancel will run and take over the caller's holds, -1
- * if nothing was scheduled; the hold does not keep conn's context
- * registered, hence the ctx.tpd check */
+ * if nothing was scheduled (errno is ESRCH if conn's context is already
+ * gone, which is not an error for a teardown); the hold does not keep conn's
+ * context registered, hence the ctx.tpd check */
 static int l2tp_switch_hop(struct l2tp_conn_t *conn, void (*func)(void *),
 			   void (*cancel)(void *), void *arg)
 {
 	struct l2tp_switch_hop *hop = _malloc(sizeof(*hop));
 	int res = -1;
+	int err = ESRCH;
 
-	if (!hop)
+	if (!hop) {
+		errno = ENOMEM;
 		return -1;
+	}
 	hop->func = func;
 	hop->cancel = cancel;
 	hop->arg = arg;
@@ -1254,13 +1397,20 @@ static int l2tp_switch_hop(struct l2tp_conn_t *conn, void (*func)(void *),
 	if (conn->ctx.tpd) {
 		list_add_tail(&hop->entry, &conn->switch_hops);
 		res = triton_context_call(&conn->ctx, l2tp_switch_hop_run, hop);
-		if (res < 0)
+		if (res < 0) {
 			list_del(&hop->entry);
+			err = EIO;
+		} else {
+			__atomic_add_fetch(&l2tp_switch_hops_pending, 1,
+					   __ATOMIC_ACQ_REL);
+		}
 	}
 	pthread_mutex_unlock(&conn->ctx_lock);
 
-	if (res < 0)
+	if (res < 0) {
 		_free(hop);
+		errno = err;
+	}
 
 	return res;
 }
@@ -1274,6 +1424,7 @@ static void l2tp_switch_hops_cancel(struct list_head *hops)
 		list_del(&hop->entry);
 		hop->cancel(hop->arg);
 		_free(hop);
+		l2tp_switch_hop_done();
 	}
 }
 
@@ -1289,7 +1440,9 @@ static void l2tp_session_free(struct l2tp_sess_t *sess)
 	intptr_t cause = TERM_NAS_REQUEST;
 	int res = 1;
 
-	switch (sess->state1) {
+	l2tp_switch_starting_end(sess);
+
+	switch (l2tp_sess_state(sess)) {
 	case STATE_INIT:
 	case STATE_WAIT_ICRP:
 	case STATE_WAIT_ICCN:
@@ -1302,7 +1455,8 @@ static void l2tp_session_free(struct l2tp_sess_t *sess)
 	case STATE_ESTB:
 		log_session(log_info2, sess, "deleting session\n");
 
-		triton_event_fire(EV_CTRL_FINISHED, &sess->ppp.ses);
+		if (sess->ctrl_started)
+			triton_event_fire(EV_CTRL_FINISHED, &sess->ppp.ses);
 		l2tp_stat_move(&l2tp_stat.sess_active, &l2tp_stat.sess_finishing);
 
 		pthread_mutex_lock(&sess->apses_lock);
@@ -1327,7 +1481,7 @@ static void l2tp_session_free(struct l2tp_sess_t *sess)
 	default:
 		log_session(log_error, sess,
 			    "impossible to delete session: invalid state %i\n",
-			    sess->state1);
+			    l2tp_sess_state(sess));
 		return;
 	}
 
@@ -1339,8 +1493,12 @@ static void l2tp_session_free(struct l2tp_sess_t *sess)
 	if (u.peer) {
 		/* take the hold that survives the hop before dropping the
 		 * pointer hold */
-		int cascade = u.peer->state1 != STATE_CLOSE;
+		int cascade = l2tp_sess_state(u.peer) != STATE_CLOSE;
 
+		/* the result this leg ended with is not copied into the peer:
+		 * the peer's hop and its link read it from this session, which
+		 * the peer's pair pointer keeps alive (see
+		 * l2tp_switch_cdn_of()) */
 		if (cascade)
 			session_hold(u.peer);
 		session_put(u.peer);
@@ -1356,6 +1514,10 @@ static void l2tp_session_free(struct l2tp_sess_t *sess)
 				session_put(u.peer);
 		}
 	}
+
+	/* after the other leg is told, so a shutdown it completes does not
+	 * cut that CDN off */
+	l2tp_switch_call_forget(sess);
 
 	if (sess->timeout_timer.tpd)
 		triton_timer_del(&sess->timeout_timer);
@@ -1390,7 +1552,9 @@ static void l2tp_session_free(struct l2tp_sess_t *sess)
 	 */
 	session_put(sess);
 
+	/* a persistent target's tunnel outlives its calls */
 	if (--sess->paren_conn->sess_count == 0 &&
+	    !l2tp_switch_target_is_persistent(sess->paren_conn->switch_target) &&
 	    l2tp_switch_target_arm_idle_linger(sess->paren_conn->switch_target,
 					       sess->paren_conn) < 0) {
 		switch (sess->paren_conn->state) {
@@ -1398,6 +1562,11 @@ static void l2tp_session_free(struct l2tp_sess_t *sess)
 			log_tunnel(log_info1, sess->paren_conn,
 				   "no more session, disconnecting tunnel\n");
 			l2tp_tunnel_disconnect_push(sess->paren_conn, 1, 0);
+			/* the linger could not be armed: free the connect slot
+			 * as the idle-linger close does, a call arriving while
+			 * the tunnel awaits its StopCCN ack would wait for it */
+			if (sess->paren_conn->switch_target)
+				l2tp_switch_target_detach(sess->paren_conn);
 			break;
 		case STATE_FIN:
 		case STATE_FIN_WAIT:
@@ -1429,11 +1598,16 @@ static uint64_t l2tp_switch_monotonic_ms(void)
 	return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
+static int l2tp_switch_target_is_persistent(const struct l2tp_switch_target_t *target)
+{
+	return target && target->mode == L2TP_SWITCH_MODE_PERSISTENT;
+}
+
 static int l2tp_switch_target_should_retry(struct l2tp_switch_target_t *target)
 {
 	int pending;
 
-	if (target->mode == L2TP_SWITCH_MODE_PERSISTENT)
+	if (l2tp_switch_target_is_persistent(target))
 		return 1;
 
 	pthread_mutex_lock(&target->lock);
@@ -1456,6 +1630,34 @@ static void l2tp_switch_target_schedule_retry(struct l2tp_switch_target_t *targe
 				  " schedule reconnect\n", target->name);
 	}
 	pthread_mutex_unlock(&target->lock);
+}
+
+/* conn is leaving ESTB but stays around until its disconnection timer fires:
+ * let its target connect a new tunnel right away instead of when conn is
+ * freed, since calls wait for it and the reconnect timer is only started
+ * then. Callers: the peer's StopCCN and the idle-linger close (local StopCCN,
+ * the tunnel stays until it is acked); runs on conn's context and is a no-op
+ * if conn no longer holds the target's slot */
+static void l2tp_switch_target_detach(struct l2tp_conn_t *conn)
+{
+	struct l2tp_switch_target_t *target = conn->switch_target;
+	int pending;
+
+	pthread_mutex_lock(&target->lock);
+	if (target->tunnel != conn) {
+		pthread_mutex_unlock(&target->lock);
+		return;
+	}
+	target->tunnel = NULL;
+	pending = target->pending_count > 0;
+	pthread_mutex_unlock(&target->lock);
+
+	/* a tunnel that never came up goes through the reconnect timer: a peer
+	 * that answers every SCCRQ with a StopCCN must not be hammered */
+	if (pending && conn->was_estb)
+		l2tp_switch_target_connect(target);
+	else if (l2tp_switch_target_should_retry(target))
+		l2tp_switch_target_schedule_retry(target);
 }
 
 /* returns 0 only if a linger is pending for conn; conn may be NULL for the
@@ -1638,14 +1840,14 @@ static void l2tp_session_apses_finished(void *data)
 	 * l2tp_session_apses_finished() gets scheduled), it wouldn't be found
 	 * by l2tp_tunnel_get_session().
 	 */
-	if (sess->state1 == STATE_ESTB) {
+	if (l2tp_sess_state(sess) == STATE_ESTB) {
 		log_session(log_info1, sess,
 			    "data channel closed, disconnecting session\n");
 		l2tp_session_disconnect_push(sess, 2, 0);
 	} else {
 		log_session(log_warn, sess,
 			    "avoiding disconnection of session with no data channel:"
-			    " invalid state %i\n", sess->state1);
+			    " invalid state %i\n", l2tp_sess_state(sess));
 	}
 }
 
@@ -1696,7 +1898,8 @@ static void apses_finished(struct ap_session *apses)
 
 	/* payload is a session id, not a reference */
 	if (l2tp_switch_hop(sess->paren_conn, l2tp_session_apses_finished,
-			    l2tp_switch_apses_finished_cancel, (void *)sid) < 0)
+			    l2tp_switch_apses_finished_cancel, (void *)sid) < 0 &&
+	    errno != ESRCH)
 		log_ppp_warn("deleting session without notifying L2TP layer:"
 			     " call to L2TP control channel context failed\n");
 
@@ -1741,7 +1944,7 @@ static void apses_stop(void *data)
 
 		if (l2tp_switch_hop(sess->paren_conn, l2tp_session_apses_finished,
 				    l2tp_switch_apses_finished_cancel,
-				    (void *)sid) < 0)
+				    (void *)sid) < 0 && errno != ESRCH)
 			log_ppp_warn("deleting session without notifying L2TP layer:"
 				     " call to L2TP control channel context failed\n");
 	}
@@ -1885,7 +2088,7 @@ static struct l2tp_sess_t *l2tp_tunnel_alloc_session(struct l2tp_conn_t *conn)
 
 	sess->paren_conn = conn;
 	sess->peer_sid = 0;
-	sess->state1 = STATE_INIT;
+	l2tp_sess_set_state(sess, STATE_INIT);
 	sess->lns_mode = conn->lns_mode;
 	sess->hide_avps = conn->hide_avps;
 	sess->send_seq = (conf_dataseq == L2TP_DATASEQ_PREFER) ||
@@ -1894,6 +2097,7 @@ static struct l2tp_sess_t *l2tp_tunnel_alloc_session(struct l2tp_conn_t *conn)
 	sess->reorder_timeout = conf_reorder_timeout;
 	INIT_LIST_HEAD(&sess->send_queue);
 	INIT_LIST_HEAD(&sess->switch_pending_entry);
+	INIT_LIST_HEAD(&sess->switch_call_entry);
 
 	sess->timeout_timer.expire = l2tp_session_timeout;
 	sess->timeout_timer.period = conf_timeout * 1000;
@@ -2152,8 +2356,10 @@ static void l2tp_switch_target_connect(struct l2tp_switch_target_t *target)
 	struct l2tp_conn_t *conn;
 	int taken;
 
+	/* try again later rather than drop the reconnect chain: the shutdown
+	 * can still be cancelled */
 	if (ap_shutdown)
-		return;
+		goto retry;
 
 	pthread_mutex_lock(&target->lock);
 	taken = target->tunnel != NULL;
@@ -2545,9 +2751,14 @@ static int l2tp_session_connect_socket(struct l2tp_sess_t *sess, int start_ppp)
 		goto out_err;
 	}
 
-	triton_event_fire(EV_CTRL_STARTED, &sess->ppp.ses);
+	/* a switched leg has no ap_session: the event handlers would work on
+	 * a session list that was never initialised */
+	if (start_ppp) {
+		triton_event_fire(EV_CTRL_STARTED, &sess->ppp.ses);
+		sess->ctrl_started = 1;
+	}
 	l2tp_stat_move(&l2tp_stat.sess_starting, &l2tp_stat.sess_active);
-	sess->state1 = STATE_ESTB;
+	l2tp_sess_set_state(sess, STATE_ESTB);
 
 	if (start_ppp && l2tp_session_start_data_channel(sess) < 0) {
 		log_session(log_error, sess, "impossible to connect session:"
@@ -2660,6 +2871,7 @@ static int l2tp_tunnel_connect(struct l2tp_conn_t *conn)
 
 	l2tp_stat_move(&l2tp_stat.conn_starting, &l2tp_stat.conn_active);
 	conn->state = STATE_ESTB;
+	conn->was_estb = 1;
 
 	if (conn->switch_target)
 		l2tp_switch_drain_pending_calls(conn);
@@ -3121,12 +3333,18 @@ static int l2tp_send_ICCN(struct l2tp_sess_t *sess)
 		return -1;
 	}
 
-	if (l2tp_packet_add_int32(pack, TX_Speed, 1000, 1) < 0) {
+	/* a switched call reports its upstream line, anything else the
+	 * defaults */
+	if (l2tp_packet_add_int32(pack, TX_Speed,
+				  sess->switch_avps && sess->switch_avps->have_tx_speed ?
+				  (int32_t)sess->switch_avps->tx_speed : 1000, 1) < 0) {
 		log_session(log_error, sess, "impossible to send ICCN:"
 			    " adding data to packet failed\n");
 		goto out_err;
 	}
-	if (l2tp_packet_add_int32(pack, Framing_Type, 3, 1) < 0) {
+	if (l2tp_packet_add_int32(pack, Framing_Type,
+				  sess->switch_avps && sess->switch_avps->have_framing ?
+				  (int32_t)sess->switch_avps->framing : 3, 1) < 0) {
 		log_session(log_error, sess, "impossible to send ICCN:"
 			    " adding data to packet failed\n");
 		goto out_err;
@@ -3146,10 +3364,14 @@ static int l2tp_send_ICCN(struct l2tp_sess_t *sess)
 			int res;
 
 			/* l2tp_packet_add_octets() fills val.octets but the
-			 * encoder reads val.int16 for int16 AVPs */
+			 * encoder reads val.int16 and val.int32 for those */
 			if (a->is_int16 && a->len == sizeof(uint16_t))
 				res = l2tp_packet_add_int16(pack, a->id,
 					(int16_t)ntohs(*(uint16_t *)a->val),
+					a->M);
+			else if (a->is_int32 && a->len == sizeof(uint32_t))
+				res = l2tp_packet_add_int32(pack, a->id,
+					(int32_t)ntohl(*(uint32_t *)a->val),
 					a->M);
 			else
 				res = l2tp_packet_add_octets(pack, a->id,
@@ -3166,6 +3388,11 @@ static int l2tp_send_ICCN(struct l2tp_sess_t *sess)
 	}
 
 	l2tp_session_send(sess, pack);
+
+	/* the packet holds its own copy: do not keep the proxied credentials
+	 * (incl. a cleartext PAP password) for the rest of the call */
+	l2tp_switch_avps_free(sess->switch_avps);
+	sess->switch_avps = NULL;
 
 	return 0;
 
@@ -3360,13 +3587,9 @@ static void l2tp_tunnel_finwait(struct l2tp_conn_t *conn)
 	if (conn->sessions)
 		l2tp_tunnel_free_sessions(conn);
 
-	if (conn->switch_target) {
-		/* peer's StopCCN is already acked and the send queue is
-		 * empty, one rtimeout is enough */
-		conn->timeout_timer.period = conn->rtimeout;
-	} else {
-		/* stay up for a full retransmission cycle to re-ack a
-		 * retransmitted StopCCN */
+	/* stay up for a full retransmission cycle to re-ack a retransmitted
+	 * StopCCN */
+	{
 		int rtimeout = conn->rtimeout;
 		int indx;
 
@@ -3393,7 +3616,11 @@ static void l2tp_tunnel_finwait(struct l2tp_conn_t *conn)
 		 */
 		l2tp_send_ZLB(conn);
 		l2tp_tunnel_free(conn);
+		return;
 	}
+
+	if (conn->switch_target)
+		l2tp_switch_target_detach(conn);
 }
 
 static int l2tp_recv_SCCRQ(const struct l2tp_serv_t *serv,
@@ -3421,10 +3648,10 @@ static int l2tp_recv_SCCRQ(const struct l2tp_serv_t *serv,
 		return 0;
 	}
 
-	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
+	if (conf_max_starting && l2tp_starting_in_use() >= conf_max_starting)
 		return 0;
 
-	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
+	if (conf_max_sessions && l2tp_sessions_in_use() >= conf_max_sessions)
 		return 0;
 
 	if (triton_module_loaded("connlimit")
@@ -3930,7 +4157,7 @@ static int l2tp_session_incall_reply(struct l2tp_sess_t *sess)
 		goto err_timer;
 	}
 
-	sess->state1 = STATE_WAIT_ICCN;
+	l2tp_sess_set_state(sess, STATE_WAIT_ICCN);
 
 	return 0;
 
@@ -3967,10 +4194,10 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 		return 0;
 	}
 
-	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
+	if (conf_max_starting && l2tp_starting_in_use() >= conf_max_starting)
 		return 0;
 
-	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
+	if (conf_max_sessions && l2tp_sessions_in_use() >= conf_max_sessions)
 		return 0;
 
 	if (triton_module_loaded("connlimit")
@@ -4046,6 +4273,15 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 	l2tp_switch_match_lock();
 	sess->switch_target = l2tp_switch_match_attrs_locked(&pack->attrs);
 	if (sess->switch_target) {
+		if (l2tp_switch_starting_begin(sess) < 0) {
+			/* a shutdown began after the check at the top */
+			l2tp_switch_match_unlock();
+			log_tunnel(log_warn, conn, "shutdown in progress,"
+				   " disconnecting session\n");
+			res = 3;
+			err = 0;
+			goto out_reject;
+		}
 		l2tp_stat_inc(&l2tp_stat.switch_matched);
 		log_tunnel(log_info1, conn,
 			   "call matches l2tp-switch target \"%s\"\n",
@@ -4124,9 +4360,17 @@ struct l2tp_switch_link_t {
 	 * pipe_pending is what is left in pipe_rd */
 	struct triton_timer_t retry_timer;
 	unsigned int write_pending:1;
+	/* set and cleared on src->paren_conn->ctx: the read handler is off
+	 * until l2tp_switch_link_resume() has run there */
+	unsigned int yielded:1;
 	ssize_t pipe_pending;
 	int eagain_waits;
 	int enomem_retries;
+
+	/* a frame bigger than a page, read out of the pipe and not yet
+	 * written; see l2tp_switch_link_write_frame() */
+	uint8_t *frame_buf;
+	ssize_t frame_len;
 
 	struct l2tp_switch_target_t *target;
 	int from_upstream;
@@ -4137,6 +4381,7 @@ struct l2tp_switch_link_t {
 };
 
 #define L2TP_SWITCH_SPLICE_LEN (1 << 16)
+#define L2TP_SWITCH_READ_BUDGET 128
 #define L2TP_SWITCH_EAGAIN_POLL_MS 100
 #define L2TP_SWITCH_EAGAIN_MAX_WAITS 50
 
@@ -4295,6 +4540,43 @@ static void l2tp_switch_link_peek(struct l2tp_switch_link_t *link, ssize_t n)
 	}
 }
 
+/* Before Linux 6.5, splice() into a datagram socket sends one datagram per
+ * page, which cuts a frame bigger than a page into several. Such a frame goes
+ * out with write() instead, from a buffer kept across retries since write()
+ * has taken it out of the pipe. Returns n once all of it is written, -1
+ * (frame kept) if the write failed. */
+static ssize_t l2tp_switch_link_write_frame(struct l2tp_switch_link_t *link,
+					    ssize_t n, int dst_fd)
+{
+	ssize_t r;
+
+	if (link->frame_len == 0) {
+		if (!link->frame_buf) {
+			link->frame_buf = _malloc(L2TP_SWITCH_SPLICE_LEN);
+			if (!link->frame_buf) {
+				errno = ENOMEM;
+				return -1;
+			}
+		}
+		r = read(link->pipe_rd, link->frame_buf, n);
+		if (r <= 0) {
+			if (r == 0)
+				errno = EIO;
+			return -1;
+		}
+		link->frame_len = r;
+	}
+
+	r = write(dst_fd, link->frame_buf, link->frame_len);
+	if (r < 0)
+		return -1;
+
+	r = link->frame_len;
+	link->frame_len = 0;
+
+	return r;
+}
+
 /* the fd is read and used under dst->switch_fd_lock, as the destination
  * closes it on another context; *dst_fd is -1 if already closed */
 static ssize_t l2tp_switch_link_splice_out(struct l2tp_switch_link_t *link,
@@ -4307,7 +4589,11 @@ static ssize_t l2tp_switch_link_splice_out(struct l2tp_switch_link_t *link,
 	pthread_mutex_lock(&dst->switch_fd_lock);
 	*dst_fd = __atomic_load_n(&dst->ppp.fd, __ATOMIC_RELAXED);
 	if (*dst_fd >= 0) {
-		w = splice(link->pipe_rd, NULL, *dst_fd, NULL, n, SPLICE_F_MOVE);
+		if (link->frame_len > 0 || n > sysconf(_SC_PAGESIZE))
+			w = l2tp_switch_link_write_frame(link, n, *dst_fd);
+		else
+			w = splice(link->pipe_rd, NULL, *dst_fd, NULL, n,
+				   SPLICE_F_MOVE);
 		err = errno;
 	}
 	pthread_mutex_unlock(&dst->switch_fd_lock);
@@ -4316,23 +4602,34 @@ static ssize_t l2tp_switch_link_splice_out(struct l2tp_switch_link_t *link,
 	return w;
 }
 
-/* link's own context only */
-static void l2tp_switch_link_arm_retry(struct l2tp_switch_link_t *link,
-				       ssize_t n, int ms)
+/* link's own context only; returns -1, with the link untouched, if the timer
+ * cannot be armed, since reads would then stay disabled for good */
+static int l2tp_switch_link_arm_retry(struct l2tp_switch_link_t *link,
+				      ssize_t n, int ms)
 {
-	link->pipe_pending = n;
-	link->write_pending = 1;
-	triton_md_disable_handler(&link->hnd, MD_MODE_READ);
+	int res;
 
 	link->retry_timer.expire_tv.tv_sec = ms / 1000;
 	link->retry_timer.expire_tv.tv_usec = (ms % 1000) * 1000;
 	if (link->retry_timer.tpd)
-		triton_timer_mod(&link->retry_timer, 0);
+		res = triton_timer_mod(&link->retry_timer, 0);
 	else {
 		link->retry_timer.expire = l2tp_switch_link_retry_timer;
-		triton_timer_add(&link->src->paren_conn->ctx,
-				 &link->retry_timer, 0);
+		res = triton_timer_add(&link->src->paren_conn->ctx,
+				       &link->retry_timer, 0);
 	}
+	if (res < 0) {
+		log_session(log_error, link->src,
+			    "l2tp-switch: arming the retry timer failed,"
+			    " dropping call\n");
+		return -1;
+	}
+
+	link->pipe_pending = n;
+	link->write_pending = 1;
+	triton_md_disable_handler(&link->hnd, MD_MODE_READ);
+
+	return 0;
 }
 
 /* returns 0 when all reached dst, -1 after failing the link (already
@@ -4368,21 +4665,23 @@ static int l2tp_switch_link_write_out(struct l2tp_switch_link_t *link, ssize_t n
 					    L2TP_SWITCH_EAGAIN_MAX_WAITS);
 				goto fail;
 			}
-			l2tp_switch_link_arm_retry(link, n,
-						   L2TP_SWITCH_EAGAIN_POLL_MS);
+			if (l2tp_switch_link_arm_retry(link, n,
+						       L2TP_SWITCH_EAGAIN_POLL_MS) < 0)
+				goto fail;
 			return 1;
 		}
 
 		if ((errno == ENOMEM || errno == ENOBUFS) &&
 		    link->enomem_retries < L2TP_SWITCH_ENOMEM_MAX_RETRIES) {
 			link->enomem_retries++;
-			l2tp_switch_link_arm_retry(link, n, 50);
+			if (l2tp_switch_link_arm_retry(link, n, 50) < 0)
+				goto fail;
 			return 1;
 		}
 
 		if (errno == EBADF &&
 		    (__atomic_load_n(&link->dst->ppp.fd, __ATOMIC_RELAXED) < 0 ||
-		     link->dst->state1 == STATE_CLOSE))
+		     l2tp_sess_state(link->dst) == STATE_CLOSE))
 			goto peer_gone;
 
 		log_session(log_error, link->src,
@@ -4426,15 +4725,76 @@ static void l2tp_switch_link_retry_timer(struct triton_timer_t *t)
 	l2tp_switch_link_read(&link->hnd);
 }
 
+/* runs on src's tunnel context behind every call queued there before the
+ * yield; the hold on src is the hop's, the link may be gone by now */
+static void l2tp_switch_link_resume(void *data)
+{
+	struct l2tp_sess_t *src = data;
+	struct l2tp_switch_link_t *link;
+
+	pthread_mutex_lock(&l2tp_switch_pair_lock);
+	link = src->switch_link;
+	pthread_mutex_unlock(&l2tp_switch_pair_lock);
+
+	/* a link is freed only on this context, so it stays valid here */
+	if (link && link->yielded) {
+		link->yielded = 0;
+		/* adding the fd to epoll again reports the frames still
+		 * queued on it */
+		triton_md_enable_handler(&link->hnd, MD_MODE_READ);
+	}
+
+	session_put(src);
+}
+
+static void l2tp_switch_link_resume_cancel(void *data)
+{
+	session_put(data);
+}
+
+/* stops reading and queues the resume behind the calls already queued on
+ * this context; the link is already freed if the hop cannot be queued */
+static void l2tp_switch_link_yield(struct l2tp_switch_link_t *link)
+{
+	struct l2tp_sess_t *src = link->src;
+
+	triton_md_disable_handler(&link->hnd, MD_MODE_READ);
+	link->yielded = 1;
+
+	session_hold(src);
+	if (l2tp_switch_hop(src->paren_conn, l2tp_switch_link_resume,
+			    l2tp_switch_link_resume_cancel, src) < 0) {
+		session_put(src);
+		log_session(log_error, src, "l2tp-switch: yielding the relay"
+			    " failed, dropping call\n");
+		l2tp_switch_link_fail(link);
+	}
+}
+
 static int l2tp_switch_link_read(struct triton_md_handler_t *h)
 {
 	struct l2tp_switch_link_t *link = container_of(h, typeof(*link), hnd);
 	ssize_t n;
+	int budget = L2TP_SWITCH_READ_BUDGET;
 
-	if (link->write_pending)
+	if (link->write_pending || link->yielded)
 		return 0;
 
 	while (1) {
+		/* One busy call must not hold up the other work queued on
+		 * this tunnel's context (placing and ending calls, shutdown):
+		 * triton runs queued calls only when no read handler is
+		 * pending, and a registered handler of a busy call is pending
+		 * again after every slice. So after budget frames stop reading
+		 * and queue the resume as a call, which runs behind every call
+		 * queued so far: each of those waits for at most one slice.
+		 * A timer would put a floor under the delay and a ceiling of
+		 * budget frames per tick on the throughput of a call. */
+		if (!budget--) {
+			l2tp_switch_link_yield(link);
+			return 0;
+		}
+
 		n = splice(link->src->ppp.fd, NULL, link->pipe_wr, NULL,
 			  L2TP_SWITCH_SPLICE_LEN,
 			  SPLICE_F_MOVE | SPLICE_F_NONBLOCK);
@@ -4449,8 +4809,10 @@ static int l2tp_switch_link_read(struct triton_md_handler_t *h)
 			l2tp_switch_link_fail(link);
 			return 0;
 		}
+		/* an empty frame is consumed like any other; stopping here
+		 * would leave the frames queued behind it unsignalled */
 		if (n == 0)
-			return 0;
+			continue;
 
 		l2tp_switch_link_peek(link, n);
 
@@ -4494,7 +4856,37 @@ static void l2tp_switch_link_free(struct l2tp_switch_link_t *link)
 	close(link->pipe_wr);
 	close(link->peek_pipe_rd);
 	close(link->peek_pipe_wr);
+	if (link->frame_buf)
+		_free(link->frame_buf);
 	_free(link);
+}
+
+/* Ends a switched leg from its own tunnel context. Unlike a regular session
+ * it is exempt from the send-window check, so its ICRQ or ICCN can still be
+ * queued behind a full window: sending them before the CDN would only open a
+ * call on the peer that this CDN (which cannot name a session the peer never
+ * assigned) leaves behind. Ns is assigned when a packet is sent, so dropping
+ * the unsent ones leaves no gap. */
+static void l2tp_switch_session_cancel(struct l2tp_sess_t *sess,
+				       uint16_t res, uint16_t err)
+{
+	l2tp_session_clear_sendqueue(sess);
+	l2tp_session_disconnect_push(sess, res, err);
+}
+
+/* The result code the leg that ended gave (a CDN it received, or the
+ * administrative one of a shutdown), a general error if it gave none. It is
+ * stored by gone's own context before l2tp_session_free(gone) starts, and
+ * read on the other leg's context only after the hop that
+ * l2tp_session_free(gone) queues has run, or after l2tp_switch_link_splice_out()
+ * took gone->switch_fd_lock and saw the fd that l2tp_switch_link_free() reset
+ * under it: either way ordered, without atomics. gone is kept alive by the
+ * pair pointer of the leg that reads. */
+static void l2tp_switch_cdn_of(const struct l2tp_sess_t *gone,
+			       uint16_t *res, uint16_t *err)
+{
+	*res = gone && gone->switch_cdn_res ? gone->switch_cdn_res : 2;
+	*err = gone && gone->switch_cdn_res ? gone->switch_cdn_err : 6;
 }
 
 /* runs on the context of the session in data; clears the pointers as the
@@ -4506,40 +4898,53 @@ static void l2tp_switch_teardown_peer(void *data)
 
 	if (u.link)
 		l2tp_switch_link_free(u.link);
-	if (u.peer)
-		session_put(u.peer);
 	l2tp_switch_avps_free(u.avps);
 
-	if (peer->state1 != STATE_CLOSE)
+	if (l2tp_sess_state(peer) != STATE_CLOSE) {
+		uint16_t res, err;
+
+		/* u.peer is the leg that ended, still held by peer's pointer */
+		l2tp_switch_cdn_of(u.peer, &res, &err);
+
 		/* _push(): not called from l2tp_conn_read(), nothing else
 		 * flushes the CDN */
-		l2tp_session_disconnect_push(peer, 2, 6);
+		l2tp_switch_session_cancel(peer, res, err);
+	}
 
+	if (u.peer)
+		session_put(u.peer);
 	session_put(peer);
 }
 
-static void l2tp_switch_link_teardown(struct l2tp_switch_link_t *link)
+static void l2tp_switch_link_teardown(struct l2tp_switch_link_t *link,
+				      uint16_t res, uint16_t err)
 {
 	struct l2tp_sess_t *src = link->src;
 
 	l2tp_switch_link_free(link);
-	if (src->state1 != STATE_CLOSE)
-		l2tp_session_disconnect_push(src, 2, 6);
+	if (l2tp_sess_state(src) != STATE_CLOSE)
+		l2tp_switch_session_cancel(src, res, err);
 }
 
 static void l2tp_switch_link_fail(struct l2tp_switch_link_t *link)
 {
 	log_session(log_error, link->src, "l2tp-switch: splice failed,"
 		    " disconnecting session\n");
-	l2tp_switch_link_teardown(link);
+	l2tp_switch_link_teardown(link, 2, 6);
 }
 
-/* dst is already closing, but src must come down too */
+/* dst is already closing, but src must come down too, with the reason dst
+ * gave: the hop that l2tp_session_free(dst) queued finds src closed and
+ * sends nothing. link->dst is kept alive by src's pair pointer, which is
+ * released only by l2tp_session_free(src) after this. */
 static void l2tp_switch_link_peer_gone(struct l2tp_switch_link_t *link)
 {
+	uint16_t res, err;
+
 	log_session(log_info2, link->src, "l2tp-switch: the other leg of this"
 		    " call is already closing, disconnecting session\n");
-	l2tp_switch_link_teardown(link);
+	l2tp_switch_cdn_of(link->dst, &res, &err);
+	l2tp_switch_link_teardown(link, res, err);
 }
 
 static int l2tp_switch_link_create(struct l2tp_sess_t *src,
@@ -4582,8 +4987,10 @@ static int l2tp_switch_link_create(struct l2tp_sess_t *src,
 
 	/* counted here so the unsigned counter stays balanced if the second
 	 * link fails */
-	if (from_upstream)
+	if (from_upstream) {
 		__atomic_add_fetch(&target->active, 1, __ATOMIC_RELAXED);
+		l2tp_switch_starting_end(src);
+	}
 
 	link->hnd.fd = src->ppp.fd;
 	link->hnd.read = l2tp_switch_link_read;
@@ -4644,7 +5051,8 @@ static void l2tp_switch_finish_downstream(void *data)
 
 	_free(ctx);
 
-	if (upstream->state1 == STATE_CLOSE || downstream->state1 == STATE_CLOSE)
+	if (l2tp_sess_state(upstream) == STATE_CLOSE ||
+	    l2tp_sess_state(downstream) == STATE_CLOSE)
 		goto out;
 
 	if (l2tp_switch_link_create(downstream, upstream,
@@ -4657,7 +5065,7 @@ static void l2tp_switch_finish_downstream(void *data)
 	goto out;
 
 err:
-	l2tp_session_disconnect_push(downstream, 2, 6);
+	l2tp_switch_session_cancel(downstream, 2, 6);
 out:
 	session_put(downstream);
 	session_put(upstream);
@@ -4674,7 +5082,8 @@ static void l2tp_switch_finish_upstream(void *data)
 
 	/* both sessions come from ctx, the cascade may have cleared
 	 * upstream->switch_downstream */
-	if (upstream->state1 == STATE_CLOSE || downstream->state1 == STATE_CLOSE)
+	if (l2tp_sess_state(upstream) == STATE_CLOSE ||
+	    l2tp_sess_state(downstream) == STATE_CLOSE)
 		goto put_holds;
 
 
@@ -4700,7 +5109,7 @@ static void l2tp_switch_finish_upstream(void *data)
 	return;
 
 err:
-	l2tp_session_disconnect_push(upstream, 2, 6);
+	l2tp_switch_session_cancel(upstream, 2, 6);
 put_holds:
 	_free(ctx);
 	session_put(downstream);
@@ -4714,7 +5123,7 @@ static int l2tp_recv_ICRP(struct l2tp_sess_t *sess,
 	const struct l2tp_attr_t *unknown_attr = NULL;
 	const struct l2tp_attr_t *attr = NULL;
 
-	if (sess->state1 != STATE_WAIT_ICRP) {
+	if (l2tp_sess_state(sess) != STATE_WAIT_ICRP) {
 		log_session(log_warn, sess, "discarding unexpected ICRP\n");
 		return 0;
 	}
@@ -4830,17 +5239,46 @@ static int l2tp_recv_ICRP(struct l2tp_sess_t *sess,
 	return 0;
 }
 
+static struct l2tp_switch_avps *l2tp_switch_avps_get(struct l2tp_sess_t *sess)
+{
+	if (!sess->switch_avps) {
+		sess->switch_avps = _malloc(sizeof(*sess->switch_avps));
+		if (!sess->switch_avps)
+			return NULL;
+		memset(sess->switch_avps, 0, sizeof(*sess->switch_avps));
+	}
+
+	return sess->switch_avps;
+}
+
+/* TX-Speed and Framing-Type describe the upstream line; the downstream ICCN
+ * repeats them */
+static int l2tp_switch_capture_link(struct l2tp_sess_t *sess,
+				    const struct l2tp_attr_t *attr)
+{
+	struct l2tp_switch_avps *avps = l2tp_switch_avps_get(sess);
+
+	if (!avps)
+		return -1;
+
+	if (attr->attr->id == TX_Speed) {
+		avps->tx_speed = attr->val.uint32;
+		avps->have_tx_speed = 1;
+	} else {
+		avps->framing = attr->val.uint32;
+		avps->have_framing = 1;
+	}
+
+	return 0;
+}
+
 static int l2tp_switch_capture_avp(struct l2tp_sess_t *sess,
 				   const struct l2tp_attr_t *attr)
 {
 	struct l2tp_switch_avp_t *slot;
 
-	if (!sess->switch_avps) {
-		sess->switch_avps = _malloc(sizeof(*sess->switch_avps));
-		if (!sess->switch_avps)
-			return -1;
-		memset(sess->switch_avps, 0, sizeof(*sess->switch_avps));
-	}
+	if (!l2tp_switch_avps_get(sess))
+		return -1;
 
 	if (sess->switch_avps->count >=
 	    (int)(sizeof(sess->switch_avps->avp) /
@@ -4851,8 +5289,8 @@ static int l2tp_switch_capture_avp(struct l2tp_sess_t *sess,
 	slot->id = attr->attr->id;
 	slot->M = attr->M;
 
-	/* int16 AVPs keep their value in the union, so val.octets is not
-	 * valid for them */
+	/* int16 and int32 AVPs keep their value in the union, so val.octets
+	 * is not valid for them */
 	switch (attr->attr->type) {
 	case ATTR_TYPE_INT16: {
 		uint16_t val = htons(attr->val.uint16);
@@ -4863,6 +5301,17 @@ static int l2tp_switch_capture_avp(struct l2tp_sess_t *sess,
 			return -1;
 		memcpy(slot->val, &val, slot->len);
 		slot->is_int16 = 1;
+		break;
+	}
+	case ATTR_TYPE_INT32: {
+		uint32_t val = htonl(attr->val.uint32);
+
+		slot->len = sizeof(val);
+		slot->val = _malloc(slot->len);
+		if (!slot->val)
+			return -1;
+		memcpy(slot->val, &val, slot->len);
+		slot->is_int32 = 1;
 		break;
 	}
 	case ATTR_TYPE_OCTETS:
@@ -4881,7 +5330,7 @@ static int l2tp_switch_capture_avp(struct l2tp_sess_t *sess,
 	/* Name/Challenge/Response are credentials (RFC 2661 4.4.5), log
 	 * only the capture */
 	log_session(log_debug, sess,
-		    "l2tp-switch: captured proxy AVP %s (id=%d, len=%d)"
+		    "l2tp-switch: captured AVP %s (id=%d, len=%d)"
 		    " from upstream ICCN\n",
 		    attr->attr->name, attr->attr->id, slot->len);
 	if (attr->attr->id == Proxy_Authen_Type)
@@ -4896,8 +5345,8 @@ static void l2tp_switch_disconnect_upstream(void *data)
 {
 	struct l2tp_sess_t *upstream = data;
 
-	if (upstream->state1 != STATE_CLOSE)
-		l2tp_session_disconnect_push(upstream, 2, 6);
+	if (l2tp_sess_state(upstream) != STATE_CLOSE)
+		l2tp_switch_session_cancel(upstream, 2, 6);
 
 	session_put(upstream);
 }
@@ -4906,6 +5355,48 @@ static void l2tp_switch_disconnect_upstream_cancel(void *data)
 {
 	session_put(data);
 }
+
+static void l2tp_switch_shutdown_call(void *data)
+{
+	struct l2tp_sess_t *upstream = data;
+
+	/* 3: call disconnected for administrative reasons; the other leg is
+	 * told the same */
+	if (l2tp_sess_state(upstream) != STATE_CLOSE) {
+		upstream->switch_cdn_res = 3;
+		upstream->switch_cdn_err = 0;
+		l2tp_switch_session_cancel(upstream, 3, 0);
+	}
+
+	session_put(upstream);
+}
+
+/* ends all matched calls; the other leg follows when the upstream one is
+ * gone. Each call then leaves the list in l2tp_session_free(), the last one
+ * completes the shutdown. */
+static void l2tp_switch_shutdown_terminate(void)
+{
+	struct l2tp_sess_t *sess;
+
+	pthread_mutex_lock(&l2tp_switch_calls_lock);
+	list_for_each_entry(sess, &l2tp_switch_calls, switch_call_entry) {
+		if (l2tp_sess_state(sess) == STATE_CLOSE)
+			continue;
+		/* the entry is dropped before the final put, so the session
+		 * is alive; the hop owns this hold */
+		session_hold(sess);
+		if (l2tp_switch_hop(sess->paren_conn, l2tp_switch_shutdown_call,
+				    l2tp_switch_disconnect_upstream_cancel,
+				    sess) < 0)
+			session_put(sess);
+	}
+	pthread_mutex_unlock(&l2tp_switch_calls_lock);
+}
+
+static struct ap_shutdown_hook l2tp_switch_shutdown_hook = {
+	.busy = l2tp_switch_shutdown_busy,
+	.terminate = l2tp_switch_shutdown_terminate,
+};
 
 /* consumes the caller's hold on upstream on every path */
 static void l2tp_switch_disconnect_upstream_async(struct l2tp_sess_t *upstream)
@@ -5042,6 +5533,9 @@ static void l2tp_switch_close_idle_tunnel(void *data)
 		   l2tp_switch_conf_idle_linger_ms() / 1000);
 
 	l2tp_tunnel_disconnect_push(conn, 1, 0);
+	/* free the connect slot now: the tunnel lingers until the StopCCN is
+	 * acked and a call arriving meanwhile would wait for it */
+	l2tp_switch_target_detach(conn);
 
 out:
 	tunnel_put(conn);
@@ -5106,12 +5600,21 @@ static void l2tp_switch_place_call_on(struct l2tp_sess_t *upstream,
 
 	/* upstream may already be STATE_CLOSE, no teardown hook would run
 	 * again for a new pairing */
-	if (upstream->state1 == STATE_CLOSE) {
+	if (l2tp_sess_state(upstream) == STATE_CLOSE) {
 		session_put(upstream);
 		goto out_idle;
 	}
 
 	if (conn->state != STATE_ESTB) {
+		/* conn closed after the call was queued on it, e.g. the idle
+		 * linger's close ran first on conn's context: the call is
+		 * still unplaced, so it waits for the target's next tunnel */
+		if (l2tp_switch_requeue_call(upstream) == 0) {
+			log_session(log_info1, upstream,
+				    "l2tp-switch: target tunnel closed under"
+				    " the call, waiting for a new one\n");
+			return;
+		}
 		log_session(log_error, upstream,
 			    "l2tp-switch: target tunnel not available,"
 			    " disconnecting upstream call\n");
@@ -5149,7 +5652,7 @@ static void l2tp_switch_place_call_on(struct l2tp_sess_t *upstream,
 
 	/* liveness check is atomic with the cross-links under the pair lock */
 	pthread_mutex_lock(&l2tp_switch_pair_lock);
-	if (upstream->state1 == STATE_CLOSE) {
+	if (l2tp_sess_state(upstream) == STATE_CLOSE) {
 		pthread_mutex_unlock(&l2tp_switch_pair_lock);
 		l2tp_session_free(downstream);
 		session_put(upstream);
@@ -5349,13 +5852,32 @@ static int l2tp_switch_place_downstream_call(struct l2tp_sess_t *upstream)
 	return 0;
 }
 
+/* gives an unplaced call back to its on-demand target: it takes a tunnel that
+ * is up now or waits on the pending queue (pending limit and connect timeout
+ * apply), so a tunnel that keeps closing cannot spin it. Returns 0 after
+ * releasing the caller's session hold; -1 with the hold kept if the call is
+ * to be disconnected (persistent target, queue full, ...) */
+static int l2tp_switch_requeue_call(struct l2tp_sess_t *upstream)
+{
+	if (l2tp_switch_target_is_persistent(upstream->switch_target))
+		return -1;
+
+	if (l2tp_switch_place_downstream_call(upstream) < 0)
+		return -1;
+
+	/* the pending queue or the placement hop holds its own */
+	session_put(upstream);
+
+	return 0;
+}
+
 static int l2tp_recv_ICCN(struct l2tp_sess_t *sess,
 			  const struct l2tp_packet_t *pack)
 {
 	const struct l2tp_attr_t *unknown_attr = NULL;
 	const struct l2tp_attr_t *attr = NULL;
 
-	if (sess->state1 != STATE_WAIT_ICCN) {
+	if (l2tp_sess_state(sess) != STATE_WAIT_ICCN) {
 		log_session(log_warn, sess, "discarding unexpected ICCN\n");
 		return 0;
 	}
@@ -5367,6 +5889,16 @@ static int l2tp_recv_ICCN(struct l2tp_sess_t *sess,
 	if (!sess->switch_target) {
 		sess->switch_target = l2tp_switch_match_attrs_locked(&pack->attrs);
 		if (sess->switch_target) {
+			/* refused when a shutdown is pending, the walk may
+			 * have passed already */
+			if (l2tp_switch_starting_begin(sess) < 0) {
+				log_session(log_warn, sess,
+					    "shutdown in progress,"
+					    " disconnecting session\n");
+				l2tp_switch_match_unlock();
+				l2tp_session_disconnect_push(sess, 3, 0);
+				return -1;
+			}
 			l2tp_stat_inc(&l2tp_stat.switch_matched);
 			log_session(log_info1, sess,
 				    "call matches l2tp-switch target \"%s\"\n",
@@ -5377,8 +5909,18 @@ static int l2tp_recv_ICCN(struct l2tp_sess_t *sess,
 		switch (attr->attr->id) {
 		case Message_Type:
 		case Random_Vector:
+			break;
 		case TX_Speed:
 		case Framing_Type:
+			if (sess->switch_target &&
+			    l2tp_switch_capture_link(sess, attr) < 0) {
+				log_session(log_error, sess,
+					    "impossible to handle ICCN:"
+					    " capturing speed failed\n");
+				l2tp_switch_match_unlock();
+				l2tp_session_disconnect(sess, 2, 6);
+				return -1;
+			}
 			break;
 		case Init_Recv_LCP:
 		case Last_Sent_LCP:
@@ -5388,9 +5930,16 @@ static int l2tp_recv_ICCN(struct l2tp_sess_t *sess,
 		case Proxy_Authen_Challenge:
 		case Proxy_Authen_ID:
 		case Proxy_Authen_Response:
-			/* capture is not conditional on
-			 * sess->switch_target: the match may fire on an AVP
-			 * after Proxy-Authen-Type */
+		/* the optional ones: repeated to the downstream LNS as they
+		 * are, a new one is a case label here */
+		case Private_Group_ID:
+		case RX_Speed:
+			/* the match above already looked at every AVP of this
+			 * ICCN, so only a call that is going to be switched
+			 * needs them (they include the cleartext PAP
+			 * password) */
+			if (!sess->switch_target)
+				break;
 			if (l2tp_switch_capture_avp(sess, attr) < 0) {
 				log_session(log_error, sess,
 					    "impossible to handle ICCN:"
@@ -5399,9 +5948,6 @@ static int l2tp_recv_ICCN(struct l2tp_sess_t *sess,
 				l2tp_session_disconnect(sess, 2, 6);
 				return -1;
 			}
-			break;
-		case Private_Group_ID:
-		case RX_Speed:
 			break;
 		case Sequencing_Required:
 			if (conf_dataseq != L2TP_DATASEQ_DENY)
@@ -5430,6 +5976,16 @@ static int l2tp_recv_ICCN(struct l2tp_sess_t *sess,
 	}
 
 	if (sess->switch_target) {
+		/* a call matched at the ICRQ may have waited for this ICCN
+		 * through the start of a soft shutdown, which does not walk
+		 * the calls; do not start a new downstream leg */
+		if (ap_shutdown) {
+			log_session(log_warn, sess, "shutdown in progress,"
+				    " disconnecting session\n");
+			l2tp_session_disconnect_push(sess, 3, 0);
+			return -1;
+		}
+
 		/* connect the kernel socket now so peer data frames are
 		 * queued during the downstream handshake */
 		if (l2tp_session_connect_socket(sess, 0) < 0) {
@@ -5528,10 +6084,10 @@ static int l2tp_recv_OCRQ(struct l2tp_conn_t *conn,
 		return 0;
 	}
 
-	if (conf_max_starting && ap_session_stat_starting() >= conf_max_starting)
+	if (conf_max_starting && l2tp_starting_in_use() >= conf_max_starting)
 		return 0;
 
-	if (conf_max_sessions && ap_session_stat_active() + ap_session_stat_starting() >= conf_max_sessions)
+	if (conf_max_sessions && l2tp_sessions_in_use() >= conf_max_sessions)
 		return 0;
 
 	if (triton_module_loaded("connlimit")
@@ -5636,7 +6192,7 @@ static int l2tp_recv_OCRP(struct l2tp_sess_t *sess,
 	const struct l2tp_attr_t *unknown_attr = NULL;
 	const struct l2tp_attr_t *attr = NULL;
 
-	if (sess->state1 != STATE_WAIT_OCRP) {
+	if (l2tp_sess_state(sess) != STATE_WAIT_OCRP) {
 		log_session(log_warn, sess, "discarding unexpected OCRP\n");
 		return 0;
 	}
@@ -5687,7 +6243,7 @@ static int l2tp_recv_OCRP(struct l2tp_sess_t *sess,
 		return -1;
 	}
 
-	sess->state1 = STATE_WAIT_OCCN;
+	l2tp_sess_set_state(sess, STATE_WAIT_OCCN);
 
 	return 0;
 }
@@ -5698,7 +6254,7 @@ static int l2tp_recv_OCCN(struct l2tp_sess_t *sess,
 	const struct l2tp_attr_t *unknown_attr = NULL;
 	const struct l2tp_attr_t *attr = NULL;
 
-	if (sess->state1 != STATE_WAIT_OCCN) {
+	if (l2tp_sess_state(sess) != STATE_WAIT_OCCN) {
 		log_session(log_warn, sess, "discarding unexpected OCCN\n");
 		return 0;
 	}
@@ -5759,7 +6315,7 @@ static int l2tp_recv_CDN(struct l2tp_sess_t *sess,
 	uint16_t res = 0;
 	uint16_t err = 0;
 
-	if (sess->state1 == STATE_CLOSE) {
+	if (l2tp_sess_state(sess) == STATE_CLOSE) {
 		log_session(log_warn, sess, "discarding unexpected CDN\n");
 
 		return 0;
@@ -5808,6 +6364,9 @@ static int l2tp_recv_CDN(struct l2tp_sess_t *sess,
 		if (rescode_get_data(result_code, &res, &err, &err_msg) < 0) {
 			log_session(log_warn, sess,
 				    "invalid Result Code in CDN\n");
+		} else {
+			sess->switch_cdn_res = res;
+			sess->switch_cdn_err = err;
 		}
 	} else {
 		log_session(log_warn, sess,
@@ -5848,7 +6407,7 @@ static int l2tp_tunnel_recv_CDN(struct l2tp_conn_t *conn,
 static int l2tp_recv_WEN(struct l2tp_sess_t *sess,
 			 const struct l2tp_packet_t *pack)
 {
-	if (sess->state1 != STATE_ESTB || !sess->paren_conn->lns_mode) {
+	if (l2tp_sess_state(sess) != STATE_ESTB || !sess->paren_conn->lns_mode) {
 		log_session(log_warn, sess, "discarding unexpected WEN\n");
 
 		return 0;
@@ -5862,7 +6421,7 @@ static int l2tp_recv_WEN(struct l2tp_sess_t *sess,
 static int l2tp_recv_SLI(struct l2tp_sess_t *sess,
 			 const struct l2tp_packet_t *pack)
 {
-	if (sess->state1 != STATE_ESTB || sess->paren_conn->lns_mode) {
+	if (l2tp_sess_state(sess) != STATE_ESTB || sess->paren_conn->lns_mode) {
 		log_session(log_warn, sess, "discarding unexpected SLI\n");
 
 		return 0;
@@ -5900,7 +6459,8 @@ static int l2tp_session_place_call(struct l2tp_sess_t *sess)
 		goto err_timer;
 	}
 
-	sess->state1 = sess->lns_mode ? STATE_WAIT_OCRP : STATE_WAIT_ICRP;
+	l2tp_sess_set_state(sess, sess->lns_mode ? STATE_WAIT_OCRP :
+					     STATE_WAIT_ICRP);
 
 	return 0;
 
@@ -6958,12 +7518,16 @@ static void switch_show_walk(const void *nodep, VISIT which, int depth)
 	/* up may be set for a finished call until
 	 * l2tp_switch_teardown_peer() runs; STATE_CLOSE is set under the
 	 * pair lock */
-	if (up->state1 == STATE_CLOSE) {
+	if (l2tp_sess_state(up) == STATE_CLOSE) {
 		pthread_mutex_unlock(&l2tp_switch_pair_lock);
 		return;
 	}
 	snprintf(calling, sizeof(calling), "%s",
 		 up->calling_num ? up->calling_num : "?");
+	/* peer-controlled: no control characters into the CLI */
+	for (char *c = calling; *c; c++)
+		if ((unsigned char)*c < 0x20 || *c == 0x7f)
+			*c = '?';
 	up_tid = up->paren_conn->tid;
 	up_peer_tid = up->paren_conn->peer_tid;
 	if (sess->switch_link)
@@ -7007,6 +7571,7 @@ static int l2tp_switch_show_exec(const char *cmd, char * const *fields,
 				 int fields_cnt, void *client)
 {
 	struct l2tp_switch_target_t *t;
+	char *rules;
 
 	cli_send(client, "targets:\r\n");
 	list_for_each_entry(t, &l2tp_switch_targets, entry) {
@@ -7054,6 +7619,13 @@ static int l2tp_switch_show_exec(const char *cmd, char * const *fields,
 		}
 	}
 
+	rules = l2tp_switch_rules_format();
+	cli_send(client, "rules:\r\n");
+	if (rules) {
+		cli_send(client, rules);
+		_free(rules);
+	}
+
 	cli_send(client, "calls:\r\n");
 	cli_sendv(client, "  matched: %u\r\n",
 		  __atomic_load_n(&l2tp_stat.switch_matched, __ATOMIC_RELAXED));
@@ -7064,6 +7636,31 @@ static int l2tp_switch_show_exec(const char *cmd, char * const *fields,
 	cli_sendv(client, "  active: %u\r\n", l2tp_switch_active_total());
 
 	return CLI_CMD_OK;
+}
+
+static void l2tp_switch_show_help(char * const *fields, int fields_cnt,
+				  void *client)
+{
+	cli_send(client,
+		 "l2tp switch show - show switch targets, rules and calls\r\n");
+}
+
+static void l2tp_switch_add_help(char * const *fields, int fields_cnt,
+				 void *client)
+{
+	cli_send(client,
+		 "l2tp switch add <attr> <exact|prefix> <value> <target>"
+		 " - add a match rule until the next restart\r\n"
+		 "\tattr: Calling-Number, Called-Number, Sub-Address or"
+		 " Proxy-Authen-Name\r\n");
+}
+
+static void l2tp_switch_del_help(char * const *fields, int fields_cnt,
+				 void *client)
+{
+	cli_send(client,
+		 "l2tp switch del <attr> <exact|prefix> <value>"
+		 " - remove a match rule\r\n");
 }
 
 static int l2tp_switch_add_exec(const char *cmd, char * const *fields,
@@ -7140,11 +7737,16 @@ static void l2tp_init(void)
 	cli_register_simple_cmd2(l2tp_create_session_exec,
 				 l2tp_create_session_help, 3,
 				 "l2tp", "create", "session");
-	cli_register_simple_cmd2(l2tp_switch_show_exec, NULL, 3,
+	ap_shutdown_hook_register(&l2tp_switch_shutdown_hook);
+
+	cli_register_simple_cmd2(l2tp_switch_show_exec,
+				 l2tp_switch_show_help, 3,
 				 "l2tp", "switch", "show");
-	cli_register_simple_cmd2(l2tp_switch_add_exec, NULL, 3,
+	cli_register_simple_cmd2(l2tp_switch_add_exec,
+				 l2tp_switch_add_help, 3,
 				 "l2tp", "switch", "add");
-	cli_register_simple_cmd2(l2tp_switch_del_exec, NULL, 3,
+	cli_register_simple_cmd2(l2tp_switch_del_exec,
+				 l2tp_switch_del_help, 3,
 				 "l2tp", "switch", "del");
 
 	if (triton_event_register_handler(EV_CONFIG_RELOAD,

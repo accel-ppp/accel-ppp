@@ -133,7 +133,7 @@ L2TP switching
 ==============
 
 Selected incoming L2TPv2 calls can be relayed to a downstream LNS instead of
-being terminated locally (RFC 2661 section 5.1). Configure it in the
+being terminated locally. Configure it in the
 [l2tp-switch] section, see docs/l2tp_switching.md and accel-ppp.conf(5).
 
 
