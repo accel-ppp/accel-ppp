@@ -62,6 +62,8 @@ extern const char *second_call_number;
 extern int cdn_res, cdn_err;
 extern int watch_ms;
 extern int stopccn_after_iccn_ms;
+extern int icrq_after_ms;
+extern const char *calling_number2;
 extern int auth_frames_seen;
 enum { FIN_FLOOD_OFF, FIN_FLOOD_ON_SCCRQ, FIN_FLOOD_ON_CDN, FIN_FLOOD_ON_ICCN };
 extern int fin_flood_on;

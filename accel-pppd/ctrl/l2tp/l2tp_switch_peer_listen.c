@@ -346,6 +346,36 @@ static int serve_minimal_lcp_and_cdn(int fd, const struct sockaddr_in *their_add
 	return 0;
 }
 
+/* An ICRQ sent towards the daemon on the tunnel it opened: a peer that
+ * must not be able to place calls on an outbound target tunnel. */
+static int send_icrq_down(int fd, const struct sockaddr_in *their_addr,
+			  uint16_t their_tid, uint16_t *my_ns,
+			  uint16_t peer_next_nr)
+{
+	struct l2tp_packet_t *pack;
+
+	pack = l2tp_packet_alloc(2, Message_Type_Incoming_Call_Request,
+				 their_addr, 0, secret, strlen(secret));
+	if (!pack)
+		return die("ICRQ alloc failed");
+	l2tp_packet_add_int16(pack, Assigned_Session_ID, 777, 1);
+	l2tp_packet_add_int32(pack, Call_Serial_Number, 1, 1);
+	l2tp_packet_add_string(pack, Calling_Number, calling_number, 1);
+	pack->hdr.tid = htons(their_tid);
+	pack->hdr.sid = 0;
+	pack->hdr.Ns = htons((*my_ns)++);
+	pack->hdr.Nr = htons(peer_next_nr);
+	if (l2tp_packet_send(fd, pack) < 0) {
+		l2tp_packet_free(pack);
+		return die("downstream ICRQ send failed");
+	}
+	l2tp_packet_free(pack);
+	printf("event=sent_icrq_down t=%.6f\n", now_monotonic());
+	fflush(stdout);
+
+	return 0;
+}
+
 static int serve_established_tunnel(int fd, const struct sockaddr_in *their_addr,
 				    uint16_t my_tid, uint16_t their_tid,
 				    uint16_t *my_ns, uint16_t *peer_next_nr,
@@ -356,6 +386,8 @@ static int serve_established_tunnel(int fd, const struct sockaddr_in *their_addr
 	uint16_t next_sid = (uint16_t)(200 + round * 10);
 	uint16_t call_our_sid = 0, call_their_sid = 0;
 	double stopccn_at = 0;
+	double icrq_at = (icrq_after_ms > 0 && round == 0) ?
+		now_monotonic() + (double)icrq_after_ms / 1000.0 : 0;
 
 	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
 		return die("setsockopt(SO_RCVTIMEO) failed");
@@ -371,6 +403,12 @@ static int serve_established_tunnel(int fd, const struct sockaddr_in *their_addr
 					      my_ns, *peer_next_nr))
 				return 1;
 			break;
+		}
+		if (icrq_at && now_monotonic() >= icrq_at) {
+			icrq_at = 0;
+			if (send_icrq_down(fd, their_addr, their_tid, my_ns,
+					   *peer_next_nr))
+				return 1;
 		}
 		if (l2tp_recv(fd, &msg, NULL, secret, strlen(secret)) != 0)
 			continue;
@@ -396,6 +434,15 @@ static int serve_established_tunnel(int fd, const struct sockaddr_in *their_addr
 			call_their_sid = their_sid;
 			printf("event=recv_icrq round=%d t=%.6f sid=%u\n",
 			       round, now_monotonic(), (unsigned int)their_sid);
+			list_for_each_entry(attr, &msg->attrs, entry)
+				if (attr->attr &&
+				    attr->attr->id == Calling_Number) {
+					printf("event=recv_icrq_calling round=%d"
+					       " value=%.*s\n", round,
+					       (int)attr->length,
+					       (const char *)attr->val.octets);
+					break;
+				}
 		} else if (type == Message_Type_Incoming_Call_Connected) {
 			/* Check the value, not just presence. */
 			list_for_each_entry(attr, &msg->attrs, entry)

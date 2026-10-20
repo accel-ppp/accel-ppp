@@ -457,7 +457,8 @@ void __export l2tp_switch_stat_targets_foreach(l2tp_switch_target_stat_cb cb,
 	list_for_each_entry(t, &l2tp_switch_targets, entry) {
 		int up;
 
-		/* metrics thread; ->state is read under t->lock */
+		/* metrics thread; t->lock guards t->tunnel, not ->state: an
+		 * aligned int read that may be stale */
 		pthread_mutex_lock(&t->lock);
 		up = t->tunnel != NULL && t->tunnel->state == STATE_ESTB;
 		pthread_mutex_unlock(&t->lock);
@@ -4167,6 +4168,34 @@ err:
 	return -1;
 }
 
+/* An outbound target tunnel only carries calls we place; a call request from
+ * its peer is refused whatever the match rules say. The CDN is addressed to
+ * the peer's Assigned Session ID, if it gave one. */
+static int l2tp_reject_on_target_tunnel(struct l2tp_conn_t *conn,
+					const struct l2tp_packet_t *pack,
+					const char *what)
+{
+	const struct l2tp_attr_t *attr;
+	uint16_t peer_sid = 0;
+
+	if (!conn->switch_target)
+		return 0;
+
+	list_for_each_entry(attr, &pack->attrs, entry)
+		if (attr->attr->id == Assigned_Session_ID) {
+			peer_sid = attr->val.uint16;
+			break;
+		}
+
+	log_tunnel(log_warn, conn, "l2tp-switch: %s on an outbound target"
+		   " tunnel, rejecting\n", what);
+	if (l2tp_tunnel_send_CDN(0, peer_sid, 2, 6) < 0)
+		log_tunnel(log_warn, conn, "impossible to reject %s:"
+			   " sending CDN failed\n", what);
+
+	return 1;
+}
+
 static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 			  const struct l2tp_packet_t *pack)
 {
@@ -4182,6 +4211,9 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 	uint8_t	called[L2TP_AVP_LEN_MASK] = {0};
 	int n = 0;
 	int m = 0;
+
+	if (l2tp_reject_on_target_tunnel(conn, pack, "ICRQ"))
+		return 0;
 
 	if (conn->state != STATE_ESTB && conn->lns_mode) {
 		log_tunnel(log_warn, conn, "discarding unexpected ICRQ\n");
@@ -6072,6 +6104,9 @@ static int l2tp_recv_OCRQ(struct l2tp_conn_t *conn,
 	uint16_t sid = 0;
 	uint16_t res;
 	uint16_t err;
+
+	if (l2tp_reject_on_target_tunnel(conn, pack, "OCRQ"))
+		return 0;
 
 	if (conn->state != STATE_ESTB && !conn->lns_mode) {
 		log_tunnel(log_warn, conn, "discarding unexpected OCRQ\n");

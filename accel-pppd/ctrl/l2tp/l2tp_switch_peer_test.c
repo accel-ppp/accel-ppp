@@ -172,6 +172,10 @@ int send_cdn_res = -1, send_cdn_err;
 int send_cdn_delay_ms = 1000;
 /* listener, first round: send a StopCCN this long after the ICCN, whatever else is going on */
 int stopccn_after_iccn_ms;
+/* listener: send an ICRQ down the established tunnel after this long */
+int icrq_after_ms;
+/* second Calling-Number AVP in the ICRQ, to exercise duplicate AVPs */
+const char *calling_number2;
 /* listener: keep reading the data socket this long after the LCP settled */
 int watch_ms;
 /* client: optional Proxy-Authen-ID (-1: not sent) and Proxy-Authen-Challenge (hex) */
@@ -328,6 +332,8 @@ int main(int argc, char **argv)
 		{"send-cdn", required_argument, 0, 0x144},
 		{"send-cdn-delay-ms", required_argument, 0, 0x145},
 		{"stopccn-after-iccn-ms", required_argument, 0, 0x146},
+		{"icrq-after-ms", required_argument, 0, 0x150},
+		{"calling-number2", required_argument, 0, 0x151},
 		{0, 0, 0, 0},
 	};
 
@@ -455,6 +461,14 @@ int main(int argc, char **argv)
 			if (stopccn_after_iccn_ms <= 0)
 				return die("invalid --stopccn-after-iccn-ms");
 			break;
+		case 0x150:
+			icrq_after_ms = atoi(optarg);
+			if (icrq_after_ms <= 0)
+				return die("invalid --icrq-after-ms");
+			break;
+		case 0x151:
+			calling_number2 = optarg;
+			break;
 		case 0x145:
 			send_cdn_delay_ms = atoi(optarg);
 			if (send_cdn_delay_ms < 0)
@@ -573,6 +587,9 @@ int main(int argc, char **argv)
 	if (stopccn_after_iccn_ms > 0 && !listen_mode)
 		return die("--stopccn-after-iccn-ms requires --listen");
 
+	if (icrq_after_ms > 0 && !listen_mode)
+		return die("--icrq-after-ms requires --listen");
+
 	if (send_cdn_res >= 0 && listen_mode)
 		return die("--send-cdn is for the calling role");
 
@@ -679,6 +696,8 @@ int main(int argc, char **argv)
 	l2tp_packet_add_int16(pack, Assigned_Session_ID, local_sid, 1);
 	l2tp_packet_add_int32(pack, Call_Serial_Number, 1, 1);
 	l2tp_packet_add_string(pack, Calling_Number, calling_number, 1);
+	if (calling_number2)
+		l2tp_packet_add_string(pack, Calling_Number, calling_number2, 1);
 	if (called_number)
 		l2tp_packet_add_string(pack, Called_Number, called_number, 1);
 	pack->hdr.tid = htons(peer_tid);
