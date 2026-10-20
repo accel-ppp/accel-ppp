@@ -1809,10 +1809,11 @@ static void l2tp_tunnel_free(struct l2tp_conn_t *conn)
 	/* unregistering drops queued calls; take the switch hops off in the
 	 * same critical section */
 	pthread_mutex_lock(&conn->ctx_lock);
-	if (conn->ctx.tpd) {
-		list_splice_init(&conn->switch_hops, &hops);
+	/* also when l2tp_tunnel_start() failed and already unregistered the
+	 * context: a hop queued before that was dropped with it */
+	list_splice_init(&conn->switch_hops, &hops);
+	if (conn->ctx.tpd)
 		triton_context_unregister(&conn->ctx);
-	}
 	pthread_mutex_unlock(&conn->ctx_lock);
 
 	l2tp_switch_hops_cancel(&hops);
@@ -2186,7 +2187,11 @@ err_ctx_md_timer:
 err_ctx_md:
 	triton_md_unregister_handler(&conn->hnd, 0);
 err_ctx:
+	/* under ctx_lock so l2tp_switch_hop() either queued its hop before
+	 * (l2tp_tunnel_free() cancels it) or sees the context gone */
+	pthread_mutex_lock(&conn->ctx_lock);
 	triton_context_unregister(&conn->ctx);
+	pthread_mutex_unlock(&conn->ctx_lock);
 err:
 	return -1;
 }
