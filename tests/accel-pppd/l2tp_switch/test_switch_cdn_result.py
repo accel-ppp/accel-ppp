@@ -199,3 +199,77 @@ def test_upstream_cdn_result_reaches_downstream(pytestconfig, accel_cmd, accel_p
     m = re.search(r"event=recv_cdn round=0 t=[\d.]+ res=(\d+) err=(\d+)", down_out)
     assert m, down_out
     assert (m.group(1), m.group(2)) == ("5", "9"), down_out
+
+
+@pytest.mark.l2tp_switch
+@pytest.mark.parametrize(
+    "downstream_code, expected",
+    [
+        # RFC 2661 4.4.2 defines 1-11: passed on as they came
+        ("6:1", ("cdn", "6", "1")),
+        ("8:3", ("cdn", "8", "3")),
+        ("11:5", ("cdn", "11", "5")),
+        # reserved or undefined: the generic 2/6 (error condition)
+        ("0:1", ("cdn", "2", "6")),
+        ("12:1", ("cdn", "2", "6")),
+        ("65535:9", ("cdn", "2", "6")),
+    ],
+)
+def test_downstream_cdn_result_is_relayed_only_if_defined(
+    pytestconfig, accel_cmd, accel_pppd, peer_bin, downstream_code, expected
+):
+    """Only the CDN result codes of RFC 2661 (1-11) are passed upstream;
+    anything else the downstream sends becomes the generic 2/6."""
+    switch_cli, switch_l2tp, down_l2tp = alloc_ports(3)
+
+    down_thread, down_ctrl = l2tp_peer_process.start(
+        peer_bin,
+        [
+            "--listen",
+            "--peer-port", str(down_l2tp),
+            "--secret", "downstreamsecret",
+            "--rounds", "1",
+            "--cdn-after-iccn-ms", "300",
+            "--cdn-result", downstream_code,
+            "--hold-seconds", "30",
+        ],
+    )
+
+    try:
+        s_started, s_thread, s_ctrl, s_cfg = start_instance(
+            accel_pppd,
+            accel_cmd,
+            switch_cli,
+            "127.0.0.1",
+            switch_l2tp,
+            "upstreamsecret",
+            extra=f"""
+    [l2tp-switch]
+    target=downstream,127.0.0.1,{down_l2tp},downstreamsecret,persistent
+    match=Calling-Number,exact,472913,downstream
+    """,
+        )
+        assert s_started
+
+        try:
+            assert "[up]" in wait_up(accel_cmd, switch_cli)
+
+            thread, ctrl = l2tp_peer_process.start(
+                peer_bin,
+                [
+                    "--peer-addr", "127.0.0.1",
+                    "--peer-port", str(switch_l2tp),
+                    "--secret", "upstreamsecret",
+                    "--calling-number", "472913",
+                    "--wait-cdn",
+                ],
+            )
+            rc, out, err = l2tp_peer_process.wait(thread, ctrl, 10.0)
+            assert rc == 0, err
+
+            assert _got_cdn(out) == expected, out
+        finally:
+            accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=switch_cli)
+            config.delete_tmp(s_cfg)
+    finally:
+        finish_harness(down_thread, down_ctrl, 5.0)

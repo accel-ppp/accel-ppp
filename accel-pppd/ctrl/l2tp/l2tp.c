@@ -4906,6 +4906,10 @@ static void l2tp_switch_session_cancel(struct l2tp_sess_t *sess,
 	l2tp_session_disconnect_push(sess, res, err);
 }
 
+/* CDN Result Codes of RFC 2661 4.4.2 */
+#define L2TP_CDN_RES_MIN 1
+#define L2TP_CDN_RES_MAX 11
+
 /* The result code the leg that ended gave (a CDN it received, or the
  * administrative one of a shutdown), a general error if it gave none. It is
  * stored by gone's own context before l2tp_session_free(gone) starts, and
@@ -4917,8 +4921,16 @@ static void l2tp_switch_session_cancel(struct l2tp_sess_t *sess,
 static void l2tp_switch_cdn_of(const struct l2tp_sess_t *gone,
 			       uint16_t *res, uint16_t *err)
 {
-	*res = gone && gone->switch_cdn_res ? gone->switch_cdn_res : 2;
-	*err = gone && gone->switch_cdn_res ? gone->switch_cdn_err : 6;
+	uint16_t r = gone ? gone->switch_cdn_res : 0;
+
+	/* only the CDN Result Codes of RFC 2661 4.4.2 are relayed */
+	if (r >= L2TP_CDN_RES_MIN && r <= L2TP_CDN_RES_MAX) {
+		*res = r;
+		*err = gone->switch_cdn_err;
+	} else {
+		*res = 2;
+		*err = 6;
+	}
 }
 
 /* runs on the context of the session in data; clears the pointers as the
