@@ -540,9 +540,10 @@ int l2tp_packet_send(int sock, struct l2tp_packet_t *pack)
 		avp->flags = htons((attr->M ? L2TP_AVP_FLAG_M : 0) |
 				   (attr->H ? L2TP_AVP_FLAG_H : 0) |
 				   ((sizeof(*avp) + attr->length) & L2TP_AVP_LEN_MASK));
-		if (attr->H)
-			memcpy(avp->val, attr->val.octets, attr->length);
-		else
+		if (attr->H) {
+			if (attr->length > 0)
+				memcpy(avp->val, attr->val.octets, attr->length);
+		} else
 			switch (attr->attr->type) {
 			case ATTR_TYPE_INT16:
 				u_write_be16(avp->val, attr->val.int16);
@@ -555,7 +556,8 @@ int l2tp_packet_send(int sock, struct l2tp_packet_t *pack)
 				break;
 			case ATTR_TYPE_STRING:
 			case ATTR_TYPE_OCTETS:
-				memcpy(avp->val, attr->val.string, attr->length);
+				if (attr->length > 0)
+					memcpy(avp->val, attr->val.string, attr->length);
 				break;
 			}
 		ptr += sizeof(*avp) + attr->length;

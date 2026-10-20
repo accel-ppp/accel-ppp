@@ -455,6 +455,38 @@ static void test_proxy_avp_round_trip(void)
 }
 
 /*
+ * An empty AVP has no value buffer: sending it must not memcpy() from a
+ * NULL pointer (flagged by UBSAN even with a zero length).
+ */
+static void test_empty_avp(void)
+{
+	struct l2tp_packet_t *pack;
+	const struct l2tp_attr_t *attr;
+
+	pack = l2tp_packet_alloc(2, Message_Type_Incoming_Call_Connected,
+				 &sock_addr, 0, secret, sizeof(secret) - 1);
+	CHECK(pack != NULL);
+	if (!pack)
+		return;
+
+	CHECK(l2tp_packet_add_octets(pack, Last_Sent_LCP, NULL, 0, 0) == 0);
+
+	CHECK(l2tp_packet_send(sock, pack) == 0);
+	l2tp_packet_free(pack);
+
+	pack = NULL;
+	CHECK(l2tp_recv(sock, &pack, NULL, secret, sizeof(secret) - 1) == 0);
+	CHECK(pack != NULL);
+	if (!pack)
+		return;
+
+	attr = find_attr(pack, Last_Sent_LCP);
+	CHECK(attr && attr->length == 0);
+
+	l2tp_packet_free(pack);
+}
+
+/*
  * A hidden AVP deciphered with the wrong secret yields a random length
  * prefix. Whatever it is, the parser must not read outside the AVP.
  */
@@ -515,6 +547,7 @@ int main(void)
 	test_roundtrip(0);
 	test_roundtrip(1);
 	test_proxy_avp_round_trip();
+	test_empty_avp();
 	test_wrong_secret();
 
 	close(sock);
