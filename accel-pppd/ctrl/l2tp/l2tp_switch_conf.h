@@ -42,6 +42,8 @@ struct l2tp_switch_target_t {
 	struct triton_timer_t idle_timer;
 
 	unsigned int active;
+	/* calls placed on the tunnel and not yet answered, atomic */
+	unsigned int inflight_count;
 	uint64_t rx_bytes;
 	uint64_t tx_bytes;
 };

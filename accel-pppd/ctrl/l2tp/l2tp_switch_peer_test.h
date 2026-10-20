@@ -38,6 +38,7 @@ extern int send_stopccn;
 extern int stopccn_delay_ms;
 extern int no_ack_stopccn;
 extern int no_ack_cdn;
+extern int no_icrp;
 extern int wait_cdn;
 extern int real_ppp;
 extern int minimal_lcp;

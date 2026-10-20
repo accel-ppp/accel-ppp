@@ -133,6 +133,8 @@ int stopccn_delay_ms;
 int no_ack_stopccn;
 /* listener: leave the switch's CDN unacknowledged, so it keeps retransmitting */
 int no_ack_cdn;
+/* listener: acknowledge ICRQs with a ZLB and never answer them with an ICRP */
+int no_icrp;
 int wait_cdn;
 int real_ppp;
 int minimal_lcp;
@@ -317,6 +319,7 @@ int main(int argc, char **argv)
 		{"fin-flood-no-stopccn", no_argument, 0, 0x112},
 		{"flood-heavy", no_argument, 0, 0x130},
 		{"no-ack-cdn", no_argument, 0, 0x131},
+		{"no-icrp", no_argument, 0, 0x160},
 		{"busy-flood-ms", required_argument, 0, 'B'},
 		{"tx-speed", required_argument, 0, 'Y'},
 		{"framing", required_argument, 0, 'Z'},
@@ -456,6 +459,9 @@ int main(int argc, char **argv)
 			if (parse_result_pair(optarg, &send_cdn_res, &send_cdn_err))
 				return die("invalid --send-cdn (R:E)");
 			break;
+		case 0x160:
+			no_icrp = 1;
+			break;
 		case 0x146:
 			stopccn_after_iccn_ms = atoi(optarg);
 			if (stopccn_after_iccn_ms <= 0)
@@ -566,6 +572,9 @@ int main(int argc, char **argv)
 				   " [--busy-flood-ms N]");
 		}
 	}
+
+	if (no_icrp && !listen_mode)
+		return die("--no-icrp requires --listen");
 
 	if (no_ack_stopccn && !listen_mode)
 		return die("--no-ack-stopccn requires --listen");

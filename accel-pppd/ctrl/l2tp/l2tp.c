@@ -78,6 +78,8 @@
 #define DEFAULT_RETRANSMIT 5
 
 #define L2TP_SWITCH_PENDING_MAX 64
+/* calls placed on a target's tunnel and not yet answered with an ICRP */
+#define L2TP_SWITCH_INFLIGHT_MAX L2TP_SWITCH_PENDING_MAX
 
 int conf_verbose = 0;
 int conf_hide_avps = 0;
@@ -120,6 +122,7 @@ struct l2tp_stat_t
 
 	unsigned int switch_matched;
 	unsigned int switch_placed;
+	unsigned int switch_refused;
 	unsigned int switch_downstream_connected;
 
 
@@ -173,6 +176,8 @@ struct l2tp_sess_t
 	uint16_t switch_cdn_err;
 	/* set while this matched call is counted in l2tp_switch_starting */
 	int switch_starting;
+	/* set while this call is counted in its target's inflight_count */
+	int switch_inflight;
 	/* EV_CTRL_STARTED was fired, so EV_CTRL_FINISHED is due */
 	unsigned int ctrl_started:1;
 	/* on l2tp_switch_calls from the match until the session is freed */
@@ -300,6 +305,7 @@ static void l2tp_switch_target_idle_timer(struct triton_timer_t *t);
 static int l2tp_switch_target_is_persistent(const struct l2tp_switch_target_t *target);
 static void l2tp_switch_target_detach(struct l2tp_conn_t *conn);
 static int l2tp_switch_requeue_call(struct l2tp_sess_t *upstream);
+static int l2tp_switch_inflight_begin(struct l2tp_sess_t *upstream, int force);
 static void l2tp_switch_target_connect(struct l2tp_switch_target_t *target);
 
 /* switched calls have no ap_session, so the core never counts them as
@@ -370,6 +376,15 @@ static void l2tp_switch_starting_end(struct l2tp_sess_t *sess)
 {
 	if (__atomic_exchange_n(&sess->switch_starting, 0, __ATOMIC_RELAXED))
 		__atomic_sub_fetch(&l2tp_switch_starting, 1, __ATOMIC_RELAXED);
+}
+
+/* idempotent, callable from any context */
+static void l2tp_switch_inflight_end(struct l2tp_sess_t *sess)
+{
+	if (sess->switch_target &&
+	    __atomic_exchange_n(&sess->switch_inflight, 0, __ATOMIC_RELAXED))
+		__atomic_sub_fetch(&sess->switch_target->inflight_count, 1,
+				   __ATOMIC_RELAXED);
 }
 
 static unsigned int l2tp_starting_in_use(void)
@@ -1451,6 +1466,7 @@ static void l2tp_session_free(struct l2tp_sess_t *sess)
 	int res = 1;
 
 	l2tp_switch_starting_end(sess);
+	l2tp_switch_inflight_end(sess);
 
 	switch (l2tp_sess_state(sess)) {
 	case STATE_INIT:
@@ -2817,6 +2833,7 @@ static void l2tp_switch_drain_pending_calls(struct l2tp_conn_t *conn)
 		sess = list_first_entry(&drained, typeof(*sess),
 					switch_pending_entry);
 		list_del(&sess->switch_pending_entry);
+		l2tp_switch_inflight_begin(sess, 1);
 		l2tp_switch_place_call_on(sess, conn);
 	}
 
@@ -5225,6 +5242,9 @@ static int l2tp_recv_ICRP(struct l2tp_sess_t *sess,
 		    assigned_sid->val.uint16);
 	sess->peer_sid = assigned_sid->val.uint16;
 
+	if (sess->switch_upstream)
+		l2tp_switch_inflight_end(sess->switch_upstream);
+
 	if (unknown_attr) {
 		log_session(log_error, sess, "impossible to handle ICRP:"
 			    " unknown mandatory attribute type %i,"
@@ -5660,8 +5680,10 @@ static void l2tp_switch_place_call_on(struct l2tp_sess_t *upstream,
 
 
 	/* upstream may already be STATE_CLOSE, no teardown hook would run
-	 * again for a new pairing */
+	 * again for a new pairing; nor would l2tp_session_free() release the
+	 * slot the caller took for it, so release it here */
 	if (l2tp_sess_state(upstream) == STATE_CLOSE) {
+		l2tp_switch_inflight_end(upstream);
 		session_put(upstream);
 		goto out_idle;
 	}
@@ -5716,6 +5738,7 @@ static void l2tp_switch_place_call_on(struct l2tp_sess_t *upstream,
 	if (l2tp_sess_state(upstream) == STATE_CLOSE) {
 		pthread_mutex_unlock(&l2tp_switch_pair_lock);
 		l2tp_session_free(downstream);
+		l2tp_switch_inflight_end(upstream);
 		session_put(upstream);
 		goto out_idle;
 	}
@@ -5817,6 +5840,35 @@ static int l2tp_switch_open_connect_budget_locked(struct l2tp_switch_target_t *t
 	return 0;
 }
 
+/* counts a call placed on the target's tunnel until the downstream answers
+ * with an ICRP, so a target that never answers cannot make send_queue grow
+ * without bound. Caller holds target->lock for the limit to be exact; force
+ * skips the limit (calls that waited on the pending queue are already
+ * bounded by it). Idempotent per call. */
+static int l2tp_switch_inflight_begin(struct l2tp_sess_t *upstream, int force)
+{
+	struct l2tp_switch_target_t *target = upstream->switch_target;
+
+	if (__atomic_load_n(&upstream->switch_inflight, __ATOMIC_RELAXED))
+		return 0;
+
+	if (!force &&
+	    __atomic_load_n(&target->inflight_count, __ATOMIC_RELAXED) >=
+	    L2TP_SWITCH_INFLIGHT_MAX) {
+		l2tp_stat_inc(&l2tp_stat.switch_refused);
+		log_session(log_error, upstream, "l2tp-switch: target \"%s\""
+			    " has %u calls awaiting an answer, disconnecting"
+			    " upstream call\n", target->name,
+			    L2TP_SWITCH_INFLIGHT_MAX);
+		return -1;
+	}
+
+	__atomic_store_n(&upstream->switch_inflight, 1, __ATOMIC_RELAXED);
+	__atomic_add_fetch(&target->inflight_count, 1, __ATOMIC_RELAXED);
+
+	return 0;
+}
+
 /* caller holds target->lock so a tunnel coming up cannot drain the queue
  * first; *need_connect is set if the caller must start the connect */
 static int l2tp_switch_enqueue_call_locked(struct l2tp_sess_t *upstream,
@@ -5889,6 +5941,10 @@ static int l2tp_switch_place_downstream_call(struct l2tp_sess_t *upstream)
 	pthread_mutex_lock(&target->lock);
 	conn = target->tunnel;
 	if (conn && conn->state == STATE_ESTB) {
+		if (l2tp_switch_inflight_begin(upstream, 0) < 0) {
+			pthread_mutex_unlock(&target->lock);
+			return -1;
+		}
 		target->idle_deadline = 0;
 		tunnel_hold(conn);
 		pthread_mutex_unlock(&target->lock);
@@ -5920,6 +5976,8 @@ static int l2tp_switch_place_downstream_call(struct l2tp_sess_t *upstream)
  * to be disconnected (persistent target, queue full, ...) */
 static int l2tp_switch_requeue_call(struct l2tp_sess_t *upstream)
 {
+	l2tp_switch_inflight_end(upstream);
+
 	if (l2tp_switch_target_is_persistent(upstream->switch_target))
 		return -1;
 
@@ -7713,6 +7771,8 @@ static int l2tp_switch_show_exec(const char *cmd, char * const *fields,
 		  __atomic_load_n(&l2tp_stat.switch_placed, __ATOMIC_RELAXED));
 	cli_sendv(client, "  connected: %u\r\n",
 		  __atomic_load_n(&l2tp_stat.switch_downstream_connected, __ATOMIC_RELAXED));
+	cli_sendv(client, "  refused: %u\r\n",
+		  __atomic_load_n(&l2tp_stat.switch_refused, __ATOMIC_RELAXED));
 	cli_sendv(client, "  active: %u\r\n", l2tp_switch_active_total());
 
 	return CLI_CMD_OK;

@@ -184,6 +184,12 @@ LNS is waiting for a live exchange and needs to be configured to accept
   has a throughput limit. The sockets use 4 MiB buffers, and a call is
   ended with a CDN if the outbound `splice(2)` keeps failing with `ENOMEM`
   or `ENOBUFS` for about a second.
+- At most 64 calls per target can be waiting for the downstream LNS to answer
+  (an ICRP) at once, in addition to the 64 queued for an on-demand tunnel
+  that is still connecting. A call over the limit is refused with a CDN and
+  logged, and counted as `refused` in the `calls:` totals of `l2tp switch
+  show`. A slot is free again when the downstream answers or the call ends.
+  This bounds the memory a slow or unresponsive downstream LNS can pin.
 - Switched calls have no PPP session, but `max-sessions` and `max-starting`
   in `[common]` still apply to them. A call counts as starting from its
   match until the relay is up, and as active from then on.

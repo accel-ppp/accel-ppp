@@ -511,7 +511,8 @@ static int serve_established_tunnel(int fd, const struct sockaddr_in *their_addr
 		l2tp_packet_free(msg);
 		fflush(stdout);
 
-		if (type == Message_Type_Incoming_Call_Request && their_sid) {
+		if (type == Message_Type_Incoming_Call_Request && their_sid &&
+		    !no_icrp) {
 			rsp = l2tp_packet_alloc(2, Message_Type_Incoming_Call_Reply,
 						their_addr, 0, secret,
 						strlen(secret));
