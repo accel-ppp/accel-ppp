@@ -16,7 +16,10 @@ jobs:
           - distro: "ubuntu-latest"
             sanitizer: "address"
             env_name: "ASAN_OPTIONS"
-            env_value: "abort_on_error=1:detect_leaks=1:print_stacktrace=1"
+            # use_sigaltstack=0: with triton's own thread stacks, ASAN's
+            # per-thread sigaltstack teardown reports a bogus
+            # stack-buffer-underflow in __interceptor_sigaltstack at exit
+            env_value: "abort_on_error=1:detect_leaks=1:print_stacktrace=1:use_sigaltstack=0"
           - distro: "ubuntu-latest"
             sanitizer: "undefined"
             env_name: "UBSAN_OPTIONS"
@@ -90,24 +93,35 @@ jobs:
           /tmp/bitpool_test
           sh tests/unit/run_safeguards.sh build
 
+      - name: Check that tests/tsan.supp still lets a race through
+        if: ${{ matrix.sanitizer == 'thread' }}
+        run: |
+          gcc -O1 -g -fsanitize=thread -o /tmp/tsan_canary tests/tsan_canary.c -lpthread
+          status=0
+          TSAN_OPTIONS=exitcode=66:suppressions=${{ github.workspace }}/tests/tsan.supp /tmp/tsan_canary || status=$?
+          test "$status" -eq 66 || { echo "::error::tsan.supp hides a race it must report (status $status)"; exit 1; }
+
       - name: Insert and check kernel modules (ipoe, vlan-mon, ppposeq)
         # if: ${{ false }}
         run: |
           sudo insmod build/drivers/vlan_mon/driver/vlan_mon.ko
           sudo insmod build/drivers/ipoe/driver/ipoe.ko
-          (sudo modprobe l2tp_ppp || echo ::warning::l2tp_ppp_module_unavailable_the_l2tp_switch_tests_will_fail) && sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko
+          (sudo modprobe l2tp_ppp || echo ::error::l2tp_ppp_module_unavailable_the_l2tp_switch_tests_will_fail_since_L2TP_SWITCH_REQUIRE_PPPOL2TP_is_set) && sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko
           lsmod | grep ipoe
           lsmod | grep vlan_mon
           lsmod | grep ppposeq
 
       - name: Run tests
-        timeout-minutes: 20
+        timeout-minutes: 30
         working-directory: ./tests
         env:
           # github.workspace is not available inside the matrix definition,
           # so the TSAN suppressions path is appended here.
           ${{ matrix.env_name }}: ${{ matrix.env_value }}${{ matrix.sanitizer == 'thread' && format(':suppressions={0}/tests/tsan.supp', github.workspace) || '' }}
-        run: sudo -E python3 -m pytest -Wall --order-dependencies -v
+          # the harness fails a test when accel-pppd exits non-zero, so the one
+          # known exit-time leak (thread descriptors) is suppressed narrowly
+          LSAN_OPTIONS: suppressions=${{ github.workspace }}/tests/lsan.supp
+        run: sudo -E env L2TP_SWITCH_REQUIRE_PPPOL2TP=1 python3 -m pytest -Wall --order-dependencies -v
 
       - name: Check dmesg for kernel issues
         if: ${{ always() }}

@@ -3,13 +3,22 @@
 # These are races in the logging and triton core (mempool counters, contexts
 # and timers handed between worker threads). They trigger on any log_*() call,
 # independent of the l2tp-switch code, and halt_on_error=1 would abort the
-# daemon on the first one. Entries are by function, so a race in l2tp.c or
-# l2tp_switch_conf.c still fails the run.
+# daemon on the first one.
+#
+# TSAN matches a "race:" entry against EVERY frame of BOTH stacks of a report,
+# so "race:foo" hides any race whose stack passes through foo(), however deep.
+# Every l2tp callback runs under triton_thread, so a plain "race:triton_thread"
+# would hide every race in l2tp.c. "race_top:" matches only the innermost frame
+# (the racing access itself), which is what the thread entry needs. A race in
+# l2tp.c or l2tp_switch_conf.c is therefore reported unless one of the
+# "race:" functions below is on a stack of that report; a report that has one
+# is hidden, so keep this list short and do not add broad entries.
+# tests/tsan_canary.c checks that the file still lets a race through.
 race:mempool_alloc
 race:mempool_free
 race:unpack_msg
 race:general_log
-race:triton_thread
+race_top:triton_thread
 race:triton_context_unregister
 race:triton_queue_ctx
 race:md_thread

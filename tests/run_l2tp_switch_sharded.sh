@@ -7,8 +7,8 @@
 # <image> is a Linux image with accel-ppp built and installed and the test
 # requirements present. Each container has its own network namespace, so
 # shards do not compete for ports; the repository is mounted at /src.
-# TSAN_OPTIONS, ASAN_OPTIONS and UBSAN_OPTIONS are forwarded to the
-# containers (suppressions are in /src/tests/tsan.supp).
+# TSAN_OPTIONS, LSAN_OPTIONS, ASAN_OPTIONS and UBSAN_OPTIONS are forwarded to the
+# containers (suppressions are in /src/tests/tsan.supp and lsan.supp).
 # DOCKER_RUN_ARGS adds extra `docker run` arguments, e.g. --cpus=0.5 to
 # imitate a slow CI runner.
 # Shards run the binary baked into the image, so re-create it after rebuilding.
@@ -43,7 +43,7 @@ for shard in "$work"/shard*; do
     name=$(basename "$shard")
     # shellcheck disable=SC2086 # DOCKER_RUN_ARGS is meant to word-split
     docker run --rm --privileged ${DOCKER_RUN_ARGS:-} -v "$repo":/src \
-        -e TSAN_OPTIONS -e ASAN_OPTIONS -e UBSAN_OPTIONS "$image" sh -c \
+        -e TSAN_OPTIONS -e LSAN_OPTIONS -e ASAN_OPTIONS -e UBSAN_OPTIONS "$image" sh -c \
         "cd /src/tests && python3 -m pytest -q -p no:cacheprovider -m l2tp_switch $(cat "$shard")" \
         >"$work/$name.log" 2>&1 &
     pids="$pids $! $name"
