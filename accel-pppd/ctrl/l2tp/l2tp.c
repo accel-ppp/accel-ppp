@@ -4211,6 +4211,8 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 	uint8_t	called[L2TP_AVP_LEN_MASK] = {0};
 	int n = 0;
 	int m = 0;
+	int seen_calling = 0;
+	int seen_called = 0;
 
 	if (l2tp_reject_on_target_tunnel(conn, pack, "ICRQ"))
 		return 0;
@@ -4251,14 +4253,20 @@ static int l2tp_recv_ICRQ(struct l2tp_conn_t *conn,
 			case Call_Serial_Number:
 			case Bearer_Type:
 			case Calling_Number:
-			/* Save Calling-Number L2TP attribute locally */
-				if (attr->attr->id == Calling_Number) {
+			/* Save Calling-Number L2TP attribute locally; the first
+			 * one wins, as for the match rules */
+				if (attr->attr->id == Calling_Number &&
+				    !seen_calling) {
+					seen_calling = 1;
 					n = attr->length;
 					memcpy(calling,attr->val.octets,n);
 				}
 			case Called_Number:
-			/* Save Called-Number L2TP attribute locally */
-				if (attr->attr->id == Called_Number) {
+			/* Save Called-Number L2TP attribute locally; the first
+			 * one wins, as for the match rules */
+				if (attr->attr->id == Called_Number &&
+				    !seen_called) {
+					seen_called = 1;
 					m = attr->length;
 					memcpy(called,attr->val.octets,m);
 				}

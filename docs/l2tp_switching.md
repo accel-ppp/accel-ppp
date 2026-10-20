@@ -66,6 +66,10 @@ Calling-Number and Called-Number arrive in the ICRQ and are matched then.
 Proxy-Authen-Name arrives in the ICCN and is matched then. A call that an
 ICRQ rule has already assigned to a target is not matched again at ICCN.
 
+If an ICRQ carries the same AVP more than once, only the first one is
+matched, and it is also the value forwarded downstream: a later
+Calling-Number or Called-Number cannot steer the call to another target.
+
 Two rules on the same AVP must not overlap, that is, no value may be matched
 by two rules. A `prefix` rule may not cover the value of another rule, and
 two `exact` rules overlap only if their values are equal, so `abc` and `abcd`

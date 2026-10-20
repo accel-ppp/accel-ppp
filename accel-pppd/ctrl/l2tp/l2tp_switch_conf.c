@@ -148,7 +148,8 @@ struct l2tp_switch_target_t *l2tp_switch_match_locked(const struct l2tp_dict_att
 }
 
 /* Rules are tried in configuration order, so the peer's AVP order does not
- * pick the target */
+ * pick the target. Only the first AVP of an attribute is tested, the one the
+ * call carries on (see l2tp_recv_ICRQ()). */
 struct l2tp_switch_target_t *l2tp_switch_match_attrs_locked(const struct list_head *attrs)
 {
 	struct l2tp_switch_rule_t *r;
@@ -156,9 +157,12 @@ struct l2tp_switch_target_t *l2tp_switch_match_attrs_locked(const struct list_he
 
 	list_for_each_entry(r, &l2tp_switch_rules, entry)
 		list_for_each_entry(attr, attrs, entry)
-			if (r->attr == attr->attr &&
-			    rule_matches_value(r, attr->val.octets, attr->length))
-				return r->target;
+			if (r->attr == attr->attr) {
+				if (rule_matches_value(r, attr->val.octets,
+						       attr->length))
+					return r->target;
+				break;
+			}
 
 	return NULL;
 }
