@@ -928,7 +928,11 @@ Specifies secret to connect to server.
 If this option is given and
 .B n
 is greater than 0, then attributes sent in L2TP packets will be hidden (for
-AVPs that support it).
+AVPs that support it). With
+.B [l2tp-switch]
+targets, set it to 1: the proxied authentication AVPs, including a PAP
+password, are otherwise sent to the downstream LNS in the clear, and a
+warning is logged.
 .TP
 .BI "dataseq=" deny|allow|prefer|require
 Specify data sequencing negotiation algorithm:

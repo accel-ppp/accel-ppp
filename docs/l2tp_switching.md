@@ -170,7 +170,9 @@ LNS is waiting for a live exchange and needs to be configured to accept
   (name, challenge, response, and the cleartext password of a PAP exchange)
   are repeated to the downstream LNS. They are hidden on the wire only if
   `hide-avps=1` is set in `[l2tp]`, which applies to every tunnel, upstream
-  and downstream. Without it they cross the downstream path in the clear.
+  and downstream. Without it they cross the downstream path in the clear, so
+  set `hide-avps=1` whenever a target is configured. The daemon logs a
+  warning at startup and on configuration reload if it is not set.
 
 - The MRU negotiated upstream is passed to the downstream LNS in the Proxy
   LCP AVPs and is not renegotiated. The path to each downstream LNS needs at
