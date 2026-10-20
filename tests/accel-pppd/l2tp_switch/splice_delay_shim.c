@@ -9,6 +9,10 @@
  * Each delayed call appends two lines to SPLICE_SHIM_LOG with what the fd
  * referred to before and after the delay.
  *
+ * With SPLICE_SHIM_RCVBUF set, every PPPoX socket the process opens gets that
+ * receive buffer size, so a flood queued for a slow relay is not dropped by
+ * the kernel.
+ *
  *   gcc -shared -fPIC -O1 -o splice_delay_shim.so splice_delay_shim.c -ldl
  */
 #define _GNU_SOURCE
@@ -17,6 +21,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/socket.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -101,4 +106,26 @@ ssize_t splice(int fd_in, loff_t *off_in, int fd_out, loff_t *off_out,
 	}
 
 	return real_splice(fd_in, off_in, fd_out, off_out, len, flags);
+}
+
+#define SHIM_AF_PPPOX 24
+
+int socket(int domain, int type, int protocol)
+{
+	static int (*real_socket)(int, int, int);
+	const char *rcvbuf = getenv("SPLICE_SHIM_RCVBUF");
+	int fd;
+
+	if (!real_socket)
+		real_socket = dlsym(RTLD_NEXT, "socket");
+	fd = real_socket(domain, type, protocol);
+	if (fd >= 0 && rcvbuf && domain == SHIM_AF_PPPOX) {
+		int size = atoi(rcvbuf);
+
+		/* diagnostics-grade: the test notices if frames are lost */
+		(void)setsockopt(fd, SOL_SOCKET, SO_RCVBUFFORCE, &size,
+				 sizeof(size));
+	}
+
+	return fd;
 }

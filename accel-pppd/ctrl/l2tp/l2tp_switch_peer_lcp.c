@@ -143,6 +143,40 @@ struct minimal_lcp_hdr {
 #define MINIMAL_LCP_OPT_AUTH 3
 #define MINIMAL_CHAP_ALG_MD5 0x05
 
+/* PAP or CHAP frames read off the data socket, whichever loop read them */
+int auth_frames_seen;
+
+static void count_auth_frame(const struct minimal_lcp_hdr *hdr)
+{
+	if (hdr->proto == htons(MINIMAL_PPP_PAP) ||
+	    hdr->proto == htons(MINIMAL_PPP_CHAP))
+		auth_frames_seen++;
+}
+
+/* Reads (and counts) what arrives for ms more; the LCP loop stops reading
+ * once both directions are open. */
+void watch_auth_frames(int data_fd, int ms)
+{
+	uint8_t buf[1500];
+	double until = now_monotonic() + (double)ms / 1000.0;
+
+	for (;;) {
+		struct pollfd pfd = { .fd = data_fd, .events = POLLIN };
+		double left = until - now_monotonic();
+		ssize_t n;
+
+		if (left <= 0)
+			break;
+		if (poll(&pfd, 1, (int)(left * 1000) + 1) <= 0)
+			break;
+		n = read(data_fd, buf, sizeof(buf));
+		if (n <= 0)
+			break;
+		if (n >= (ssize_t)sizeof(struct minimal_lcp_hdr))
+			count_auth_frame((struct minimal_lcp_hdr *)buf);
+	}
+}
+
 /* Never answers PAP, authentication comes from the ICCN proxy AVPs */
 int run_minimal_lcp(int data_fd, int timeout_seconds)
 {
@@ -237,6 +271,7 @@ int run_minimal_lcp(int data_fd, int timeout_seconds)
 		{
 			struct minimal_lcp_hdr *hdr = (struct minimal_lcp_hdr *)buf;
 
+			count_auth_frame(hdr);
 			if (hdr->proto != htons(MINIMAL_PPP_LCP))
 				continue;
 

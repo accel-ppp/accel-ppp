@@ -85,7 +85,7 @@ static int send_call_cdn(int fd, const struct sockaddr_in *their_addr,
 			 const uint16_t *peer_next_nr)
 {
 	struct l2tp_packet_t *pack;
-	struct l2tp_avp_result_code res = { htons(1), htons(0) };
+	struct l2tp_avp_result_code res = { htons(cdn_res), htons(cdn_err) };
 
 	pack = l2tp_packet_alloc(2, Message_Type_Call_Disconnect_Notify,
 				 their_addr, 0, secret, strlen(secret));
@@ -107,6 +107,89 @@ static int send_call_cdn(int fd, const struct sockaddr_in *their_addr,
 
 	return 0;
 }
+
+static void print_hex(const uint8_t *p, int len)
+{
+	int i;
+
+	if (len < 0)
+		putchar('-');
+	else if (len == 0)
+		printf("empty");
+	for (i = 0; i < len; i++)
+		printf("%02x", p[i]);
+}
+
+/* the five Proxy-Authen AVPs of an ICCN as they came off the wire, "-" for an absent one */
+static void print_proxy_avps(const struct l2tp_packet_t *msg, int round)
+{
+	const struct l2tp_attr_t *attr;
+	const uint8_t *val[5] = { 0 };
+	int len[5] = { -1, -1, -1, -1, -1 };
+	int type = -1, id = -1;
+
+	list_for_each_entry(attr, &msg->attrs, entry) {
+		if (!attr->attr)
+			continue;
+		switch (attr->attr->id) {
+		case Proxy_Authen_Type:
+			type = attr->val.uint16;
+			break;
+		case Proxy_Authen_ID:
+			id = attr->val.uint16;
+			break;
+		case Proxy_Authen_Name:
+			val[0] = attr->val.octets;
+			len[0] = attr->length;
+			break;
+		case Proxy_Authen_Challenge:
+			val[1] = attr->val.octets;
+			len[1] = attr->length;
+			break;
+		case Proxy_Authen_Response:
+			val[2] = attr->val.octets;
+			len[2] = attr->length;
+			break;
+		}
+	}
+	printf("event=recv_proxy_avps round=%d type=%d id=%d name=", round, type, id);
+	print_hex(val[0], len[0]);
+	printf(" challenge=");
+	print_hex(val[1], len[1]);
+	printf(" response=");
+	print_hex(val[2], len[2]);
+	printf("\n");
+}
+
+static int send_late_stopccn(int fd, const struct sockaddr_in *their_addr,
+			     uint16_t my_tid, uint16_t their_tid,
+			     uint16_t *my_ns, uint16_t peer_next_nr)
+{
+	struct l2tp_avp_result_code rc = { htons(1), htons(6) };
+	struct l2tp_packet_t *pack;
+
+	pack = l2tp_packet_alloc(2, Message_Type_Stop_Ctrl_Conn_Notify,
+				 their_addr, 0, secret, strlen(secret));
+	if (!pack)
+		return die("StopCCN alloc failed");
+	l2tp_packet_add_int16(pack, Assigned_Tunnel_ID, my_tid, 1);
+	l2tp_packet_add_octets(pack, Result_Code, (uint8_t *)&rc, sizeof(rc), 1);
+	pack->hdr.tid = htons(their_tid);
+	pack->hdr.sid = 0;
+	pack->hdr.Ns = htons((*my_ns)++);
+	pack->hdr.Nr = htons(peer_next_nr);
+	if (l2tp_packet_send(fd, pack) < 0) {
+		l2tp_packet_free(pack);
+		return die("StopCCN send failed");
+	}
+	l2tp_packet_free(pack);
+	printf("event=sent_late_stopccn round=0 t=%.6f\n", now_monotonic());
+	fflush(stdout);
+
+	return 0;
+}
+
+static int flooded_upstream;
 
 static int serve_minimal_lcp_and_cdn(int fd, const struct sockaddr_in *their_addr,
 				     uint16_t my_tid, uint16_t their_tid,
@@ -143,6 +226,17 @@ static int serve_minimal_lcp_and_cdn(int fd, const struct sockaddr_in *their_add
 	if (data_fd < 0)
 		return die("data socket() failed");
 
+	/* A burst of data frames must not overflow the receive queue. SO_RCVBUF
+	 * is silently capped at net.core.rmem_max, so force it when privileged. */
+	if (listen_rcvbuf > 0 &&
+	    setsockopt(data_fd, SOL_SOCKET, SO_RCVBUFFORCE, &listen_rcvbuf,
+		       sizeof(listen_rcvbuf)) < 0 &&
+	    setsockopt(data_fd, SOL_SOCKET, SO_RCVBUF, &listen_rcvbuf,
+		       sizeof(listen_rcvbuf)) < 0) {
+		close(data_fd);
+		return die("data socket setsockopt(SO_RCVBUF) failed");
+	}
+
 	memset(&pppox_addr, 0, sizeof(pppox_addr));
 	pppox_addr.sa_family = AF_PPPOX;
 	pppox_addr.sa_protocol = PX_PROTO_OL2TP;
@@ -164,14 +258,76 @@ static int serve_minimal_lcp_and_cdn(int fd, const struct sockaddr_in *their_add
 		return die("data socket setsockopt(LNSMODE) failed");
 	}
 
+	if (listen_count_data && data_pattern) {
+		static uint8_t buf[65536];
+		struct pollfd pfd = { .fd = data_fd, .events = POLLIN };
+		size_t frames = 0, bytes = 0, longest = 0;
+		double first = 0, last = 0;
+		int wait_ms = 8000;
+
+		/* the client's pattern starts with a byte no LCP frame does;
+		 * the first frame can be a while away, then they come fast */
+		while (1) {
+			/* drain without a poll() per frame, which would cap the
+			 * rate the burst can be counted at */
+			ssize_t r = recv(data_fd, buf, sizeof(buf), MSG_DONTWAIT);
+
+			if (r < 0 && errno == EAGAIN) {
+				if (poll(&pfd, 1, wait_ms) <= 0)
+					break;
+				continue;
+			}
+			if (r <= 0)
+				break;
+			wait_ms = 1500;
+			if (buf[0] != (uint8_t)data_pattern[0])
+				continue;
+			last = now_monotonic();
+			if (!frames)
+				first = last;
+			frames++;
+			bytes += r;
+			if ((size_t)r > longest)
+				longest = r;
+		}
+		printf("event=data_rx round=%d frames=%zu bytes=%zu longest=%zu"
+		       " first=%.6f last=%.6f\n",
+		       round, frames, bytes, longest, first, last);
+		fflush(stdout);
+		close(data_fd);
+		return 0;
+	}
+
 	if (run_minimal_lcp(data_fd, 5) != 0) {
 		close(data_fd);
-		return -1;
+		return die("downstream minimal LCP failed");
 	}
 
 	printf("event=downstream_lcp_settled round=%d t=%.6f\n",
 	       round, now_monotonic());
 	fflush(stdout);
+
+	if (watch_ms > 0) {
+		watch_auth_frames(data_fd, watch_ms);
+		printf("event=downstream_saw_auth_frames n=%d\n", auth_frames_seen);
+		fflush(stdout);
+	}
+
+	/* --data-pattern with --data-count and no --count-data: the first call
+	 * floods its upstream leg with that many frames at once */
+	if (data_pattern && data_count > 0 && !flooded_upstream) {
+		int i;
+
+		flooded_upstream = 1;
+		for (i = 0; i < data_count; i++)
+			if (write(data_fd, data_pattern, strlen(data_pattern)) < 0) {
+				close(data_fd);
+				return die("data socket write() failed");
+			}
+		printf("event=data_sent round=%d frames=%d t=%.6f\n", round,
+		       data_count, now_monotonic());
+		fflush(stdout);
+	}
 
 	if (cdn_after_lcp_ms > 0) {
 		usleep((useconds_t)cdn_after_lcp_ms * 1000);
@@ -199,6 +355,7 @@ static int serve_established_tunnel(int fd, const struct sockaddr_in *their_addr
 	struct timeval tv = { .tv_sec = 0, .tv_usec = 200000 };
 	uint16_t next_sid = (uint16_t)(200 + round * 10);
 	uint16_t call_our_sid = 0, call_their_sid = 0;
+	double stopccn_at = 0;
 
 	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
 		return die("setsockopt(SO_RCVTIMEO) failed");
@@ -209,6 +366,12 @@ static int serve_established_tunnel(int fd, const struct sockaddr_in *their_addr
 		uint16_t type = 0, their_sid = 0;
 		int stop = 0, flood = 0;
 
+		if (stopccn_at && now_monotonic() >= stopccn_at) {
+			if (send_late_stopccn(fd, their_addr, my_tid, their_tid,
+					      my_ns, *peer_next_nr))
+				return 1;
+			break;
+		}
 		if (l2tp_recv(fd, &msg, NULL, secret, strlen(secret)) != 0)
 			continue;
 		if (!msg)
@@ -231,8 +394,8 @@ static int serve_established_tunnel(int fd, const struct sockaddr_in *their_addr
 				    attr->attr->id == Assigned_Session_ID)
 					their_sid = (uint16_t)attr->val.int16;
 			call_their_sid = their_sid;
-			printf("event=recv_icrq round=%d t=%.6f\n",
-			       round, now_monotonic());
+			printf("event=recv_icrq round=%d t=%.6f sid=%u\n",
+			       round, now_monotonic(), (unsigned int)their_sid);
 		} else if (type == Message_Type_Incoming_Call_Connected) {
 			/* Check the value, not just presence. */
 			list_for_each_entry(attr, &msg->attrs, entry)
@@ -242,11 +405,48 @@ static int serve_established_tunnel(int fd, const struct sockaddr_in *their_addr
 					       " round=%d t=%.6f value=%u\n",
 					       round, now_monotonic(),
 					       (unsigned int)attr->val.uint16);
+			{
+				unsigned int tx = 0, fr = 0, rx = 0;
+				const char *group = "";
+				int group_len = 0;
+
+				list_for_each_entry(attr, &msg->attrs, entry) {
+					if (!attr->attr)
+						continue;
+					if (attr->attr->id == TX_Speed)
+						tx = (unsigned int)attr->val.uint32;
+					else if (attr->attr->id == Framing_Type)
+						fr = (unsigned int)attr->val.uint32;
+					else if (attr->attr->id == RX_Speed)
+						rx = (unsigned int)attr->val.uint32;
+					else if (attr->attr->id == Private_Group_ID) {
+						group = (const char *)attr->val.octets;
+						group_len = attr->length;
+					}
+				}
+				printf("event=recv_iccn_link round=%d tx=%u framing=%u"
+				       " rx=%u group=%.*s\n",
+				       round, tx, fr, rx, group_len, group);
+			}
+			if (stopccn_after_iccn_ms > 0 && round == 0 && !stopccn_at)
+				stopccn_at = now_monotonic() +
+					(double)stopccn_after_iccn_ms / 1000.0;
+			print_proxy_avps(msg, round);
 			printf("event=recv_iccn round=%d t=%.6f\n",
 			       round, now_monotonic());
 		} else if (type == Message_Type_Call_Disconnect_Notify) {
-			printf("event=recv_cdn round=%d t=%.6f\n",
-			       round, now_monotonic());
+			unsigned int cres = 0, cerr = 0;
+
+			list_for_each_entry(attr, &msg->attrs, entry)
+				if (attr->attr && attr->attr->id == Result_Code &&
+				    attr->length >= 4) {
+					cres = (attr->val.octets[0] << 8) |
+					       attr->val.octets[1];
+					cerr = (attr->val.octets[2] << 8) |
+					       attr->val.octets[3];
+				}
+			printf("event=recv_cdn round=%d t=%.6f res=%u err=%u\n",
+			       round, now_monotonic(), cres, cerr);
 			flood = fin_flood_on == FIN_FLOOD_ON_CDN;
 		} else if (type == Message_Type_Stop_Ctrl_Conn_Notify) {
 			unsigned int res = 0;
@@ -282,6 +482,11 @@ static int serve_established_tunnel(int fd, const struct sockaddr_in *their_addr
 			l2tp_packet_free(rsp);
 			call_our_sid = next_sid;
 			next_sid++;
+		} else if (stop && no_ack_stopccn) {
+			/* leave the switch's StopCCN unacknowledged */
+		} else if (type == Message_Type_Call_Disconnect_Notify &&
+			   no_ack_cdn) {
+			/* leave the switch's CDN unacknowledged */
 		} else {
 			/* A ZLB takes no Ns slot (RFC 2661 5.8). */
 			rsp = l2tp_packet_alloc(2, 0, their_addr, 0, NULL, 0);
@@ -299,7 +504,7 @@ static int serve_established_tunnel(int fd, const struct sockaddr_in *their_addr
 		if (type == Message_Type_Incoming_Call_Connected && minimal_lcp) {
 			if (serve_minimal_lcp_and_cdn(fd, their_addr, my_tid, their_tid,
 						      call_our_sid, call_their_sid,
-						      my_ns, peer_next_nr, round) < 0)
+						      my_ns, peer_next_nr, round) != 0)
 				return 1;
 			if (cdn_after_lcp_ms > 0)
 				break;
@@ -343,6 +548,15 @@ static int serve_established_tunnel(int fd, const struct sockaddr_in *their_addr
 	return 0;
 }
 
+static int msg_is_sccrq(const struct l2tp_packet_t *msg)
+{
+	const struct l2tp_attr_t *msg_type =
+		list_first_entry(&msg->attrs, typeof(*msg_type), entry);
+
+	return msg_type->attr && msg_type->attr->id == Message_Type &&
+	       msg_type->val.uint16 == Message_Type_Start_Ctrl_Conn_Request;
+}
+
 int run_listen_mode(int rounds)
 {
 	struct sockaddr_in bind_addr = {
@@ -369,7 +583,13 @@ int run_listen_mode(int rounds)
 		uint8_t their_chall[160];
 		int their_chall_len = 0;
 		uint8_t challresp[MD5_DIGEST_LENGTH];
+		struct timeval no_timeout = { 0, 0 };
 		int err;
+
+		/* a previous round's serve loop left a receive timeout behind */
+		if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &no_timeout,
+			       sizeof(no_timeout)) < 0)
+			return die("setsockopt(SO_RCVTIMEO) failed");
 
 		for (;;) {
 			if (l2tp_recv(fd, &req, NULL, secret, strlen(secret)) != 0)
@@ -377,6 +597,11 @@ int run_listen_mode(int rounds)
 			if (!req)
 				continue;
 			if (list_empty(&req->attrs)) {
+				l2tp_packet_free(req);
+				continue;
+			}
+			/* a StopCCN the previous round left behind is not a tunnel request */
+			if (!msg_is_sccrq(req)) {
 				l2tp_packet_free(req);
 				continue;
 			}
@@ -506,9 +731,12 @@ int run_listen_mode(int rounds)
 			fflush(stdout);
 		}
 
+		if (serve_delay_ms > 0)
+			usleep((useconds_t)serve_delay_ms * 1000);
+
 		if (hold_seconds > 0 &&
 		    serve_established_tunnel(fd, &their_addr, my_tid, their_tid,
-					     &my_ns, &peer_next_nr, round) < 0)
+					     &my_ns, &peer_next_nr, round) != 0)
 			return 1;
 	}
 

@@ -35,25 +35,40 @@ extern const char *proxy_username;
 extern const char *proxy_password;
 extern const char *data_pattern;
 extern int send_stopccn;
+extern int stopccn_delay_ms;
+extern int no_ack_stopccn;
+extern int no_ack_cdn;
 extern int wait_cdn;
 extern int real_ppp;
 extern int minimal_lcp;
 enum { LCP_AUTH_NONE, LCP_AUTH_PAP, LCP_AUTH_CHAP };
 extern int lcp_auth;
 extern int hold_seconds;
+extern int data_count;
+extern int rx_speed;
+extern const char *private_group_id;
+extern int listen_count_data;
+extern int listen_rcvbuf;
 extern int listen_mode;
 extern int listen_rounds;
 extern int sccrp_delay_ms;
+extern int serve_delay_ms;
 extern int sccrp_storm_ms;
 extern int cdn_timeout;
 extern int cdn_after_lcp_ms;
 extern int cdn_after_iccn_ms;
+extern int iccn_delay_ms;
 extern const char *second_call_number;
+extern int cdn_res, cdn_err;
+extern int watch_ms;
+extern int stopccn_after_iccn_ms;
+extern int auth_frames_seen;
 enum { FIN_FLOOD_OFF, FIN_FLOOD_ON_SCCRQ, FIN_FLOOD_ON_CDN, FIN_FLOOD_ON_ICCN };
 extern int fin_flood_on;
 extern int fin_flood_stopccn_ms;
 extern int fin_flood_start_ms;
 extern int fin_flood_len_ms;
+extern int fin_flood_no_stopccn;
 extern uint16_t local_tid;
 extern uint16_t local_sid;
 
@@ -67,12 +82,14 @@ void comp_chap_md5(uint8_t *md5, uint8_t ident,
 		   const void *chall, size_t chall_len);
 int run_real_ppp(int data_fd);
 int run_minimal_lcp(int data_fd, int timeout_seconds);
+void watch_auth_frames(int data_fd, int ms);
 
 /* l2tp_switch_peer_flood.c */
 int parse_fin_flood(const char *spec);
 int run_fin_flood(int fd, const struct sockaddr_in *their_addr,
 		  uint16_t their_tid, uint16_t our_tid,
 		  uint16_t ns, uint16_t nr);
+extern int flood_heavy;
 extern int busy_flood_ms;
 int run_busy_flood(int fd, const struct sockaddr_in *their_addr, int ms);
 

@@ -188,8 +188,8 @@ class TestSelfLoopTarget:
 
     @pytest.fixture()
     def accel_pppd_config(self, l2tp_switch_config):
-        # Adds [l2tp] bind=; with the default INADDR_ANY the self-loop check
-        # is skipped.
+        # Adds [l2tp] bind=. Without it the bind is the wildcard and any
+        # local address loops (see TestSelfLoopTargetWildcardBind).
         return (
             """
     [modules]
@@ -356,9 +356,12 @@ class TestTargetSecretNotLeakedOnParseError:
         params=[
             ("acme,203.0.113.50,not-a-port,{secret}", "invalid peer-port"),
             ("acme,not-an-address,1701,{secret}", "invalid peer-addr"),
+            # inet_aton() takes these, the strict parser does not
+            ("acme,127.1,1701,{secret}", "invalid peer-addr"),
+            ("acme,0x7f.0.0.1,1701,{secret}", "invalid peer-addr"),
             ("acme,203.0.113.50,1701,{secret},bogus-mode", "unknown mode"),
         ],
-        ids=["bad-port", "bad-addr", "bad-mode"],
+        ids=["bad-port", "bad-addr", "short-addr", "hex-addr", "bad-mode"],
     )
     def target_case(self, request):
         template, expect = request.param
@@ -425,6 +428,158 @@ class TestTargetSecretNotLeakedOnParseError:
             assert expect in log, (
                 f"expected error ({expect!r}) not found in log:\n{log}"
             )
+        finally:
+            accel_pppd_process.end(thread, ctrl, accel_cmd, 10.0, cli_port=cli_port)
+            config.delete_tmp(cfg)
+
+
+@pytest.mark.l2tp_switch
+class TestSelfLoopTargetWildcardBind:
+    """With no [l2tp] bind= the daemon listens on every local address, so a
+    target on any local address and the daemon's own port is a loop: a fatal
+    config-load error, with a log line that says why. A target on another
+    port is fine."""
+
+    LOOP_MSG = "is this host's own [l2tp] bind:port"
+
+    def _start(self, accel_pppd, accel_cmd, cli_port, l2tp_port, target_line):
+        fd, cfg = tempfile.mkstemp()
+        os.close(fd)
+        debug = cfg + ".debug"
+        with open(cfg, "w") as f:
+            f.write(f"""
+    [modules]
+    log_file
+    log_syslog
+    l2tp
+    [l2tp-switch]
+    target={target_line}
+    match=Calling-Number,exact,472913,loopback
+    [core]
+    log-error={cfg}.err
+    [log]
+    log-file={cfg}.log
+    log-debug={debug}
+    level=5
+    copy=1
+    [cli]
+    tcp=127.0.0.1:{cli_port}
+    [client-ip-range]
+    127.0.0.0/8
+    [l2tp]
+    port={l2tp_port}
+    secret=testsecret
+    [ppp]
+    verbose=1
+    """)
+        started, thread, ctrl = accel_pppd_process.start(
+            accel_pppd, ["-c" + cfg], accel_cmd, 5.0, cli_port=cli_port
+        )
+        return started, thread, ctrl, cfg, debug
+
+    @staticmethod
+    def _read(path):
+        try:
+            with open(path, "r", errors="replace") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    @pytest.mark.parametrize("addr", ["127.0.0.1", "127.0.0.2", "0.0.0.0"])
+    def test_local_target_on_own_port_rejected(self, accel_cmd, accel_pppd, addr):
+        cli_port, l2tp_port = alloc_ports(2)
+
+        started, thread, ctrl, cfg, debug = self._start(
+            accel_pppd, accel_cmd, cli_port, l2tp_port,
+            f"loopback,{addr},{l2tp_port},targetsecret",
+        )
+        try:
+            assert started is False, f"a target at {addr}:{l2tp_port} loops back"
+            log = self._read(debug)
+            assert self.LOOP_MSG in log, (
+                f"rejected, but not for looping back:\n{log}"
+            )
+        finally:
+            accel_pppd_process.end(thread, ctrl, accel_cmd, 10.0, cli_port=cli_port)
+            config.delete_tmp(cfg)
+
+    def test_local_target_on_another_port_accepted(self, accel_cmd, accel_pppd):
+        cli_port, l2tp_port, other_port = alloc_ports(3)
+
+        started, thread, ctrl, cfg, debug = self._start(
+            accel_pppd, accel_cmd, cli_port, l2tp_port,
+            f"loopback,127.0.0.1,{other_port},targetsecret",
+        )
+        try:
+            assert started is True, self._read(debug)
+            assert self.LOOP_MSG not in self._read(debug)
+        finally:
+            accel_pppd_process.end(thread, ctrl, accel_cmd, 10.0, cli_port=cli_port)
+            config.delete_tmp(cfg)
+
+
+@pytest.mark.l2tp_switch
+class TestMatchAttrNeverInCallSetup:
+    """match= on a string AVP that never appears in an ICRQ or ICCN is a
+    fatal config-load error. The matcher only sees Called-Number,
+    Calling-Number and Sub-Address (ICRQ) and Proxy-Authen-Name (ICCN), so a
+    rule on Host-Name or Vendor-Name would silently never match.
+
+    The daemon exits right after a config load error, so the test reads the
+    log-debug= file, which is written inline.
+    """
+
+    @pytest.fixture(params=["Host-Name", "Vendor-Name"])
+    def attr_name(self, request):
+        return request.param
+
+    def test_match_attr_outside_icrq_iccn_rejected(
+        self, accel_cmd, accel_pppd, attr_name
+    ):
+        cli_port, l2tp_port = alloc_ports(2)
+        fd, cfg = tempfile.mkstemp()
+        os.close(fd)
+        debug = cfg + ".debug"
+        with open(cfg, "w") as f:
+            f.write(f"""
+    [modules]
+    log_file
+    log_syslog
+    l2tp
+    [l2tp-switch]
+    target=acme,203.0.113.50,1701,targetsecret
+    match={attr_name},exact,lac-east,acme
+    [core]
+    log-error={cfg}.err
+    [log]
+    log-file={cfg}.log
+    log-debug={debug}
+    level=5
+    copy=1
+    [cli]
+    tcp=127.0.0.1:{cli_port}
+    [client-ip-range]
+    127.0.0.0/8
+    [l2tp]
+    bind=127.0.0.1
+    port={l2tp_port}
+    secret=testsecret
+    [ppp]
+    verbose=1
+    """)
+        started, thread, ctrl = accel_pppd_process.start(
+            accel_pppd, ["-c" + cfg], accel_cmd, 5.0, cli_port=cli_port
+        )
+        try:
+            assert started is False, (
+                f"match={attr_name} must be a fatal config-load error"
+            )
+            try:
+                with open(debug, "r", errors="replace") as f:
+                    log = f.read()
+            except OSError:
+                log = ""
+            assert f"{attr_name} never appears in an ICRQ or ICCN" in log, log
         finally:
             accel_pppd_process.end(thread, ctrl, accel_cmd, 10.0, cli_port=cli_port)
             config.delete_tmp(cfg)

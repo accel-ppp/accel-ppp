@@ -118,12 +118,12 @@ def test_switch_matches_on_username_prefix_still_captures_proxy_authen_type(
 
             def name_logged():
                 log[0] = read_log(s_cfg)
-                return "captured proxy AVP Proxy-Authen-Name" in log[0]
+                return "captured AVP Proxy-Authen-Name" in log[0]
 
             assert wait_for(name_logged, 5.0), (
                 f"sanity check failed; the match itself didn't fire:\n{log[0]}"
             )
-            assert "captured proxy AVP Proxy-Authen-Type" in log[0], (
+            assert "captured AVP Proxy-Authen-Type" in log[0], (
                 "Proxy-Authen-Type was not captured off the upstream ICCN"
                 " even though Proxy-Authen-Name was; it arrived earlier"
                 " in the same ICCN, before the username-prefix match set"

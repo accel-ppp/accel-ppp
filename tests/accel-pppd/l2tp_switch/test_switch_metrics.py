@@ -258,7 +258,8 @@ def test_switch_metrics_target_up_tracks_on_demand_lifecycle(pytestconfig, accel
             accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=switch_cli)
             config.delete_tmp(s_cfg)
     finally:
-        rc, down_out, down_err = l2tp_peer_process.wait(down_thread, down_ctrl, 60.0)
+        down_rc, down_out, down_err = l2tp_peer_process.wait(down_thread, down_ctrl, 60.0)
+        assert down_rc == 0, f"listener exited with {down_rc}:\n{down_err}"
 
 
 @pytest.mark.l2tp_switch
@@ -357,4 +358,5 @@ def test_switch_metrics_target_up_false_while_still_connecting(pytestconfig, acc
             accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=switch_cli)
             config.delete_tmp(s_cfg)
     finally:
-        rc, down_out, down_err = finish_harness(down_thread, down_ctrl, 20.0)
+        down_rc, down_out, down_err = finish_harness(down_thread, down_ctrl, 20.0)
+        assert down_rc == 0, f"listener exited with {down_rc}:\n{down_err}"

@@ -1,14 +1,17 @@
 """apses_finished()/apses_stop() racing their tunnel's teardown.
 
-A plain LNS session is terminated from the CLI while its tunnel's FIN_WAIT
-timer is about to expire, so the apses_finished() call into the tunnel context
-is queued when the tunnel is freed. The daemon must settle with no leaked
-tunnel, session or file descriptor. The session is already gone when the call
-is dropped, so the leak check cannot fail on its own; the test mainly exercises
-the race under TSAN.
+A plain LNS session is terminated from the CLI while its tunnel's context is
+stuck, and the tunnel is freed before the apses_finished() call the terminate
+queued into it can run, so that call is cancelled. The session is already gone
+when the call is dropped, so there is nothing to leak but the switch's count of
+calls in flight (l2tp_switch_hops_pending), which holds a shutdown back: the
+test settles the daemon, checks the tunnel was freed as intended, and then
+requires a soft shutdown to complete.
 
-The race is forced as in test_switch_leaked_holds.py: a StopCCN plus a flood of
-junk datagrams, both timed from the peer's ICCN, keep the tunnel's context busy
+The race is forced as in test_switch_leaked_holds.py: the peer never answers
+the tunnel's HELLO, so its retransmission timer is due to give up on it and
+free the tunnel at a known time, and a flood of junk datagrams from before the
+terminate until after that keeps the tunnel's context stuck in its read handler
 while the terminate is queued.
 """
 
@@ -30,32 +33,42 @@ from helpers import (
     wait_udp_bound,
 )
 
-# Time after the peer's ICCN at which the CLI terminate is issued and the
-# tunnel's FIN_WAIT teardown is aimed. Large enough that the poll for an
-# active session is a small part of it.
-DEADLINE_MS = 2000
+# rtimeout=, retransmit=, rtimeout-cap= and hello-interval= (seconds, count,
+# seconds, seconds) of the daemon. The HELLO the idle tunnel sends one interval
+# after it comes up is never acknowledged, so it is retransmitted after one
+# more rtimeout and the tunnel is freed when the timer fires again after two,
+# the capped, doubled interval.
+RTIMEOUT = 1
+RETRANSMIT = 1
+RTIMEOUT_CAP = 2
+HELLO_INTERVAL = 1
+FREE_MS = (HELLO_INTERVAL + RTIMEOUT + min(2 * RTIMEOUT, RTIMEOUT_CAP)) * 1000
 
-# How long before DEADLINE_MS to issue the terminate, so the queued call is
-# still pending when the FIN_WAIT timer fires.
-TERMINATE_LEAD_MS = 200
-
-FIN_WAIT_MS = 1000  # StopCCN rtimeout
-FLOOD_LEAD_MS = 300
-FIN_WAIT_AFTER_MS = 300
+# Time after the peer's ICCN at which the CLI terminate is issued: after the
+# flood started and before the tunnel is due to be freed, by more than the
+# few hundred ms of jitter either way.
+TERMINATE_MS = 3000
+FLOOD_LEAD_MS = 500
 FLOOD_TAIL_MS = 400
 
 SETTLE_TIMEOUT = 75.0
+SHUTDOWN_TIMEOUT = 10.0
 
 CALLING_NUMBER = "900001"
 
 
-def _fin_flood(deadline_ms):
-    """--fin-flood A:S:W argument for a FIN_WAIT teardown `deadline_ms` after
-    the peer's ICCN."""
-    stopccn = deadline_ms + FIN_WAIT_AFTER_MS - FIN_WAIT_MS
-    start = deadline_ms - FLOOD_LEAD_MS
-    length = FLOOD_LEAD_MS + FIN_WAIT_AFTER_MS + FLOOD_TAIL_MS
-    return f"{stopccn}:{start}:{length}"
+def _flood_args():
+    """Harness arguments for the flood: no StopCCN (the tunnel must stay in
+    ESTB), from FLOOD_LEAD_MS before the terminate until FLOOD_TAIL_MS after
+    the tunnel is due to be freed."""
+    start = TERMINATE_MS - FLOOD_LEAD_MS
+    length = FREE_MS + FLOOD_TAIL_MS - start
+    return [
+        "--fin-flood", f"{start}:{start}:{length}",
+        "--fin-flood-no-stopccn",
+        "--fin-flood-on", "iccn",
+        "--flood-heavy",
+    ]
 
 
 def _sessions_active(accel_cmd, cli_port):
@@ -92,12 +105,16 @@ def _assert_nothing_leaked(accel_cmd, s_cli, ctrl, cfg, baseline_fds, what):
 def test_apses_finished_lost_to_its_tunnel_teardown_leaks_nothing(
     pytestconfig, accel_cmd, accel_pppd, peer_bin
 ):
-    """apses_finished() racing its tunnel's FIN_WAIT teardown leaves no
+    """apses_finished() racing its tunnel's teardown leaves no
     leaked tunnel, session or fd."""
     s_cli, s_port = alloc_ports(2)
 
     started, thread, ctrl, cfg = start_instance(
         accel_pppd, accel_cmd, s_cli, "127.0.0.1", s_port, "upstreamsecret",
+        l2tp_extra=f"""rtimeout={RTIMEOUT}
+    retransmit={RETRANSMIT}
+    rtimeout-cap={RTIMEOUT_CAP}
+    hello-interval={HELLO_INTERVAL}""",
     )
     assert started
     try:
@@ -130,8 +147,7 @@ def test_apses_finished_lost_to_its_tunnel_teardown_leaks_nothing(
                 "--peer-port", str(s_port),
                 "--secret", "upstreamsecret",
                 "--calling-number", CALLING_NUMBER,
-                "--fin-flood", _fin_flood(DEADLINE_MS),
-                "--fin-flood-on", "iccn",
+                *_flood_args(),
                 "--hold-seconds", "1",
             ],
         )
@@ -148,7 +164,7 @@ def test_apses_finished_lost_to_its_tunnel_teardown_leaks_nothing(
                 f"\n--- log ---\n{read_log(cfg)}"
             )
 
-            target = anchor + (DEADLINE_MS - TERMINATE_LEAD_MS) / 1000.0
+            target = anchor + TERMINATE_MS / 1000.0
             remaining = target - time.monotonic()
             if remaining > 0:
                 time.sleep(remaining)
@@ -170,6 +186,28 @@ def test_apses_finished_lost_to_its_tunnel_teardown_leaks_nothing(
         _assert_nothing_leaked(
             accel_cmd, s_cli, ctrl, cfg, baseline_fds,
             "apses_finished()'s hop lost to its own tunnel's teardown",
+        )
+
+        # The tunnel went away through its retransmission timer, as intended.
+        log = read_log(cfg)
+        assert "no acknowledgement from peer" in log, log
+        # ... without the terminate's call ever running (the warm-up
+        # tunnel, logged first, may well have run its own)
+        raced = log[log.rindex("handling SCCRQ"):]
+        assert "data channel closed, disconnecting session" not in raced, (
+            "apses_finished()'s call into the tunnel ran instead of being"
+            f" dropped with the tunnel\n--- log ---\n{log}"
+        )
+
+        # A call dropped with its tunnel still counts as in flight until its
+        # cancel accounts for it, and a shutdown waits for those.
+        rc, out, err = process.run([accel_cmd, "-p", str(s_cli), "shutdown soft"])
+        assert rc == 0, f"shutdown soft failed (rc={rc}): {err}\n{out}"
+        assert wait_for(
+            lambda: ctrl["process"].poll() is not None, SHUTDOWN_TIMEOUT
+        ), (
+            "the daemon never completed a soft shutdown after the dropped call"
+            f"\n--- log ---\n{read_log(cfg)}"
         )
     finally:
         accel_pppd_process.end(thread, ctrl, accel_cmd, 10.0, cli_port=s_cli)

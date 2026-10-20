@@ -155,7 +155,8 @@ def test_on_demand_tunnel_closes_after_idle_linger(pytestconfig, accel_cmd, acce
             accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=switch_cli)
             config.delete_tmp(s_cfg)
     finally:
-        rc, down_out, down_err = l2tp_peer_process.wait(down_thread, down_ctrl, 60.0)
+        down_rc, down_out, down_err = l2tp_peer_process.wait(down_thread, down_ctrl, 60.0)
+        assert down_rc == 0, f"listener exited with {down_rc}:\n{down_err}"
 
     # The same check from the downstream peer's side of the wire.
     events = _events(down_out)
@@ -210,7 +211,8 @@ def test_on_demand_linger_cancelled_by_a_new_call(pytestconfig, accel_cmd, accel
             accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=switch_cli)
             config.delete_tmp(s_cfg)
     finally:
-        rc, down_out, down_err = l2tp_peer_process.wait(down_thread, down_ctrl, 60.0)
+        down_rc, down_out, down_err = l2tp_peer_process.wait(down_thread, down_ctrl, 60.0)
+        assert down_rc == 0, f"listener exited with {down_rc}:\n{down_err}"
 
     events = _events(down_out)
     # Two calls, one tunnel: a second SCCRQ would mean a reconnect.

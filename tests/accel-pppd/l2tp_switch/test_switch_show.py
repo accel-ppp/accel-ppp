@@ -223,8 +223,9 @@ def test_switch_show_on_demand_states(pytestconfig, accel_cmd, accel_pppd, peer_
             accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=switch_cli)
             config.delete_tmp(s_cfg)
     finally:
-        rc, down_out, down_err = l2tp_peer_process.wait(down_thread, down_ctrl, 60.0)
-        assert rc is not None, f"downstream harness never finished:\n{down_out}"
+        down_rc, down_out, down_err = l2tp_peer_process.wait(down_thread, down_ctrl, 60.0)
+        assert down_rc == 0, f"listener exited with {down_rc}:\n{down_err}"
+        assert down_rc is not None, f"downstream harness never finished:\n{down_out}"
 
     events = _events(down_out)
     cdn = _times(events, "recv_cdn")
@@ -325,7 +326,8 @@ def test_switch_show_does_not_list_call_finished_during_teardown_hop(
             accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=switch_cli)
             config.delete_tmp(s_cfg)
     finally:
-        rc, down_out, down_err = finish_harness(down_thread, down_ctrl, 20.0)
+        down_rc, down_out, down_err = finish_harness(down_thread, down_ctrl, 20.0)
+        assert down_rc == 0, f"listener exited with {down_rc}:\n{down_err}"
 
     assert "event=recv_icrq" in down_out, (
         "the call was never placed on the downstream leg; broken test"

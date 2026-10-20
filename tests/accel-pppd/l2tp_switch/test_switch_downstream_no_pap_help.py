@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from common import config, accel_pppd_process, l2tp_peer_process
 from helpers import alloc_ports, start_instance, read_log, wait_up, switch_show, wait_for, finish_harness
@@ -35,6 +37,9 @@ def test_switch_downstream_no_pap_help(pytestconfig, accel_cmd, accel_pppd, peer
                 "--hold-seconds", "12",
                 "--minimal-lcp",
                 "--lcp-auth", "pap",
+                # keep reading the data socket after the LCP settled and
+                # count what the switch sends towards the target
+                "--watch-ms", "2500",
             ],
         )
 
@@ -89,11 +94,15 @@ def test_switch_downstream_no_pap_help(pytestconfig, accel_cmd, accel_pppd, peer
                 "expected the visibility log line for the target's own PAP"
                 f" request, got:\n{log}"
             )
-            assert "injected live PAP request" not in log, (
-                f"switch injected a PAP request:\n{log}"
-            )
         finally:
-            finish_harness(down_thread, down_ctrl, 15.0)
+            down_rc, down_out, down_err = finish_harness(down_thread, down_ctrl, 15.0)
+
+        m = re.search(r"event=downstream_saw_auth_frames n=(\d+)", down_out)
+        assert m, f"the downstream harness never finished watching:\n{down_out}\n{down_err}"
+        assert m.group(1) == "0", (
+            f"the switch sent {m.group(1)} PAP/CHAP frame(s) to the target on"
+            f" the caller's behalf:\n{down_out}"
+        )
     finally:
         accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=switch_cli)
         config.delete_tmp(s_cfg)

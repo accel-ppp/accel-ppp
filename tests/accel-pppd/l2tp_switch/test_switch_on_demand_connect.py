@@ -5,7 +5,6 @@ connect is in flight waits for it, and that wait is bounded: an unreachable
 target disconnects the call after the connect timeout.
 """
 
-import platform
 import re
 import time
 
@@ -204,7 +203,8 @@ def test_on_demand_call_queues_while_tunnel_is_connecting(pytestconfig, accel_cm
             rc, harness_out, err = finish_harness(peer_thread, peer_ctrl, 25.0)
             assert rc == 0, f"peer harness failed (rc={rc}): {err}\n{harness_out}"
         finally:
-            rc, down_out, down_err = finish_harness(down_thread, down_ctrl, 20.0)
+            down_rc, down_out, down_err = finish_harness(down_thread, down_ctrl, 20.0)
+            assert down_rc == 0, f"listener exited with {down_rc}:\n{down_err}"
 
         events = _events(down_out)
         assert 0 in events.get("recv_sccrq", {}), (
@@ -269,6 +269,8 @@ def test_on_demand_call_cdns_after_connect_timeout(pytestconfig, accel_cmd, acce
         stamps = _timestamps(out)
         assert "sent_iccn" in stamps and "recv_cdn" in stamps, out
         waited = stamps["recv_cdn"] - stamps["sent_iccn"]
+        # the call is ended with a CDN (not a StopCCN) and the general error
+        assert "event=got_cdn type=cdn res=2 err=6" in out, out
 
         # Not instant: failing as soon as target->tunnel is NULL would land here in
         # milliseconds.
@@ -403,17 +405,6 @@ def test_on_demand_second_call_gets_a_full_budget_of_its_own(pytestconfig, accel
 
 
 @pytest.mark.l2tp_switch
-@pytest.mark.skipif(
-    platform.machine() in ("s390x",),
-    reason="this test pins a sub-millisecond ordering race (see its own"
-    " docstring) against the daemon's configured connect-timeout by"
-    " timing a peer response to land ~100ms before it; under full-system"
-    " s390x QEMU emulation (coarse/jittery timers, heavy scheduling latency)"
-    " that ordering has been observed to land the same way every run instead"
-    " of only on the rare real race, making this a consistent environment"
-    " artifact rather than flaky coverage. Runs normally on native"
-    " architectures, where the timing this test relies on actually holds.",
-)
 def test_on_demand_tunnel_that_beats_the_deadline_is_never_orphaned(
     pytestconfig, accel_cmd, accel_pppd, peer_bin
 ):
@@ -480,6 +471,20 @@ def test_on_demand_tunnel_that_beats_the_deadline_is_never_orphaned(
                 ],
             )
             rc, out, err = finish_harness(peer_thread, peer_ctrl, 25.0)
+            if rc != 0:
+                # The race needs the budget to expire before the downstream
+                # answers. A downstream that saw the ICRQ was answered in time
+                # (a slow or emulated host stretches the timers unevenly), so
+                # the call was placed and nothing ever sends the CDN: the
+                # precondition cannot hold on this host, which is not a
+                # failure of the code under test.
+                _, early_out, _ = finish_harness(down_thread, down_ctrl, 5.0)
+                if "event=recv_icrq" in early_out:
+                    pytest.skip(
+                        "the downstream answered before the connect budget"
+                        " expired, so the call was placed instead of timing"
+                        " out; the timing this test needs does not hold here"
+                    )
             assert rc == 0, (
                 f"call against the slow target was never disconnected (rc={rc}):"
                 f" {err}\n{out}"

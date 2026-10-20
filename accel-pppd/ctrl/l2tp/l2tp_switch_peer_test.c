@@ -79,9 +79,12 @@ static struct l2tp_dict_attr_t dict[] = {
 	{ .name = "Recv-Window-Size",       .id = Recv_Window_Size,       .type = ATTR_TYPE_INT16,  .M =  1, .H =  0 },
 	{ .name = "Challenge",              .id = Challenge,              .type = ATTR_TYPE_OCTETS, .M =  1, .H = -1 },
 	{ .name = "Challenge-Response",     .id = Challenge_Response,     .type = ATTR_TYPE_OCTETS, .M =  1, .H = -1 },
+	{ .name = "Private-Group-ID",       .id = Private_Group_ID,       .type = ATTR_TYPE_OCTETS, .M =  0, .H = -1 },
+	{ .name = "RX-Speed",               .id = RX_Speed,               .type = ATTR_TYPE_INT32,  .M =  0, .H = -1 },
+	{ .name = "Random-Vector",          .id = Random_Vector,          .type = ATTR_TYPE_OCTETS, .M =  1, .H =  0 },
 	{ .name = "Cause-Code",             .id = Cause_Code,             .type = ATTR_TYPE_OCTETS, .M =  1, .H = -1 },
 	{ .name = "Host-Name",              .id = Host_Name,              .type = ATTR_TYPE_STRING, .M =  1, .H =  0 },
-	{ .name = "Vendor-Name",            .id = Vendor_Name,            .type = ATTR_TYPE_STRING, .M =  0, .H =  0 },
+	{ .name = "Vendor-Name",            .id = Vendor_Name,            .type = ATTR_TYPE_STRING, .M =  0, .H = -1 },
 	{ .name = "Assigned-Tunnel-ID",     .id = Assigned_Tunnel_ID,     .type = ATTR_TYPE_INT16,  .M =  1, .H = -1 },
 	{ .name = "Assigned-Session-ID",    .id = Assigned_Session_ID,    .type = ATTR_TYPE_INT16,  .M =  1, .H = -1 },
 	{ .name = "Call-Serial-Number",     .id = Call_Serial_Number,     .type = ATTR_TYPE_INT32,  .M =  1, .H = -1 },
@@ -124,14 +127,34 @@ const char *proxy_username;
 const char *proxy_password;
 const char *data_pattern;
 int send_stopccn;
+/* client: wait this long after the ICCN before the StopCCN */
+int stopccn_delay_ms;
+/* listener: leave a StopCCN unacknowledged, so the switch's closing tunnel stays unacked */
+int no_ack_stopccn;
+/* listener: leave the switch's CDN unacknowledged, so it keeps retransmitting */
+int no_ack_cdn;
 int wait_cdn;
 int real_ppp;
 int minimal_lcp;
 int lcp_auth;
 int hold_seconds;
+/* client: frames of --data-pattern to send after the LCP; listener: count
+ * the frames that match it */
+int data_count;
+/* optional ICCN AVPs of the client role; 0 / NULL: not sent */
+int rx_speed;
+const char *private_group_id;
+int listen_count_data;
+int listen_rcvbuf;
+/* sent in the client role's ICCN */
+int tx_speed = 1000;
+int framing = 3;
 int listen_mode;
 int listen_rounds = 1;
 int sccrp_delay_ms;
+/* listener: pause this long once the tunnel is up before serving it, so the
+ * switch's messages pile up unacknowledged */
+int serve_delay_ms;
 /* l2tp_conn_read() drains its socket first, so the tunnel comes up only when the flood ends;
  * context calls such as the connect timeout are starved meanwhile. */
 int sccrp_storm_ms;
@@ -139,7 +162,21 @@ int sccrp_storm_ms;
 int cdn_timeout = 5;
 int cdn_after_lcp_ms;
 int cdn_after_iccn_ms;
+/* client role: pause between the ICRP and the ICCN */
+int iccn_delay_ms;
 const char *second_call_number;
+/* listener: Result-Code of the CDN it sends; client: of the CDN it sends upstream->downstream */
+int cdn_res = 1, cdn_err;
+int send_cdn_res = -1, send_cdn_err;
+/* client: wait this long after the ICCN before sending that CDN */
+int send_cdn_delay_ms = 1000;
+/* listener, first round: send a StopCCN this long after the ICCN, whatever else is going on */
+int stopccn_after_iccn_ms;
+/* listener: keep reading the data socket this long after the LCP settled */
+int watch_ms;
+/* client: optional Proxy-Authen-ID (-1: not sent) and Proxy-Authen-Challenge (hex) */
+int proxy_authen_id = -1;
+const char *proxy_challenge_hex;
 /* Random per process: the kernel keys tunnels by id per netns, so fixed ids would collide. */
 uint16_t local_tid;
 uint16_t local_sid;
@@ -151,9 +188,16 @@ int die(const char *msg)
 }
 
 
+#define REPLY_TIMEOUT_S 10
+
+/* Waits for a reply of Message-Type `expect`; any other message type is a
+ * failure rather than something to carry on with. */
 static int send_and_recv(int fd, struct l2tp_packet_t *pack,
-			 struct l2tp_packet_t **reply)
+			 struct l2tp_packet_t **reply, unsigned int expect)
 {
+	struct l2tp_attr_t *first;
+	unsigned int type;
+
 	if (l2tp_packet_send(fd, pack) < 0)
 		return -1;
 	l2tp_packet_free(pack);
@@ -173,6 +217,17 @@ static int send_and_recv(int fd, struct l2tp_packet_t *pack,
 		break;
 	}
 
+	first = list_first_entry(&(*reply)->attrs, typeof(*first), entry);
+	type = (first->attr && first->attr->id == Message_Type) ?
+		first->val.uint16 : 0;
+	if (type != expect) {
+		printf("event=unexpected_msg type=%u expected=%u\n", type, expect);
+		fflush(stdout);
+		l2tp_packet_free(*reply);
+		*reply = NULL;
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -182,6 +237,40 @@ double now_monotonic(void)
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
+
+/* even-length hex into out, the byte count or -1 */
+static int hex_decode(const char *hex, uint8_t *out, size_t out_len)
+{
+	size_t n = strlen(hex), i;
+
+	if (n % 2 || n / 2 > out_len)
+		return -1;
+	for (i = 0; i < n / 2; i++) {
+		unsigned int v;
+
+		if (sscanf(hex + 2 * i, "%2x", &v) != 1)
+			return -1;
+		out[i] = (uint8_t)v;
+	}
+	return (int)(n / 2);
+}
+
+/* "R:E" with both parts 0..65535 */
+static int parse_result_pair(const char *spec, int *res, int *err)
+{
+	char *end;
+	long r = strtol(spec, &end, 10), e;
+
+	if (end == spec || *end != ':' || r < 0 || r > 65535)
+		return -1;
+	spec = end + 1;
+	e = strtol(spec, &end, 10);
+	if (end == spec || *end || e < 0 || e > 65535)
+		return -1;
+	*res = (int)r;
+	*err = (int)e;
+	return 0;
 }
 
 int main(int argc, char **argv)
@@ -202,6 +291,8 @@ int main(int argc, char **argv)
 		{"proxy-password", required_argument, 0, 'w'},
 		{"data-pattern", required_argument, 0, 'd'},
 		{"send-stopccn", no_argument, 0, 'x'},
+		{"stopccn-delay-ms", required_argument, 0, 0x105},
+		{"no-ack-stopccn", no_argument, 0, 0x110},
 		{"wait-cdn", no_argument, 0, 'W'},
 		{"second-call", required_argument, 0, 'S'},
 		{"real-ppp", no_argument, 0, 'R'},
@@ -212,12 +303,31 @@ int main(int argc, char **argv)
 		{"rounds", required_argument, 0, 'N'},
 		{"sccrp-delay-ms", required_argument, 0, 'D'},
 		{"sccrp-storm-ms", required_argument, 0, 'M'},
+		{"serve-delay-ms", required_argument, 0, 0x104},
 		{"cdn-timeout", required_argument, 0, 'T'},
 		{"cdn-after-lcp-ms", required_argument, 0, 'C'},
 		{"cdn-after-iccn-ms", required_argument, 0, 'I'},
+		{"iccn-delay-ms", required_argument, 0, 0x111},
 		{"fin-flood", required_argument, 0, 'F'},
 		{"fin-flood-on", required_argument, 0, 'O'},
+		{"fin-flood-no-stopccn", no_argument, 0, 0x112},
+		{"flood-heavy", no_argument, 0, 0x130},
+		{"no-ack-cdn", no_argument, 0, 0x131},
 		{"busy-flood-ms", required_argument, 0, 'B'},
+		{"tx-speed", required_argument, 0, 'Y'},
+		{"framing", required_argument, 0, 'Z'},
+		{"data-count", required_argument, 0, 0x100},
+		{"count-data", no_argument, 0, 0x101},
+		{"rx-speed", required_argument, 0, 0x102},
+		{"private-group-id", required_argument, 0, 0x103},
+		{"rcvbuf", required_argument, 0, 0x120},
+		{"cdn-result", required_argument, 0, 0x140},
+		{"watch-ms", required_argument, 0, 0x141},
+		{"proxy-authen-id", required_argument, 0, 0x142},
+		{"proxy-challenge", required_argument, 0, 0x143},
+		{"send-cdn", required_argument, 0, 0x144},
+		{"send-cdn-delay-ms", required_argument, 0, 0x145},
+		{"stopccn-after-iccn-ms", required_argument, 0, 0x146},
 		{0, 0, 0, 0},
 	};
 
@@ -232,7 +342,7 @@ int main(int argc, char **argv)
 		local_sid = 1024 + (uint16_t)(random() % 60000);
 	}
 
-	while ((opt = getopt_long(argc, argv, "a:p:s:c:n:u:w:d:xWS:RmH:LN:D:M:T:C:I:A:F:O:B:", opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "a:p:s:c:n:u:w:d:xWS:RmH:LN:D:M:T:C:I:A:F:O:B:Y:Z:", opts, NULL)) != -1) {
 		switch (opt) {
 		case 'a':
 			if (inet_aton(optarg, &peer_addr.sin_addr) == 0)
@@ -262,6 +372,18 @@ int main(int argc, char **argv)
 		case 'x':
 			send_stopccn = 1;
 			break;
+		case 0x110:
+			no_ack_stopccn = 1;
+			break;
+		case 0x112:
+			fin_flood_no_stopccn = 1;
+			break;
+		case 0x130:
+			flood_heavy = 1;
+			break;
+		case 0x131:
+			no_ack_cdn = 1;
+			break;
 		case 'W':
 			wait_cdn = 1;
 			break;
@@ -287,6 +409,57 @@ int main(int argc, char **argv)
 		case 'H':
 			hold_seconds = atoi(optarg);
 			break;
+		case 'Y':
+			tx_speed = atoi(optarg);
+			break;
+		case 0x100:
+			data_count = atoi(optarg);
+			if (data_count < 0)
+				return die("invalid --data-count");
+			break;
+		case 0x101:
+			listen_count_data = 1;
+			break;
+		case 0x102:
+			rx_speed = atoi(optarg);
+			break;
+		case 0x103:
+			private_group_id = optarg;
+			break;
+		case 'Z':
+			framing = atoi(optarg);
+			break;
+		case 0x140:
+			if (parse_result_pair(optarg, &cdn_res, &cdn_err))
+				return die("invalid --cdn-result (R:E)");
+			break;
+		case 0x141:
+			watch_ms = atoi(optarg);
+			if (watch_ms < 0)
+				return die("invalid --watch-ms");
+			break;
+		case 0x142:
+			proxy_authen_id = atoi(optarg);
+			if (proxy_authen_id < 0 || proxy_authen_id > 255)
+				return die("invalid --proxy-authen-id");
+			break;
+		case 0x143:
+			proxy_challenge_hex = optarg;
+			break;
+		case 0x144:
+			if (parse_result_pair(optarg, &send_cdn_res, &send_cdn_err))
+				return die("invalid --send-cdn (R:E)");
+			break;
+		case 0x146:
+			stopccn_after_iccn_ms = atoi(optarg);
+			if (stopccn_after_iccn_ms <= 0)
+				return die("invalid --stopccn-after-iccn-ms");
+			break;
+		case 0x145:
+			send_cdn_delay_ms = atoi(optarg);
+			if (send_cdn_delay_ms < 0)
+				return die("invalid --send-cdn-delay-ms");
+			break;
 		case 'L':
 			listen_mode = 1;
 			break;
@@ -297,6 +470,16 @@ int main(int argc, char **argv)
 			sccrp_delay_ms = atoi(optarg);
 			if (sccrp_delay_ms < 0)
 				return die("invalid --sccrp-delay-ms");
+			break;
+		case 0x104:
+			serve_delay_ms = atoi(optarg);
+			if (serve_delay_ms < 0)
+				return die("invalid --serve-delay-ms");
+			break;
+		case 0x105:
+			stopccn_delay_ms = atoi(optarg);
+			if (stopccn_delay_ms < 0)
+				return die("invalid --stopccn-delay-ms");
 			break;
 		case 'M':
 			sccrp_storm_ms = atoi(optarg);
@@ -317,6 +500,16 @@ int main(int argc, char **argv)
 			cdn_after_iccn_ms = atoi(optarg);
 			if (cdn_after_iccn_ms < 0)
 				return die("invalid --cdn-after-iccn-ms");
+			break;
+		case 0x120:
+			listen_rcvbuf = atoi(optarg);
+			if (listen_rcvbuf <= 0)
+				return die("invalid --rcvbuf");
+			break;
+		case 0x111:
+			iccn_delay_ms = atoi(optarg);
+			if (iccn_delay_ms < 0)
+				return die("invalid --iccn-delay-ms");
 			break;
 		case 'F':
 			if (parse_fin_flood(optarg))
@@ -342,21 +535,29 @@ int main(int argc, char **argv)
 				   " --secret S [--calling-number C]"
 				   " [--called-number N]"
 				   " [--proxy-username U] [--proxy-password W]"
-				   " [--data-pattern D] [--send-stopccn]"
-				   " [--wait-cdn [--cdn-timeout S]]"
+				   " [--data-pattern D] [--send-stopccn"
+				   " [--stopccn-delay-ms M]]"
+				   " [--wait-cdn [--cdn-timeout S]] [--iccn-delay-ms M]"
 				   " [--second-call C]"
 				   " [--real-ppp | --minimal-lcp [--lcp-auth pap|chap|none]]"
 				   " [--hold-seconds N]"
-				   " [--listen [--rounds N] [--sccrp-delay-ms M]"
-				   " [--sccrp-storm-ms M] [--hold-seconds N]"
+				   " [--listen [--no-ack-stopccn] [--rounds N] [--sccrp-delay-ms M]"
+				   " [--sccrp-storm-ms M] [--serve-delay-ms M]"
+				   " [--hold-seconds N]"
 				   " [--minimal-lcp [--cdn-after-lcp-ms M]]"
 				   " [--cdn-after-iccn-ms M]]"
 				   " [--fin-flood A:S:W --fin-flood-on"
-				   " sccrq|cdn (--listen) | iccn]"
+				   " sccrq|cdn (--listen) | iccn"
+				   " [--fin-flood-no-stopccn]]"
 				   " [--busy-flood-ms N]");
 		}
 	}
 
+	if (no_ack_stopccn && !listen_mode)
+		return die("--no-ack-stopccn requires --listen");
+
+	if (iccn_delay_ms > 0 && listen_mode)
+		return die("--iccn-delay-ms is for the calling role");
 	if (cdn_after_lcp_ms > 0 && !(listen_mode && minimal_lcp))
 		return die("--cdn-after-lcp-ms requires --listen and --minimal-lcp");
 
@@ -365,6 +566,15 @@ int main(int argc, char **argv)
 
 	if (busy_flood_ms > 0 && !listen_mode)
 		return die("--busy-flood-ms requires --listen");
+
+	if (watch_ms > 0 && !(listen_mode && minimal_lcp))
+		return die("--watch-ms requires --listen and --minimal-lcp");
+
+	if (stopccn_after_iccn_ms > 0 && !listen_mode)
+		return die("--stopccn-after-iccn-ms requires --listen");
+
+	if (send_cdn_res >= 0 && listen_mode)
+		return die("--send-cdn is for the calling role");
 
 	if (lcp_auth != LCP_AUTH_NONE && !minimal_lcp)
 		return die("--lcp-auth requires --minimal-lcp");
@@ -386,6 +596,13 @@ int main(int argc, char **argv)
 		return die("socket() failed");
 	if (connect(fd, (struct sockaddr *)&peer_addr, sizeof(peer_addr)) < 0)
 		return die("connect(fd) failed");
+	{
+		/* Bound every reply wait so a silent peer cannot hang the harness. */
+		struct timeval rtv = { .tv_sec = REPLY_TIMEOUT_S, .tv_usec = 0 };
+
+		if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv)) < 0)
+			return die("setsockopt(SO_RCVTIMEO) failed");
+	}
 
 	pack = l2tp_packet_alloc(2, Message_Type_Start_Ctrl_Conn_Request,
 				 &peer_addr, 0, secret, strlen(secret));
@@ -399,7 +616,8 @@ int main(int argc, char **argv)
 	pack->hdr.sid = 0;
 	pack->hdr.Ns = htons(my_ns);
 	pack->hdr.Nr = htons(peer_next_nr);
-	if (send_and_recv(fd, pack, &reply) < 0)
+	if (send_and_recv(fd, pack, &reply,
+			  Message_Type_Start_Ctrl_Conn_Reply) < 0)
 		return die("SCCRQ/SCCRP exchange failed");
 	my_ns++;
 	peer_next_nr = ntohs(reply->hdr.Ns) + 1;
@@ -467,7 +685,8 @@ int main(int argc, char **argv)
 	pack->hdr.sid = 0;
 	pack->hdr.Ns = htons(my_ns);
 	pack->hdr.Nr = htons(peer_next_nr);
-	if (send_and_recv(fd, pack, &reply) < 0)
+	if (send_and_recv(fd, pack, &reply,
+			  Message_Type_Incoming_Call_Reply) < 0)
 		return die("ICRQ/ICRP exchange failed");
 	my_ns++;
 	peer_next_nr = ntohs(reply->hdr.Ns) + 1;
@@ -484,12 +703,21 @@ int main(int argc, char **argv)
 	if (!peer_sid)
 		return die("ICRP carried no Assigned-Session-ID");
 
+	if (iccn_delay_ms > 0)
+		usleep((useconds_t)iccn_delay_ms * 1000);
+
 	pack = l2tp_packet_alloc(2, Message_Type_Incoming_Call_Connected,
 				 &peer_addr, 0, secret, strlen(secret));
 	if (!pack)
 		return die("ICCN alloc failed");
-	l2tp_packet_add_int32(pack, TX_Speed, 1000, 1);
-	l2tp_packet_add_int32(pack, Framing_Type, 3, 1);
+	l2tp_packet_add_int32(pack, TX_Speed, tx_speed, 1);
+	l2tp_packet_add_int32(pack, Framing_Type, framing, 1);
+	if (rx_speed)
+		l2tp_packet_add_int32(pack, RX_Speed, rx_speed, 0);
+	if (private_group_id)
+		l2tp_packet_add_octets(pack, Private_Group_ID,
+				       (const uint8_t *)private_group_id,
+				       strlen(private_group_id), 0);
 	if (proxy_username) {
 		/* Proxy-Authen-Type: 1 textual, 2 CHAP, 3 PAP. */
 		l2tp_packet_add_int16(pack, Proxy_Authen_Type, 3, 1);
@@ -497,6 +725,26 @@ int main(int argc, char **argv)
 		if (proxy_password)
 			l2tp_packet_add_string(pack, Proxy_Authen_Response,
 					       proxy_password, 1);
+		if (proxy_authen_id >= 0)
+			l2tp_packet_add_int16(pack, Proxy_Authen_ID,
+					      proxy_authen_id, 1);
+		if (proxy_challenge_hex) {
+			uint8_t chal[64];
+			int n = hex_decode(proxy_challenge_hex, chal, sizeof(chal));
+
+			if (n < 0)
+				return die("invalid --proxy-challenge hex");
+			l2tp_packet_add_octets(pack, Proxy_Authen_Challenge,
+					       chal, n, 1);
+			/* an empty AVP is added with no buffer, which the
+			 * encoder then memcpy()s from; give it a real one */
+			if (n == 0) {
+				struct l2tp_attr_t *last = list_entry(
+					pack->attrs.prev, typeof(*last), entry);
+
+				last->val.octets = malloc(1);
+			}
+		}
 	}
 	pack->hdr.tid = htons(peer_tid);
 	pack->hdr.sid = htons(peer_sid);
@@ -517,6 +765,31 @@ int main(int argc, char **argv)
 	    run_fin_flood(fd, &peer_addr, peer_tid, local_tid, my_ns,
 			  peer_next_nr))
 		return 1;
+
+	if (send_cdn_res >= 0) {
+		struct l2tp_avp_result_code rc = {
+			htons(send_cdn_res), htons(send_cdn_err)
+		};
+
+		usleep((useconds_t)send_cdn_delay_ms * 1000);
+		pack = l2tp_packet_alloc(2, Message_Type_Call_Disconnect_Notify,
+					 &peer_addr, 0, secret, strlen(secret));
+		if (!pack)
+			return die("CDN alloc failed");
+		l2tp_packet_add_int16(pack, Assigned_Session_ID, local_sid, 1);
+		l2tp_packet_add_octets(pack, Result_Code, (uint8_t *)&rc,
+				       sizeof(rc), 1);
+		pack->hdr.tid = htons(peer_tid);
+		pack->hdr.sid = htons(peer_sid);
+		pack->hdr.Ns = htons(my_ns);
+		pack->hdr.Nr = htons(peer_next_nr);
+		if (l2tp_packet_send(fd, pack) < 0)
+			return die("CDN send failed");
+		l2tp_packet_free(pack);
+		my_ns++;
+		printf("event=sent_cdn_up t=%.6f\n", now_monotonic());
+		fflush(stdout);
+	}
 
 	if (real_ppp && (!proxy_username || !proxy_password))
 		return die("--real-ppp requires --proxy-username and --proxy-password");
@@ -579,10 +852,19 @@ int main(int argc, char **argv)
 			if (run_minimal_lcp(data_fd, 5) != 0)
 				return 1;
 		} else {
-			ssize_t n = write(data_fd, data_pattern, strlen(data_pattern));
+			int i, frames = data_count > 0 ? data_count : 1;
 
-			if (n < 0)
-				return die("data socket write() failed");
+			for (i = 0; i < frames; i++)
+				if (write(data_fd, data_pattern,
+					  strlen(data_pattern)) < 0)
+					return die("data socket write() failed");
+
+			if (data_count > 0) {
+				printf("event=data_sent frames=%d\n", data_count);
+				fflush(stdout);
+				/* let the listener drain before the socket closes */
+				usleep(2500000);
+			}
 
 			close(data_fd);
 
@@ -592,6 +874,8 @@ int main(int argc, char **argv)
 	}
 
 	if (send_stopccn) {
+		if (stopccn_delay_ms > 0)
+			usleep((useconds_t)stopccn_delay_ms * 1000);
 		pack = l2tp_packet_alloc(2, Message_Type_Stop_Ctrl_Conn_Notify,
 					 &peer_addr, 0, secret, strlen(secret));
 		if (!pack)
@@ -612,7 +896,7 @@ int main(int argc, char **argv)
 		 * Wall-clock deadline: SO_RCVTIMEO bounds each recv(), not the total wait. */
 		struct timeval tv = { .tv_sec = cdn_timeout, .tv_usec = 0 };
 		time_t deadline = time(NULL) + cdn_timeout;
-		int got_cdn = 0;
+		int got_cdn = 0, got_stopccn = 0;
 
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
 			return die("setsockopt(SO_RCVTIMEO) failed");
@@ -643,8 +927,25 @@ int main(int argc, char **argv)
 			    (msg_type->val.uint16 ==
 				     Message_Type_Call_Disconnect_Notify ||
 			     msg_type->val.uint16 ==
-				     Message_Type_Stop_Ctrl_Conn_Notify))
+				     Message_Type_Stop_Ctrl_Conn_Notify)) {
 				got_cdn = 1;
+				got_stopccn = msg_type->val.uint16 ==
+					Message_Type_Stop_Ctrl_Conn_Notify;
+			}
+			if (got_cdn) {
+				struct l2tp_attr_t *a;
+				unsigned int res = 0, err = 0;
+
+				list_for_each_entry(a, &cdn->attrs, entry)
+					if (a->attr && a->attr->id == Result_Code &&
+					    a->length >= 4) {
+						res = (a->val.octets[0] << 8) | a->val.octets[1];
+						err = (a->val.octets[2] << 8) | a->val.octets[3];
+					}
+				printf("event=got_cdn type=%s res=%u err=%u\n",
+				       got_stopccn ? "stopccn" : "cdn", res, err);
+				fflush(stdout);
+			}
 			l2tp_packet_free(cdn);
 			if (got_cdn)
 				break;
@@ -673,7 +974,8 @@ int main(int argc, char **argv)
 		pack->hdr.sid = 0;
 		pack->hdr.Ns = htons(my_ns);
 		pack->hdr.Nr = htons(peer_next_nr);
-		if (send_and_recv(fd, pack, &reply) < 0)
+		if (send_and_recv(fd, pack, &reply,
+				  Message_Type_Incoming_Call_Reply) < 0)
 			return die("second ICRQ/ICRP exchange failed");
 		my_ns++;
 		peer_next_nr = ntohs(reply->hdr.Ns) + 1;

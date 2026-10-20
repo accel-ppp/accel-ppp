@@ -277,7 +277,7 @@ def finish_harness(thread, ctrl, timeout):
     A --listen instance runs until --hold-seconds is up, so it has to be
     killed when a test ends early. Can be called more than once. Returns
     (returncode, stdout, stderr)."""
-    rc, out, err = l2tp_peer_process.wait(thread, ctrl, timeout)
+    rc, out, err = l2tp_peer_process.wait(thread, ctrl, timeout, kill_on_timeout=False)
     if rc is None:
         ctrl["process"].kill()
         thread.join(5.0)
