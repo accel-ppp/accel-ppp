@@ -115,8 +115,16 @@ def test_switch_logs_captured_proxy_authen_type_without_leaking_credentials(
                     "--calling-number", "472913",
                     "--proxy-username", "simon",
                     "--proxy-password", "secretpw",
+                    # A harness that exits at once leaves the switch's next
+                    # packet to its closed port; the ICMP error ends the
+                    # upstream tunnel, and the call with it, before the ICCN
+                    # is forwarded. Hold the socket until that happened.
+                    "--hold-seconds", "3",
                 ],
             )
+            assert wait_for(
+                lambda: "sending ICCN" in read_log(s_cfg), 10.0
+            ), "the switch never forwarded the ICCN downstream"
             rc, out, err = l2tp_peer_process.wait(peer_thread, peer_ctrl, 15.0)
             assert rc == 0, err
 

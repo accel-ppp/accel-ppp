@@ -8,9 +8,11 @@ import pytest
 from common import config, accel_pppd_process, l2tp_peer_process, process
 from helpers import (
     alloc_ports,
+    EXIT_WAIT,
     finish_harness,
     start_instance,
     switch_show,
+    wait_exit,
     wait_for,
     wait_up,
 )
@@ -111,9 +113,7 @@ def test_shutdown_waits_for_queued_downstream_teardown(
             show = process.run([accel_cmd, "-p", str(switch_cli), "show version"])
             cli_alive = s_ctrl["process"].poll() is None and show[0] == 0
 
-            deadline = started + 15.0
-            while s_ctrl["process"].poll() is None and time.monotonic() < deadline:
-                time.sleep(0.05)
+            wait_exit(s_ctrl, EXIT_WAIT, accel_cmd, switch_cli)
             elapsed = time.monotonic() - started
             rc = s_ctrl["process"].poll()
 

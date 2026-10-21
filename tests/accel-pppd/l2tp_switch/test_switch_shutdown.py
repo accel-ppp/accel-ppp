@@ -6,10 +6,12 @@ import pytest
 from common import config, accel_pppd_process, l2tp_peer_process, process
 from helpers import (
     alloc_ports,
+    EXIT_WAIT,
     finish_harness,
     read_log,
     start_instance,
     switch_show,
+    wait_exit,
     WAIT_FACTOR,
     wait_for,
     wait_up,
@@ -107,8 +109,11 @@ def test_soft_shutdown_waits_for_switched_calls(pytestconfig, accel_cmd, accel_p
                 assert "active=1" in switch_show(accel_cmd, switch_cli)
 
                 # the call ends by itself, then the daemon follows
-                assert _wait_exit(
-                    s_ctrl, CDN_AFTER_ICCN_MS / 1000 + 10.0 * WAIT_FACTOR
+                assert wait_exit(
+                    s_ctrl,
+                    CDN_AFTER_ICCN_MS / 1000 + EXIT_WAIT,
+                    accel_cmd,
+                    switch_cli,
                 ), "did not exit after the call ended"
             finally:
                 finish_harness(thread, ctrl, 5.0)
@@ -167,7 +172,9 @@ def test_sigterm_ends_switched_calls(pytestconfig, accel_cmd, accel_pppd, peer_b
                 assert m, out
                 assert (m.group(1), m.group(2)) == ("3", "0"), out
 
-                assert _wait_exit(s_ctrl, 10.0), "did not exit after the calls ended"
+                assert wait_exit(s_ctrl, EXIT_WAIT, accel_cmd, switch_cli), (
+                    "did not exit after the calls ended"
+                )
             finally:
                 finish_harness(thread, ctrl, 5.0)
         finally:
@@ -243,7 +250,9 @@ def test_soft_shutdown_rejects_icrq_matched_call_at_iccn(
                 assert m, out
                 assert (m.group(1), m.group(2)) == ("3", "0"), out
 
-                assert _wait_exit(s_ctrl, 10.0), "did not exit after the call ended"
+                assert wait_exit(s_ctrl, EXIT_WAIT, accel_cmd, switch_cli), (
+                    "did not exit after the call ended"
+                )
             finally:
                 finish_harness(thread, ctrl, 5.0)
         finally:

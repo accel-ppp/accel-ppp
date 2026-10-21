@@ -237,6 +237,48 @@ static int send_and_recv(int fd, struct l2tp_packet_t *pack,
 	return 0;
 }
 
+/* After the CDN a real peer keeps answering: it acknowledges the CDN and the
+ * StopCCN that follows it. Exiting at once instead leaves the switch
+ * retransmitting into a closed port, and on a host that does not report that
+ * quickly its exit waits out the whole retransmission cycle. Returns after
+ * ACK_QUIET_S without a message. */
+#define ACK_QUIET_S 1
+
+static void ack_until_quiet(int fd, const struct sockaddr_in *addr,
+			    uint16_t tid, uint16_t ns, uint16_t nr)
+{
+	struct timeval tv = { .tv_sec = ACK_QUIET_S, .tv_usec = 0 };
+
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
+		return;
+
+	for (;;) {
+		struct l2tp_packet_t *in = NULL, *zlb;
+
+		if (l2tp_recv(fd, &in, NULL, (const char *)secret,
+			      strlen(secret)) != 0) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK ||
+			    errno == ECONNREFUSED)
+				return;
+			continue;
+		}
+		if (!in)
+			continue;
+		if (!list_empty(&in->attrs))
+			nr = ntohs(in->hdr.Ns) + 1;
+		l2tp_packet_free(in);
+
+		zlb = l2tp_packet_alloc(2, 0, addr, 0, NULL, 0);
+		if (!zlb)
+			return;
+		zlb->hdr.tid = htons(tid);
+		zlb->hdr.Ns = htons(ns);
+		zlb->hdr.Nr = htons(nr);
+		l2tp_packet_send(fd, zlb);
+		l2tp_packet_free(zlb);
+	}
+}
+
 double now_monotonic(void)
 {
 	struct timespec ts;
@@ -925,6 +967,7 @@ int main(int argc, char **argv)
 		struct timeval tv = { .tv_sec = cdn_timeout, .tv_usec = 0 };
 		time_t deadline = time(NULL) + cdn_timeout;
 		int got_cdn = 0, got_stopccn = 0;
+		uint16_t cdn_ns = 0;
 
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
 			return die("setsockopt(SO_RCVTIMEO) failed");
@@ -974,6 +1017,8 @@ int main(int argc, char **argv)
 				       got_stopccn ? "stopccn" : "cdn", res, err);
 				fflush(stdout);
 			}
+			if (got_cdn)
+				cdn_ns = ntohs(cdn->hdr.Ns);
 			l2tp_packet_free(cdn);
 			if (got_cdn)
 				break;
@@ -981,6 +1026,8 @@ int main(int argc, char **argv)
 
 		if (!got_cdn)
 			return die("timed out waiting for CDN");
+
+		ack_until_quiet(fd, &peer_addr, peer_tid, my_ns, cdn_ns + 1);
 
 		printf("event=recv_cdn t=%.6f\n", now_monotonic());
 		fflush(stdout);

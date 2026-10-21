@@ -22,6 +22,9 @@ FULL_BACKOFF_SUM_S = 13
 # Past the single-rtimeout window (1s) and well short of the full 13s.
 STILL_ALIVE_CHECK_S = 5.0
 
+# How long the peer keeps its socket open after sending the StopCCN.
+PEER_HOLD_S = 3
+
 
 @pytest.mark.l2tp_switch
 def test_ordinary_tunnel_survives_full_backoff_after_peer_stopccn(
@@ -69,6 +72,14 @@ def test_ordinary_tunnel_survives_full_backoff_after_peer_stopccn(
                 "--secret", "testsecret",
                 "--calling-number", "472913",
                 "--send-stopccn",
+                # Keep the peer's socket open while the daemon reads and
+                # acknowledges the StopCCN. Once the peer has exited, that
+                # ZLB draws an ICMP port-unreachable and the daemon drops
+                # the tunnel at once ("peer is unreachable"), so FIN_WAIT
+                # is never seen on a host where the daemon is slower than
+                # the exiting peer. 3 s + the 5 s check below stays inside
+                # the 13 s FIN_WAIT window.
+                "--hold-seconds", str(PEER_HOLD_S),
             ],
         )
         rc, out, err = l2tp_peer_process.wait(peer_thread, peer_ctrl, 20.0)
@@ -77,7 +88,7 @@ def test_ordinary_tunnel_survives_full_backoff_after_peer_stopccn(
 
         # The daemon may not have read the StopCCN yet on a loaded host.
         finishing_seen = wait_for(
-            lambda: l2tp_finishing(accel_cmd, cli_port)[0] == 1, 2.0
+            lambda: l2tp_finishing(accel_cmd, cli_port)[0] == 1, 5.0
         )
         assert finishing_seen, (
             "tunnel never entered FIN_WAIT after the peer's StopCCN"
