@@ -4,7 +4,7 @@ import socket
 import tempfile
 import time
 
-from common import accel_pppd_process, l2tp_peer_process, process
+from common import accel_pppd_process, hang_diagnostics, l2tp_peer_process, process
 
 
 def log_path(cfg):
@@ -284,3 +284,28 @@ def finish_harness(thread, ctrl, timeout):
         rc = ctrl["process"].returncode
         out, err = ctrl["out"], ctrl["err"]
     return rc, out, err
+
+
+# A daemon asked to exit (SIGTERM, `shutdown hard`/`soft`) leaves only after
+# every tunnel is gone, and a tunnel whose peer vanished is gone after a full
+# retransmission cycle: 1+2+4+8+16 s with the defaults. This bound covers that
+# cycle plus slack, so a peer that does not acknowledge cannot fail a test;
+# a daemon that is really stuck still does.
+EXIT_WAIT = 31.0 * 1.5 + 5.0
+
+
+def wait_exit(ctrl, timeout=EXIT_WAIT, accel_cmd="accel-cmd", cli_port=None):
+    """True once the daemon of `ctrl` has exited. On timeout the state of the
+    running daemon is printed first (see hang_diagnostics), so a failure shows
+    what it was waiting for."""
+    started = time.monotonic()
+    deadline = started + timeout
+    while time.monotonic() < deadline:
+        if ctrl["process"].poll() is not None:
+            print(f"wait_exit: daemon exited after {time.monotonic() - started:.2f}s")
+            return True
+        time.sleep(0.05)
+    hang_diagnostics.dump(
+        ctrl["process"], accel_cmd, cli_port, f"no exit within {timeout:.0f}s"
+    )
+    return False

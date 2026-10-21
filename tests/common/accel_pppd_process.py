@@ -1,5 +1,5 @@
 from subprocess import Popen, PIPE, TimeoutExpired
-from common import process
+from common import hang_diagnostics, process
 from threading import Thread
 import time
 import warnings
@@ -170,6 +170,12 @@ def end(
 
     # accel-pppd is still alive. kill it
     if not is_finished:
+        hang_diagnostics.dump(
+            accel_pppd_control["process"],
+            accel_cmd,
+            cli_port,
+            f"still running {max_wait_time}s after 'shutdown hard'",
+        )
         print("accel_pppd_end: kill process: " + str(accel_pppd_control["process"]))
         accel_pppd_control["killed"] = True
         accel_pppd_control["process"].kill()  # kill -9 if 'shutdown hard' didn't help
@@ -204,4 +210,6 @@ def _finish(accel_pppd_control, check_exit):
             "triton_context_call); separate fix pending: " + problem
         )
         return
+    if problem:
+        hang_diagnostics.dump_logs(accel_pppd_control["process"], problem)
     assert problem is None, problem + " (sanitizer report at exit? see output above)"
