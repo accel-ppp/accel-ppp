@@ -25,3 +25,8 @@ race:md_thread
 race:timer_thread
 race:triton_timer_del
 race:ap_shutdown_soft
+# The metrics thread and the "l2tp switch show" command read a target
+# tunnel's ->state (an aligned int, stale values are fine there) while the
+# tunnel's own context writes it. Only these two tiny functions are listed.
+race:l2tp_switch_stat_targets_foreach
+race:l2tp_switch_show_exec

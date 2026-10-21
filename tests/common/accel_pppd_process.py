@@ -90,8 +90,24 @@ _KNOWN_SHUTDOWN_NULL_CTX = (
 )
 
 
+def _is_known_shutdown_null_ctx_tsan(text):
+    # The same crash under TSAN: the SIGSEGV handler (sigsegv -> __core_restart
+    # -> close_all_fd) runs inside the faulting thread, and TSAN reports its
+    # malloc as a signal-unsafe call. Exactly one report, with the crash stack.
+    return (
+        text.count("WARNING: ThreadSanitizer:") == 1
+        and "signal-unsafe call inside of a signal" in text
+        and " sigsegv " in text
+        and " triton_context_call " in text
+        and " queue_log " in text
+        and " do_log " in text
+    )
+
+
 def _is_known_shutdown_null_ctx(err):
     text = err.decode("utf-8", "replace") if isinstance(err, bytes) else str(err)
+    if _is_known_shutdown_null_ctx_tsan(text):
+        return True
     reports = text.count("runtime error:")
     return (
         reports == 1

@@ -7734,6 +7734,9 @@ static int l2tp_switch_show_exec(const char *cmd, char * const *fields,
 		active = __atomic_load_n(&t->active, __ATOMIC_RELAXED);
 		u_inet_ntoa(t->peer_addr.sin_addr.s_addr, peer_addr);
 
+		/* conn->state is written by the tunnel's own context, not under
+		 * t->lock: an aligned int read that may be stale (listed in
+		 * tests/tsan.supp) */
 		if (t->mode == L2TP_SWITCH_MODE_PERSISTENT) {
 			status = (conn && conn->state == STATE_ESTB) ?
 				"up" : "down";
