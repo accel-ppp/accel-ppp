@@ -27,8 +27,10 @@ from helpers import (
     fd_count,
     fd_targets,
     finish_harness,
+    RaceNotReached,
     l2tp_finishing,
     read_log,
+    run_until_race_reached,
     start_instance,
     wait_for,
     wait_for_tunnels_active,
@@ -231,6 +233,13 @@ def _assert_nothing_leaked(accel_cmd, s_cli, ctrl, cfg, baseline_fds, what):
 def test_abort_of_stalled_tunnel_lost_to_its_teardown_leaks_nothing(
     pytestconfig, accel_cmd, accel_pppd, peer_bin
 ):
+    """See _abort_attempt(); repeated until the race is reached."""
+    run_until_race_reached(
+        lambda: _abort_attempt(accel_cmd, accel_pppd, peer_bin)
+    )
+
+
+def _abort_attempt(accel_cmd, accel_pppd, peer_bin):
     """The connect timeout schedules l2tp_switch_abort_stalled_tunnel() into
     the stalled tunnel's context under a tunnel_hold(); if the tunnel is
     freed first, the hold must still be released.
@@ -288,13 +297,19 @@ def test_abort_of_stalled_tunnel_lost_to_its_teardown_leaks_nothing(
         # was alive and stuck, well before its retransmission timer gave up.
         sccrq = _event_time(down_out, "recv_sccrq")
         cdn = _event_time(out, "recv_cdn")
-        assert connect_timeout - 0.2 <= cdn - sccrq <= UNACKED_FREE_MS / 1000.0 - 0.5, (
-            f"the connect timeout fired {cdn - sccrq:.2f}s after the SCCRQ"
-            f"\n--- switch log ---\n{read_log(cfg)}"
-        )
-        assert _event_time(down_out, "fin_flood_end") - sccrq >= (
+        if not (connect_timeout - 0.2 <= cdn - sccrq
+                <= UNACKED_FREE_MS / 1000.0 - 0.5):
+            raise RaceNotReached(
+                f"the connect timeout fired {cdn - sccrq:.2f}s after the SCCRQ"
+                f"\n--- downstream harness ---\n{down_out}"
+                f"\n--- switch log ---\n{read_log(cfg)}"
+            )
+        if _event_time(down_out, "fin_flood_end") - sccrq < (
             UNACKED_FREE_MS / 1000.0
-        ), down_out
+        ):
+            raise RaceNotReached(
+                f"the flood ended too early\n{down_out}"
+            )
         _assert_nothing_leaked(
             accel_cmd, s_cli, ctrl, cfg, baseline_fds,
             "stalled tunnel torn down before its abort ran",
@@ -364,6 +379,13 @@ def test_disconnect_of_queued_call_lost_to_its_tunnel_teardown_leaks_nothing(
 def test_idle_close_lost_to_its_tunnel_teardown_leaks_nothing(
     pytestconfig, accel_cmd, accel_pppd, peer_bin
 ):
+    """See _idle_close_attempt(); repeated until the race is reached."""
+    run_until_race_reached(
+        lambda: _idle_close_attempt(accel_cmd, accel_pppd, peer_bin)
+    )
+
+
+def _idle_close_attempt(accel_cmd, accel_pppd, peer_bin):
     """The idle linger schedules l2tp_switch_close_idle_tunnel() into the
     target tunnel's context under a tunnel_hold(); if the tunnel is freed
     first, the hold must still be released.
@@ -426,13 +448,18 @@ def test_idle_close_lost_to_its_tunnel_teardown_leaks_nothing(
         # The flood outlasted the point where the tunnel gives up on the CDN,
         # and the linger expired while the context was stuck: the close never
         # ran (it would have logged, as the warm-up call's did).
-        assert _event_time(down_out, "fin_flood_end") - _event_time(
+        if _event_time(down_out, "fin_flood_end") - _event_time(
             down_out, "recv_cdn"
-        ) >= UNACKED_FREE_MS / 1000.0, down_out
-        assert read_log(cfg).count("closing on-demand tunnel") == 1, (
-            "the idle close ran instead of being cancelled"
-            f"\n--- switch log ---\n{read_log(cfg)}"
-        )
+        ) < UNACKED_FREE_MS / 1000.0:
+            raise RaceNotReached(f"the flood ended too early\n{down_out}")
+        # A flooded context that momentarily drained its socket ran the
+        # queued close before the tunnel was freed: not the race under test.
+        if read_log(cfg).count("closing on-demand tunnel") != 1:
+            raise RaceNotReached(
+                "the idle close ran instead of being cancelled"
+                f"\n--- downstream harness ---\n{down_out}"
+                f"\n--- switch log ---\n{read_log(cfg)}"
+            )
         _assert_nothing_leaked(
             accel_cmd, s_cli, ctrl, cfg, baseline_fds,
             "idle tunnel torn down before its linger close ran",

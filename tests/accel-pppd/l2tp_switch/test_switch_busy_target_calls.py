@@ -93,7 +93,9 @@ def test_call_placed_on_a_flooded_target_is_not_starved(
             "--hold-seconds", "12",
         ],
     )
+    switch_log = ""
     clients = []
+    client_results = []
     try:
         s_started, s_thread, s_ctrl, s_cfg = start_instance(
             accel_pppd,
@@ -131,12 +133,17 @@ def test_call_placed_on_a_flooded_target_is_not_starved(
             relayed = _relayed(accel_cmd, switch_cli)
         finally:
             for thread, ctrl in clients:
-                finish_harness(thread, ctrl, 15.0)
+                client_results.append(finish_harness(thread, ctrl, 15.0))
             accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=switch_cli)
+            switch_log = read_log(s_cfg)
             config.delete_tmp(s_cfg)
     finally:
         down_rc, out, err = finish_harness(down_thread, down_ctrl, 15.0)
-        assert down_rc == 0, f"listener exited with {down_rc}:\n{err}"
+        assert down_rc == 0, (
+            f"listener exited with {down_rc}:\n{err}\n{out}"
+            f"\n--- clients ---\n{client_results}"
+            f"\n--- switch ---\n{switch_log}"
+        )
 
     icrqs = _events(out, "recv_icrq")
     assert len(icrqs) == 2, out + err

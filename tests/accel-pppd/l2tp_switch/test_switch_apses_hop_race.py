@@ -25,8 +25,10 @@ from helpers import (
     fd_count,
     fd_targets,
     finish_harness,
+    RaceNotReached,
     l2tp_finishing,
     read_log,
+    run_until_race_reached,
     show_stat,
     start_instance,
     wait_for,
@@ -106,7 +108,18 @@ def test_apses_finished_lost_to_its_tunnel_teardown_leaks_nothing(
     pytestconfig, accel_cmd, accel_pppd, peer_bin
 ):
     """apses_finished() racing its tunnel's teardown leaves no
-    leaked tunnel, session or fd."""
+    leaked tunnel, session or fd.
+
+    The race is timed against the daemon's clock from the outside, which a
+    starved runner can miss (the terminate lands after the tunnel went away,
+    or the flooded context drained its socket and ran the queued call); the
+    scenario is then repeated, see run_until_race_reached()."""
+    run_until_race_reached(
+        lambda: _apses_finished_attempt(accel_cmd, accel_pppd, peer_bin)
+    )
+
+
+def _apses_finished_attempt(accel_cmd, accel_pppd, peer_bin):
     s_cli, s_port = alloc_ports(2)
 
     started, thread, ctrl, cfg = start_instance(
@@ -172,7 +185,12 @@ def test_apses_finished_lost_to_its_tunnel_teardown_leaks_nothing(
             rc, out, err = process.run(
                 [accel_cmd, "-p", str(s_cli), f"terminate csid {CALLING_NUMBER} hard"]
             )
-            assert rc == 0, f"terminate failed (rc={rc}): {err}\n{out}"
+            if rc != 0:
+                # most likely the tunnel was already gone: terminate was late
+                raise RaceNotReached(
+                    f"terminate failed (rc={rc}): {err}\n{out}"
+                    f"\n--- log ---\n{read_log(cfg)}"
+                )
 
             rc, out, err = finish_harness(up_thread, up_ctrl, 30.0)
             assert rc == 0, (
@@ -192,12 +210,15 @@ def test_apses_finished_lost_to_its_tunnel_teardown_leaks_nothing(
         log = read_log(cfg)
         assert "no acknowledgement from peer" in log, log
         # ... without the terminate's call ever running (the warm-up
-        # tunnel, logged first, may well have run its own)
+        # tunnel, logged first, may well have run its own). If it did, the
+        # flooded context drained its socket for a moment and ran the call
+        # before the tunnel was freed: not the race under test.
         raced = log[log.rindex("handling SCCRQ"):]
-        assert "data channel closed, disconnecting session" not in raced, (
-            "apses_finished()'s call into the tunnel ran instead of being"
-            f" dropped with the tunnel\n--- log ---\n{log}"
-        )
+        if "data channel closed, disconnecting session" in raced:
+            raise RaceNotReached(
+                "apses_finished()'s call into the tunnel ran instead of being"
+                f" dropped with the tunnel\n--- log ---\n{log}"
+            )
 
         # A call dropped with its tunnel still counts as in flight until its
         # cancel accounts for it, and a shutdown waits for those.

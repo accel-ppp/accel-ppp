@@ -2,7 +2,7 @@ import re
 
 import pytest
 from common import config, accel_pppd_process, l2tp_peer_process
-from helpers import alloc_ports, finish_harness, start_instance, wait_up
+from helpers import WAIT_FACTOR, alloc_ports, finish_harness, start_instance, wait_up
 
 CALLS = 8
 # The listener's SCCRP carries no Recv-Window-Size: the switch assumes 4.
@@ -76,10 +76,10 @@ def test_hung_up_call_does_not_place_its_unsent_icrq(pytestconfig, accel_cmd, ac
                 for _ in range(CALLS)
             ]
             for thread, ctrl in calls:
-                rc, out, err = l2tp_peer_process.wait(thread, ctrl, 20.0)
+                rc, out, err = l2tp_peer_process.wait(thread, ctrl, 20.0 * WAIT_FACTOR)
                 assert rc == 0, err
 
-            rc, down_out, down_err = finish_harness(down_thread, down_ctrl, 30.0)
+            rc, down_out, down_err = finish_harness(down_thread, down_ctrl, 30.0 * WAIT_FACTOR)
             assert rc == 0, down_err
         finally:
             accel_pppd_process.end(s_thread, s_ctrl, accel_cmd, 10.0, cli_port=switch_cli)

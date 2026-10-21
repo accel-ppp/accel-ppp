@@ -1,3 +1,5 @@
+#include <pthread.h>
+
 #include "l2tp_switch_peer_test.h"
 
 #define FLOOD_BATCH 64
@@ -108,6 +110,47 @@ static int init_junk(struct mmsghdr *msgs, struct iovec *iov,
 	return 0;
 }
 
+/* Extra senders. A flooded context only stays inside its read handler while
+ * the socket never runs empty; on a CPU-starved runner one sender is not
+ * scheduled often enough to guarantee that, so a few more keep the queue
+ * full whenever the receiver runs. */
+#define FLOOD_EXTRA_SENDERS 4
+
+struct flood_sender_t {
+	int fd;
+	double until;
+	struct mmsghdr msgs[FLOOD_BATCH];
+};
+
+static void *flood_sender(void *arg)
+{
+	struct flood_sender_t *s = arg;
+
+	while (now_monotonic() < s->until)
+		sendmmsg(s->fd, s->msgs, FLOOD_BATCH, 0);
+
+	return NULL;
+}
+
+/* returns the number of threads started; they are joined by the caller */
+static int start_extra_senders(pthread_t *tids, struct flood_sender_t *senders,
+			       int fd, double until,
+			       const struct mmsghdr *msgs)
+{
+	int i, started = 0;
+
+	for (i = 0; i < FLOOD_EXTRA_SENDERS; i++) {
+		senders[i].fd = fd;
+		senders[i].until = until;
+		memcpy(senders[i].msgs, msgs, sizeof(senders[i].msgs));
+		if (pthread_create(&tids[started], NULL, flood_sender,
+				   &senders[i]) == 0)
+			started++;
+	}
+
+	return started;
+}
+
 /* triton runs timers and md handlers before pending context calls */
 int run_fin_flood(int fd, const struct sockaddr_in *their_addr,
 		  uint16_t their_tid, uint16_t our_tid,
@@ -121,7 +164,9 @@ int run_fin_flood(int fd, const struct sockaddr_in *their_addr,
 	struct l2tp_hdr_t wire;
 	struct iovec iov;
 	unsigned long sent = 0;
-	int stopped = 0, flooding = 0;
+	int stopped = 0, flooding = 0, extra = 0, i;
+	pthread_t tids[FLOOD_EXTRA_SENDERS];
+	struct flood_sender_t senders[FLOOD_EXTRA_SENDERS];
 
 	if (init_junk(msgs, &iov, &wire, their_addr))
 		return 1;
@@ -150,6 +195,9 @@ int run_fin_flood(int fd, const struct sockaddr_in *their_addr,
 
 			if (!flooding) {
 				flooding = 1;
+				if (flood_heavy)
+					extra = start_extra_senders(tids,
+						senders, fd, flood_until, msgs);
 				printf("event=fin_flood_start t=%.6f\n", now);
 				fflush(stdout);
 			}
@@ -160,6 +208,9 @@ int run_fin_flood(int fd, const struct sockaddr_in *their_addr,
 		}
 		usleep(500);
 	}
+
+	for (i = 0; i < extra; i++)
+		pthread_join(tids[i], NULL);
 
 	printf("event=fin_flood_end t=%.6f junk=%lu\n", now_monotonic(), sent);
 	fflush(stdout);

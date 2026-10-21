@@ -298,7 +298,7 @@ static int serve_minimal_lcp_and_cdn(int fd, const struct sockaddr_in *their_add
 		return 0;
 	}
 
-	if (run_minimal_lcp(data_fd, 5) != 0) {
+	if (run_minimal_lcp(data_fd, MINIMAL_LCP_TIMEOUT_SECONDS) != 0) {
 		close(data_fd);
 		return die("downstream minimal LCP failed");
 	}
@@ -414,6 +414,13 @@ static int serve_established_tunnel(int fd, const struct sockaddr_in *their_addr
 			continue;
 		if (!msg)
 			continue;
+		/* The socket is shared by the rounds: what an earlier round's
+		 * tunnel still sends (the retransmission of its StopCCN, say)
+		 * is not addressed to this one and must not end it. */
+		if (ntohs(msg->hdr.tid) != my_tid) {
+			l2tp_packet_free(msg);
+			continue;
+		}
 		if (list_empty(&msg->attrs)) {
 				/* ZLB: do not ack an ack. */
 			l2tp_packet_free(msg);

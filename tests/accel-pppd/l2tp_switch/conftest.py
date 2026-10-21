@@ -20,6 +20,7 @@ def _build_peer_test(sanitize, out_path):
         "-Wall",
         "-fno-strict-aliasing",
         "-D_GNU_SOURCE",
+        "-pthread",
     ]
     if sanitize:
         cmd += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]

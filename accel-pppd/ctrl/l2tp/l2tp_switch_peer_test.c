@@ -386,7 +386,16 @@ int main(int argc, char **argv)
 	peer_addr.sin_port = htons(1701);
 
 	{
-		unsigned seed = (unsigned)getpid() ^ (unsigned)time(NULL);
+		/* pid ^ time collides between harnesses started a few seconds
+		 * apart in a fresh container (small, sequential pids), and two
+		 * peers with the same tunnel ID cannot coexist in the kernel:
+		 * the second one's session connect fails with ENOENT */
+		struct timespec now;
+		unsigned seed;
+
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		seed = ((unsigned)getpid() * 2654435761u) ^
+		       (unsigned)now.tv_nsec ^ (unsigned)now.tv_sec;
 
 		srandom(seed);
 		local_tid = 1024 + (uint16_t)(random() % 60000);
@@ -919,7 +928,7 @@ int main(int argc, char **argv)
 			if (run_real_ppp(data_fd) != 0)
 				return 1;
 		} else if (minimal_lcp) {
-			if (run_minimal_lcp(data_fd, 5) != 0)
+			if (run_minimal_lcp(data_fd, MINIMAL_LCP_TIMEOUT_SECONDS) != 0)
 				return 1;
 		} else {
 			int i, frames = data_count > 0 ? data_count : 1;
@@ -1027,10 +1036,12 @@ int main(int argc, char **argv)
 		if (!got_cdn)
 			return die("timed out waiting for CDN");
 
-		ack_until_quiet(fd, &peer_addr, peer_tid, my_ns, cdn_ns + 1);
-
+		/* stamped before the acknowledging wait: tests measure when the
+		 * CDN arrived, not when the peer stopped answering */
 		printf("event=recv_cdn t=%.6f\n", now_monotonic());
 		fflush(stdout);
+
+		ack_until_quiet(fd, &peer_addr, peer_tid, my_ns, cdn_ns + 1);
 	}
 
 	if (second_call_number) {

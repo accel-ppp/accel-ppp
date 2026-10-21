@@ -84,6 +84,8 @@ void comp_chap_md5(uint8_t *md5, uint8_t ident,
 		   const void *secret, size_t secret_len,
 		   const void *chall, size_t chall_len);
 int run_real_ppp(int data_fd);
+/* patience bound only: a CPU-starved runner needs far longer than 5 s */
+#define MINIMAL_LCP_TIMEOUT_SECONDS 30
 int run_minimal_lcp(int data_fd, int timeout_seconds);
 void watch_auth_frames(int data_fd, int ms);
 

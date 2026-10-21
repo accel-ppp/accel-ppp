@@ -4,6 +4,7 @@ import socket
 import tempfile
 import time
 
+import pytest
 from common import accel_pppd_process, hang_diagnostics, l2tp_peer_process, process
 
 
@@ -86,8 +87,10 @@ def start_instance(accel_pppd, accel_cmd, cli_port, l2tp_bind, l2tp_port, secret
     # same output as config.make_tmp()
     print("make_tmp filename: " + cfg)
 
+    # only a daemon that does not answer waits the whole time; a slow runner
+    # can need much more than 5 s to start it
     started, thread, ctrl = accel_pppd_process.start(
-        accel_pppd, ["-c" + cfg], accel_cmd, 5.0, cli_port=cli_port, env=env
+        accel_pppd, ["-c" + cfg], accel_cmd, 5.0 * WAIT_FACTOR, cli_port=cli_port, env=env
     )
     return started, thread, ctrl, cfg
 
@@ -309,3 +312,31 @@ def wait_exit(ctrl, timeout=EXIT_WAIT, accel_cmd="accel-cmd", cli_port=None):
         ctrl["process"], accel_cmd, cli_port, f"no exit within {timeout:.0f}s"
     )
     return False
+
+class RaceNotReached(Exception):
+    """An attempt of a race test did not get the daemon into the interleaving
+    under test. Raised only for the precondition, never for the outcome."""
+
+
+def run_until_race_reached(attempt, attempts=5):
+    """Runs `attempt()` until it returns without raising RaceNotReached.
+
+    A race test forces an interleaving with flooded sockets and timers, which
+    a starved runner occasionally fails to reproduce (the flooded context
+    drains its socket for a moment and runs the queued call). That says
+    nothing about the product, so the whole scenario is repeated on a fresh
+    daemon. Assertions on the outcome (nothing leaked) are not retried: they
+    fail the test at once. If the interleaving is never reached the test
+    fails with the evidence of every attempt."""
+    evidence = []
+    for number in range(1, attempts + 1):
+        try:
+            return attempt()
+        except RaceNotReached as e:
+            evidence.append(f"attempt {number}/{attempts}: {e}")
+            print(f"race not reached, retrying: {evidence[-1]}", flush=True)
+    pytest.fail(
+        f"the race was not reached in {attempts} attempts:\n"
+        + "\n".join(evidence),
+        pytrace=False,
+    )

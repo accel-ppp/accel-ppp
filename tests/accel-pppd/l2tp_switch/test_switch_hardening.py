@@ -9,9 +9,13 @@ from helpers import (
 )
 
 
-# Rounds of `l2tp switch add` + `del` the churner must have completed by the time
-# the calls are done, so the churn demonstrably overlapped them.
+# Rounds of `l2tp switch add` + `del` the churner must have completed while the
+# calls were being matched, so the churn demonstrably overlapped them. How many
+# calls that takes depends on how fast the runner is (a round is two accel-cmd
+# spawns), so calls are placed until both counts are reached.
 MIN_CHURN_ITERATIONS = 3
+MIN_CALLS = 3
+MAX_CALLS = 40
 
 
 @pytest.mark.l2tp_switch
@@ -84,8 +88,17 @@ def test_rule_churn_while_calls_are_matched(pytestconfig, accel_cmd, accel_pppd,
             churner = threading.Thread(target=churn)
             churner.start()
             try:
-                calls = 3
-                for _ in range(calls):
+                # the churn is running before the first call is matched
+                assert wait_for(lambda: len(iterations) >= 1, 30.0), (
+                    f"the churner never completed a round: {failures[:3]}"
+                )
+                calls = 0
+                rounds_at_start = len(iterations)
+                while calls < MIN_CALLS or (
+                    len(iterations) - rounds_at_start < MIN_CHURN_ITERATIONS
+                    and calls < MAX_CALLS
+                ):
+                    calls += 1
                     peer_thread, peer_ctrl = l2tp_peer_process.start(
                         peer_bin,
                         [
@@ -103,8 +116,9 @@ def test_rule_churn_while_calls_are_matched(pytestconfig, accel_cmd, accel_pppd,
 
             assert not churner.is_alive(), "the churner thread never finished"
             assert not failures, failures[:3]
-            assert len(iterations) >= MIN_CHURN_ITERATIONS, (
-                f"only {len(iterations)} add/del rounds ran during {calls}"
+            assert len(iterations) - rounds_at_start >= MIN_CHURN_ITERATIONS, (
+                f"only {len(iterations) - rounds_at_start} add/del rounds ran"
+                f" during {calls}"
                 " calls: the rule list was not churned while calls matched"
             )
             # no churned rule may be left behind, and the base rule is intact
