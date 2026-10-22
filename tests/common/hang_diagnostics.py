@@ -94,10 +94,27 @@ def _log_tail(cfg):
     return "\n".join(parts) or "<no log output>"
 
 
-def dump_logs(popen, reason):
+def _config_logs(cfg):
+    """log-file=/log-error=... settings of the config, to tell a log that was
+    never configured from one that is missing."""
+    text = _read(cfg) if cfg else ""
+    keys = ("log-file", "log-error", "log-emerg", "log-debug")
+    found = [ln.strip() for ln in text.splitlines() if ln.strip().startswith(keys)]
+    return "config log settings: " + (", ".join(found) or "<none>")
+
+
+def dump_logs(popen, reason, control=None):
     """Prints the log tails of an already exited daemon `popen`: its stderr
-    pipe is often empty for an abort() (the BUG: lines go to log-error=)."""
+    pipe is often empty for an abort() (the BUG: lines go to log-error=).
+    With the harness `control` dict also its captured stdout/stderr."""
     print(f"===== accel-pppd {popen.pid} logs: {reason} =====")
+    print(_config_logs(config_path(popen)))
+    for key in ("out", "err"):
+        data = (control or {}).get(key)
+        if data:
+            text = data.decode("utf-8", "replace") if isinstance(data, bytes) else str(data)
+            print(f"--- daemon {key} (last {LOG_TAIL_LINES} lines) ---")
+            print("\n".join(text.splitlines()[-LOG_TAIL_LINES:]))
     print(_log_tail(config_path(popen)))
     print(f"===== end of accel-pppd {popen.pid} logs =====")
 

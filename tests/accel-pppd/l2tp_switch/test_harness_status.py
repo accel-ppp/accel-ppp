@@ -182,3 +182,26 @@ def test_known_shutdown_null_ctx_is_waived_narrowly(fake, tmp_path, extra, waive
     else:
         with pytest.raises(AssertionError, match="exited with status 1"):
             accel_pppd_process.end(thread, ctrl, cmd, 5.0, check_exit=True)
+
+
+def test_daemon_is_started_without_the_sigsegv_restart_handler(fake, monkeypatch):
+    """Without --no-sigsegv a crash re-executes the daemon after closing all
+    its descriptors, which later shows up as an unexplained SIGABRT."""
+    pppd, cmd = fake
+    seen = []
+    real_popen = accel_pppd_process.Popen
+
+    def spy(argv, *args, **kwargs):
+        seen.append(argv)
+        return real_popen(argv, *args, **kwargs)
+
+    monkeypatch.setattr(accel_pppd_process, "Popen", spy)
+    monkeypatch.setenv("FAKE_EXIT", "0")
+    started, thread, ctrl = accel_pppd_process.start(
+        pppd, [], cmd, 5.0, env=dict(os.environ)
+    )
+    try:
+        assert started
+    finally:
+        accel_pppd_process.end(thread, ctrl, cmd, 5.0)
+    assert "--no-sigsegv" in seen[0]

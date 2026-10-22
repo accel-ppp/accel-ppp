@@ -1,6 +1,7 @@
 from subprocess import Popen, PIPE, TimeoutExpired
 from common import hang_diagnostics, process
 from threading import Thread
+import resource
 import time
 import warnings
 
@@ -8,6 +9,14 @@ import warnings
 # waits forever without -t)
 CLI_TIMEOUT = 10.0
 THREAD_JOIN_TIMEOUT = 10.0
+
+
+def _allow_core_dump():
+    # a crash then leaves a core where core_pattern says, if it allows one
+    try:
+        resource.setrlimit(resource.RLIMIT_CORE, (resource.RLIM_INFINITY,) * 2)
+    except (ValueError, OSError):
+        pass
 
 
 def accel_pppd_thread_func(accel_pppd_control):
@@ -25,7 +34,13 @@ def accel_pppd_thread_func(accel_pppd_control):
 
 def start(accel_pppd, args, accel_cmd, max_wait_time, cli_port=None, env=None):
     print("accel_pppd_start: begin")
-    accel_pppd_process = Popen([accel_pppd] + args, stdout=PIPE, stderr=PIPE, env=env)
+    accel_pppd_process = Popen(
+        [accel_pppd] + args,
+        stdout=PIPE,
+        stderr=PIPE,
+        env=env,
+        preexec_fn=_allow_core_dump,
+    )
     accel_pppd_control = {"process": accel_pppd_process}
     accel_pppd_thread = Thread(
         target=accel_pppd_thread_func,
@@ -227,5 +242,7 @@ def _finish(accel_pppd_control, check_exit):
         )
         return
     if problem:
-        hang_diagnostics.dump_logs(accel_pppd_control["process"], problem)
+        hang_diagnostics.dump_logs(
+            accel_pppd_control["process"], problem, accel_pppd_control
+        )
     assert problem is None, problem + " (sanitizer report at exit? see output above)"

@@ -35,7 +35,7 @@ def test_ordinary_tunnel_survives_full_backoff_after_peer_stopccn(
     cfg = config.make_tmp(
         f"""
     [modules]
-    log_syslog
+    log_file
     l2tp
 
     [core]

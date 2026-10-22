@@ -132,6 +132,28 @@ def accel_pppd_exit_checked(monkeypatch):
     monkeypatch.setattr(accel_pppd_process, "end", strict_end)
 
 
+@pytest.fixture(autouse=True)
+def accel_pppd_crash_visible(monkeypatch):
+    """Starts every daemon with --no-sigsegv.
+
+    By default a SIGSEGV runs the daemon's handler, which closes all
+    descriptors and re-executes it under the same pid. Another thread then
+    fails on its closed epoll/log descriptors, e.g. triton_md_enable_handler()
+    -> abort() with its BUG message written to a closed log-error fd: a
+    SIGABRT with empty stderr far from the real crash, or a daemon that
+    looks hung because it restarted. Without the handler the crash is a
+    plain SIGSEGV (or a sanitizer report) at the real site. Also lets
+    the daemon write a core file."""
+    real_start = accel_pppd_process.start
+
+    def crash_visible_start(accel_pppd, args, *rest, **kwargs):
+        if "--no-sigsegv" not in args:
+            args = ["--no-sigsegv"] + list(args)
+        return real_start(accel_pppd, args, *rest, **kwargs)
+
+    monkeypatch.setattr(accel_pppd_process, "start", crash_visible_start)
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
@@ -151,7 +173,7 @@ def accel_pppd_config(l2tp_switch_config):
     return (
         """
     [modules]
-    log_syslog
+    log_file
     l2tp
 
     [core]

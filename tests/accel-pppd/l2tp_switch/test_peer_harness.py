@@ -9,7 +9,7 @@ def test_peer_harness_against_plain_lns(pytestconfig, accel_cmd, accel_pppd, pee
     lns_config = config.make_tmp(
         f"""
     [modules]
-    log_syslog
+    log_file
     l2tp
 
     [core]

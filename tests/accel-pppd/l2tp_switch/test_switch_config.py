@@ -193,7 +193,7 @@ class TestSelfLoopTarget:
         return (
             """
     [modules]
-    log_syslog
+    log_file
     l2tp
 
     [core]
@@ -375,7 +375,6 @@ class TestTargetSecretNotLeakedOnParseError:
             f.write(f"""
     [modules]
     log_file
-    log_syslog
     l2tp
     [l2tp-switch]
     target={target_line}
@@ -450,7 +449,6 @@ class TestSelfLoopTargetWildcardBind:
             f.write(f"""
     [modules]
     log_file
-    log_syslog
     l2tp
     [l2tp-switch]
     target={target_line}
@@ -544,7 +542,6 @@ class TestMatchAttrNeverInCallSetup:
             f.write(f"""
     [modules]
     log_file
-    log_syslog
     l2tp
     [l2tp-switch]
     target=acme,203.0.113.50,1701,targetsecret

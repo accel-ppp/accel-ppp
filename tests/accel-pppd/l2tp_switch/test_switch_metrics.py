@@ -54,13 +54,13 @@ def test_switch_metrics_exposed_via_native_endpoint(pytestconfig, accel_cmd, acc
     assert d_started
 
     try:
-        # start_instance() fixes [modules] to log_syslog/l2tp and a second [modules]
+        # start_instance() fixes [modules] to log_file/l2tp and a second [modules]
         # section in extra= is not merged, so build the config here with metrics
         # loaded from the start.
         s_cfg = config.make_tmp(
             f"""
     [modules]
-    log_syslog
+    log_file
     l2tp
     metrics
 
@@ -165,7 +165,7 @@ def test_switch_metrics_target_up_tracks_on_demand_lifecycle(pytestconfig, accel
         s_cfg = config.make_tmp(
             f"""
     [modules]
-    log_syslog
+    log_file
     l2tp
     metrics
 
@@ -290,7 +290,7 @@ def test_switch_metrics_target_up_false_while_still_connecting(pytestconfig, acc
         s_cfg = config.make_tmp(
             f"""
     [modules]
-    log_syslog
+    log_file
     l2tp
     metrics
 

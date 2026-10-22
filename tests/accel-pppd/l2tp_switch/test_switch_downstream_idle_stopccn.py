@@ -19,7 +19,7 @@ def test_downstream_idle_stopccn_triggers_fast_reconnect(pytestconfig, accel_cmd
     switch_config = config.make_tmp(
         f"""
     [modules]
-    log_syslog
+    log_file
     l2tp
 
     [core]

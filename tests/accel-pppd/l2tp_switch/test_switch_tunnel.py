@@ -7,7 +7,7 @@ def _start_downstream(accel_pppd, accel_cmd, cli_port, l2tp_port, secret):
     downstream_config = config.make_tmp(
         f"""
     [modules]
-    log_syslog
+    log_file
     l2tp
 
     [core]
@@ -48,7 +48,7 @@ def test_switch_tunnel_persistent_comes_up_with_no_calls(pytestconfig, accel_cmd
         switch_config = config.make_tmp(
             f"""
     [modules]
-    log_syslog
+    log_file
     l2tp
 
     [core]
@@ -108,7 +108,7 @@ def test_switch_tunnel_on_demand_stays_down_with_no_calls(pytestconfig, accel_cm
         switch_config = config.make_tmp(
             f"""
     [modules]
-    log_syslog
+    log_file
     l2tp
 
     [core]
