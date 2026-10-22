@@ -1,4 +1,5 @@
 #include <pthread.h>
+#include <sched.h>
 
 #include "l2tp_switch_peer_test.h"
 
@@ -49,11 +50,12 @@ static int send_stopccn_now(int fd, const struct sockaddr_in *their_addr,
 	return 0;
 }
 
-/* wire bytes of one junk datagram carrying many valid AVPs, each of which the
- * receiver allocates and frees before it can drop the datagram for its
- * unknown tid: it costs the receiver far more than it costs this sender, so
- * a flooded context never catches up and stays inside its read handler */
-#define HEAVY_AVPS 200
+/* wire bytes of one junk datagram carrying as many valid AVPs as fit in a UDP
+ * datagram, each of which the receiver allocates and frees before it can drop
+ * the datagram for its unknown tid: it costs the receiver far more than it
+ * costs this sender, and the few such datagrams its socket buffer holds keep
+ * it busy for much longer than the sender's pacing period (see below) */
+#define HEAVY_AVPS 9000
 #define HEAVY_AVP_LEN 7
 static uint8_t heavy_buf[sizeof(struct l2tp_hdr_t) + HEAVY_AVPS * HEAVY_AVP_LEN];
 
@@ -113,8 +115,18 @@ static int init_junk(struct mmsghdr *msgs, struct iovec *iov,
 /* Extra senders. A flooded context only stays inside its read handler while
  * the socket never runs empty; on a CPU-starved runner one sender is not
  * scheduled often enough to guarantee that, so a few more keep the queue
- * full whenever the receiver runs. */
+ * full whenever the receiver runs. On a single CPU that is still not enough:
+ * the senders only run while the receiver is off the CPU, and a receiver that
+ * runs for a whole scheduling slice drains the few datagrams the socket holds
+ * and leaves the handler. A sender that preempts the receiver whenever it is
+ * due (a real-time one, when the process may become one) does not depend on
+ * that: it wakes every FLOOD_RT_PERIOD_US, tops the socket up and sleeps, and
+ * the receiver, which needs longer than that for the datagrams the socket
+ * holds, never finds it empty. */
 #define FLOOD_EXTRA_SENDERS 4
+#define FLOOD_RT_BATCH 8
+#define FLOOD_RT_PERIOD_US 300
+#define FLOOD_RT_PRIO 1
 
 struct flood_sender_t {
 	int fd;
@@ -151,6 +163,21 @@ static int start_extra_senders(pthread_t *tids, struct flood_sender_t *senders,
 	return started;
 }
 
+/* returns 1 if the calling thread now preempts ordinary ones */
+static int enter_realtime(void)
+{
+	struct sched_param param = { .sched_priority = FLOOD_RT_PRIO };
+
+	return sched_setscheduler(0, SCHED_FIFO, &param) == 0;
+}
+
+static void leave_realtime(void)
+{
+	struct sched_param param = { .sched_priority = 0 };
+
+	sched_setscheduler(0, SCHED_OTHER, &param);
+}
+
 /* triton runs timers and md handlers before pending context calls */
 int run_fin_flood(int fd, const struct sockaddr_in *their_addr,
 		  uint16_t their_tid, uint16_t our_tid,
@@ -164,7 +191,7 @@ int run_fin_flood(int fd, const struct sockaddr_in *their_addr,
 	struct l2tp_hdr_t wire;
 	struct iovec iov;
 	unsigned long sent = 0;
-	int stopped = 0, flooding = 0, extra = 0, i;
+	int stopped = 0, flooding = 0, extra = 0, realtime = 0, i;
 	pthread_t tids[FLOOD_EXTRA_SENDERS];
 	struct flood_sender_t senders[FLOOD_EXTRA_SENDERS];
 
@@ -195,15 +222,23 @@ int run_fin_flood(int fd, const struct sockaddr_in *their_addr,
 
 			if (!flooding) {
 				flooding = 1;
-				if (flood_heavy)
-					extra = start_extra_senders(tids,
-						senders, fd, flood_until, msgs);
-				printf("event=fin_flood_start t=%.6f\n", now);
+				if (flood_heavy) {
+					realtime = enter_realtime();
+					if (!realtime)
+						extra = start_extra_senders(
+							tids, senders, fd,
+							flood_until, msgs);
+				}
+				printf("event=fin_flood_start t=%.6f realtime=%d\n",
+				       now, realtime);
 				fflush(stdout);
 			}
-			n = sendmmsg(fd, msgs, FLOOD_BATCH, 0);
+			n = sendmmsg(fd, msgs,
+				     realtime ? FLOOD_RT_BATCH : FLOOD_BATCH, 0);
 			if (n > 0)
 				sent += (unsigned long)n;
+			if (realtime)
+				usleep(FLOOD_RT_PERIOD_US);
 			continue;
 		}
 		usleep(500);
@@ -211,6 +246,8 @@ int run_fin_flood(int fd, const struct sockaddr_in *their_addr,
 
 	for (i = 0; i < extra; i++)
 		pthread_join(tids[i], NULL);
+	if (realtime)
+		leave_realtime();
 
 	printf("event=fin_flood_end t=%.6f junk=%lu\n", now_monotonic(), sent);
 	fflush(stdout);

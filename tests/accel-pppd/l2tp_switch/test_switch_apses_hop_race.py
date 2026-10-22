@@ -217,7 +217,9 @@ def _apses_finished_attempt(accel_cmd, accel_pppd, peer_bin):
         if "data channel closed, disconnecting session" in raced:
             raise RaceNotReached(
                 "apses_finished()'s call into the tunnel ran instead of being"
-                f" dropped with the tunnel\n--- log ---\n{log}"
+                f" dropped with the tunnel (realtime=0 in the flood's start"
+                " event: the harness could not preempt the daemon)"
+                f"\n--- harness ---\n{out}\n--- log ---\n{log}"
             )
 
         # A call dropped with its tunnel still counts as in flight until its

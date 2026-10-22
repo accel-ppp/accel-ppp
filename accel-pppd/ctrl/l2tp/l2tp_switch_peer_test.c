@@ -143,6 +143,9 @@ int hold_seconds;
 /* client: frames of --data-pattern to send after the LCP; listener: count
  * the frames that match it */
 int data_count;
+/* client: keep sending the --data-pattern frames until the call-ending message arrives
+ * (--data-count is then ignored), so traffic is in flight however slow the host is */
+int data_until_cdn;
 /* optional ICCN AVPs of the client role; 0 / NULL: not sent */
 int rx_speed;
 const char *private_group_id;
@@ -279,6 +282,54 @@ static void ack_until_quiet(int fd, const struct sockaddr_in *addr,
 	}
 }
 
+struct call_end {
+	int got;
+	int stopccn;
+	unsigned int res, err;
+	uint16_t ns;
+};
+
+/* The CDN carries our local_sid, a tunnel-level StopCCN has sid 0 and our local_tid; accept either.
+ * Returns 1 and fills *ce when `pkt` ends our call. */
+static int note_call_end(const struct l2tp_packet_t *pkt, struct call_end *ce)
+{
+	const struct l2tp_attr_t *msg_type, *a;
+	int is_ours = ntohs(pkt->hdr.sid) == local_sid ||
+		      (ntohs(pkt->hdr.sid) == 0 && ntohs(pkt->hdr.tid) == local_tid);
+
+	if (list_empty(&pkt->attrs) || !is_ours)
+		return 0;
+	msg_type = list_first_entry(&pkt->attrs, typeof(*msg_type), entry);
+	if (!msg_type->attr || msg_type->attr->id != Message_Type ||
+	    (msg_type->val.uint16 != Message_Type_Call_Disconnect_Notify &&
+	     msg_type->val.uint16 != Message_Type_Stop_Ctrl_Conn_Notify))
+		return 0;
+
+	ce->got = 1;
+	ce->stopccn = msg_type->val.uint16 == Message_Type_Stop_Ctrl_Conn_Notify;
+	list_for_each_entry(a, &pkt->attrs, entry)
+		if (a->attr && a->attr->id == Result_Code && a->length >= 4) {
+			ce->res = (a->val.octets[0] << 8) | a->val.octets[1];
+			ce->err = (a->val.octets[2] << 8) | a->val.octets[3];
+		}
+	ce->ns = ntohs(pkt->hdr.Ns);
+	return 1;
+}
+
+/* Reads one control message if one is waiting (never blocks) and notes a call end. */
+static void poll_call_end(int fd, struct call_end *ce)
+{
+	struct pollfd pfd = { .fd = fd, .events = POLLIN };
+	struct l2tp_packet_t *in = NULL;
+
+	if (poll(&pfd, 1, 0) <= 0 || !(pfd.revents & POLLIN))
+		return;
+	if (l2tp_recv(fd, &in, NULL, secret, strlen(secret)) != 0 || !in)
+		return;
+	note_call_end(in, ce);
+	l2tp_packet_free(in);
+}
+
 double now_monotonic(void)
 {
 	struct timespec ts;
@@ -327,7 +378,9 @@ int main(int argc, char **argv)
 	struct l2tp_packet_t *pack, *reply;
 	uint16_t peer_tid, peer_sid;
 	/* RFC 2661 5.8: l2tp_packet_alloc() zeroes Ns and Nr. */
-	uint16_t my_ns = 0, peer_next_nr = 0;
+	uint16_t my_ns = 0, peer_next_nr = 0, cdn_ns;
+	/* call end seen while flooding (--data-until-cdn) */
+	struct call_end pre_ce = { 0 };
 
 	static struct option opts[] = {
 		{"peer-addr", required_argument, 0, 'a'},
@@ -367,6 +420,7 @@ int main(int argc, char **argv)
 		{"framing", required_argument, 0, 'Z'},
 		{"data-count", required_argument, 0, 0x100},
 		{"count-data", no_argument, 0, 0x101},
+		{"data-until-cdn", no_argument, 0, 0x147},
 		{"rx-speed", required_argument, 0, 0x102},
 		{"private-group-id", required_argument, 0, 0x103},
 		{"rcvbuf", required_argument, 0, 0x120},
@@ -476,6 +530,9 @@ int main(int argc, char **argv)
 			data_count = atoi(optarg);
 			if (data_count < 0)
 				return die("invalid --data-count");
+			break;
+		case 0x147:
+			data_until_cdn = 1;
 			break;
 		case 0x101:
 			listen_count_data = 1;
@@ -933,12 +990,18 @@ int main(int argc, char **argv)
 		} else {
 			int i, frames = data_count > 0 ? data_count : 1;
 
-			for (i = 0; i < frames; i++)
+			for (i = 0; data_until_cdn ? !pre_ce.got : i < frames; i++) {
 				if (write(data_fd, data_pattern,
 					  strlen(data_pattern)) < 0)
 					return die("data socket write() failed");
+				if (data_until_cdn && i % 64 == 63)
+					poll_call_end(fd, &pre_ce);
+			}
 
-			if (data_count > 0) {
+			if (data_until_cdn) {
+				printf("event=data_sent frames=%d\n", i);
+				fflush(stdout);
+			} else if (data_count > 0) {
 				printf("event=data_sent frames=%d\n", data_count);
 				fflush(stdout);
 				/* let the listener drain before the socket closes */
@@ -971,20 +1034,16 @@ int main(int argc, char **argv)
 	}
 
 	if (wait_cdn) {
-		/* The CDN carries our local_sid, a tunnel-level StopCCN has sid 0 and our local_tid; accept either.
-		 * Wall-clock deadline: SO_RCVTIMEO bounds each recv(), not the total wait. */
+		/* Wall-clock deadline: SO_RCVTIMEO bounds each recv(), not the total wait. */
 		struct timeval tv = { .tv_sec = cdn_timeout, .tv_usec = 0 };
 		time_t deadline = time(NULL) + cdn_timeout;
-		int got_cdn = 0, got_stopccn = 0;
-		uint16_t cdn_ns = 0;
+		struct call_end ce = pre_ce;
 
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
 			return die("setsockopt(SO_RCVTIMEO) failed");
 
-		while (time(NULL) < deadline) {
+		while (!ce.got && time(NULL) < deadline) {
 			struct l2tp_packet_t *cdn = NULL;
-			struct l2tp_attr_t *msg_type;
-			int is_ours;
 
 			if (l2tp_recv(fd, &cdn, NULL, secret, strlen(secret)) != 0) {
 				if (errno == EAGAIN)
@@ -993,48 +1052,17 @@ int main(int argc, char **argv)
 			}
 			if (!cdn)
 				continue;
-			is_ours = ntohs(cdn->hdr.sid) == local_sid ||
-				  (ntohs(cdn->hdr.sid) == 0 &&
-				   ntohs(cdn->hdr.tid) == local_tid);
-			if (list_empty(&cdn->attrs) || !is_ours) {
-				l2tp_packet_free(cdn);
-				continue;
-			}
-			msg_type = list_first_entry(&cdn->attrs,
-						    typeof(*msg_type), entry);
-			if (msg_type->attr &&
-			    msg_type->attr->id == Message_Type &&
-			    (msg_type->val.uint16 ==
-				     Message_Type_Call_Disconnect_Notify ||
-			     msg_type->val.uint16 ==
-				     Message_Type_Stop_Ctrl_Conn_Notify)) {
-				got_cdn = 1;
-				got_stopccn = msg_type->val.uint16 ==
-					Message_Type_Stop_Ctrl_Conn_Notify;
-			}
-			if (got_cdn) {
-				struct l2tp_attr_t *a;
-				unsigned int res = 0, err = 0;
-
-				list_for_each_entry(a, &cdn->attrs, entry)
-					if (a->attr && a->attr->id == Result_Code &&
-					    a->length >= 4) {
-						res = (a->val.octets[0] << 8) | a->val.octets[1];
-						err = (a->val.octets[2] << 8) | a->val.octets[3];
-					}
-				printf("event=got_cdn type=%s res=%u err=%u\n",
-				       got_stopccn ? "stopccn" : "cdn", res, err);
-				fflush(stdout);
-			}
-			if (got_cdn)
-				cdn_ns = ntohs(cdn->hdr.Ns);
+			note_call_end(cdn, &ce);
 			l2tp_packet_free(cdn);
-			if (got_cdn)
-				break;
 		}
 
-		if (!got_cdn)
+		if (!ce.got)
 			return die("timed out waiting for CDN");
+
+		printf("event=got_cdn type=%s res=%u err=%u\n",
+		       ce.stopccn ? "stopccn" : "cdn", ce.res, ce.err);
+		fflush(stdout);
+		cdn_ns = ce.ns;
 
 		/* stamped before the acknowledging wait: tests measure when the
 		 * CDN arrived, not when the peer stopped answering */

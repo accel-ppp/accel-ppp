@@ -2,7 +2,7 @@ import re
 
 import pytest
 from common import config, accel_pppd_process, l2tp_peer_process
-from helpers import alloc_ports, finish_harness, start_instance, wait_up
+from helpers import WAIT_FACTOR, alloc_ports, finish_harness, start_instance, wait_up
 
 
 def _got_cdn(out):
@@ -123,11 +123,13 @@ def test_downstream_cdn_result_reaches_upstream_under_traffic(pytestconfig, acce
                     "--secret", "upstreamsecret",
                     "--calling-number", "472913",
                     "--data-pattern", "A" * 100,
-                    "--data-count", "400000",
+                    # flood until the CDN arrives: a fixed count would finish
+                    # before the CDN on a fast host and outlast it on a slow one
+                    "--data-until-cdn",
                     "--wait-cdn",
                 ],
             )
-            rc, out, err = l2tp_peer_process.wait(thread, ctrl, 60.0)
+            rc, out, err = l2tp_peer_process.wait(thread, ctrl, 60.0 * WAIT_FACTOR)
             assert rc == 0, err
 
             assert _got_cdn(out) == ("cdn", "5", "9"), out
