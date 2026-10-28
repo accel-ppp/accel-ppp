@@ -39,6 +39,12 @@ These attributes control the IPv6 configuration negotiated via IPv6CP and DHCPv6
     *   Adds a route to the client session for the specified IPv6 prefix.
     *   Format: `2001:db8::/32 gateway metric`
 
+*   **DNS-Server-IPv6-Address** (169, RFC 6911)
+    *   Assigns an IPv6 DNS server to this session. Repeat the attribute for multiple servers.
+    *   Assigned servers replace the `[ipv6-dns]` defaults for the session. Sessions without assigned servers use those defaults.
+    *   Enable `ipv6_nd` to advertise the servers through RDNSS, `ipv6_dhcp` to return them through DHCPv6 DNS_SERVERS, or both as needed.
+    *   The list is not limited to three servers; each reply includes as many as fit in its packet buffer and logs a warning if servers are omitted.
+
 ## Routing
 
 *   **Framed-Route** (22)
