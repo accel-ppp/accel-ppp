@@ -43,7 +43,7 @@ Building the daemon requires:
 * OpenSSL development files
 * PCRE2 development files
 
-Kernel headers are also required when building the optional PPTP, IPoE, or VLAN
+Kernel headers are also required when building the optional PPPoSEQ, IPoE, or VLAN
 monitoring kernel modules. Optional features require their corresponding
 development libraries:
 
