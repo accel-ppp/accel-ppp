@@ -275,5 +275,4 @@ More information
 * Source and issue tracker: https://github.com/accel-ppp/accel-ppp
 * Additional RADIUS notes: docs/
 * Email: contact@accel-ppp.org
-* ICQ: 337258064
 * Jabber: dima@accel-ppp.org
