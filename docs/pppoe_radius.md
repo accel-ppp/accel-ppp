@@ -86,4 +86,4 @@ Note: The attribute ID and Vendor ID for the shaper are configurable in the `[sh
 PPPoE discovery tags (like Service-Name) are generally handled by the server configuration, but TR-101 (Broadband Forum) tags can be processed if `tr101` support is enabled.
 
 *   **TR-101 Attributes** (Vendor: ADSL-Forum)
-    *   accel-ppp can parse Agent-Circuit-Id and Agent-Remote-Id from PADO/PADR packets if they are present in Vendor-Specific tags, and these can be used for authentication or accounting logging.
+    *   With `[pppoe] tr101=1`, accel-ppp extracts Agent-Circuit-Id and Agent-Remote-Id from TR-101 Vendor-Specific tags in client PADR packets and includes them in RADIUS authentication and accounting requests. PADO is a server response, not the source of these client tags.
