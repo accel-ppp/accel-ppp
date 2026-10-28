@@ -6,6 +6,8 @@ endif ()
 
 project(accel-ppp C)
 
+include(CTest)
+
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fno-strict-aliasing -D_GNU_SOURCE -fPIC -rdynamic -Wno-unused-result")
 ADD_DEFINITIONS(-DOPENSSL_API_COMPAT=0x10100000L)
 
@@ -101,8 +103,6 @@ if (BUILD_VLAN_MON_DRIVER)
 endif ()
 
 CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
-
-include(CTest)
 
 if (BUILD_TESTING)
 	add_test(

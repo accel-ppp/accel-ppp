@@ -48,6 +48,8 @@
   session interfaces with `ip link del`.
 
 ### Fixes
+- CLI: fix millisecond timeout conversion in accel-cmd so `1500ms` means
+  1.5 seconds, as documented, instead of 1.0005 seconds.
 - RADIUS: verify response authenticators against the request and secret
   actually sent before delivering replies or updating server health.
   Fix outbound Message-Authenticator calculation on retransmission and

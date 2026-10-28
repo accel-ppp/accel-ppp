@@ -536,7 +536,7 @@ static int set_timespec(struct timespec *timeout, const char *str)
 		timeout->tv_nsec = 0;
 	} else if (strcmp(end, "ms") == 0) {
 		timeout->tv_sec = ulong / 1000;
-		timeout->tv_nsec = (ulong % 1000) * 1000;
+		timeout->tv_nsec = (ulong % 1000) * 1000000;
 	} else if (strcmp(end, "us") == 0) {
 		timeout->tv_sec = ulong / 1000000;
 		timeout->tv_nsec = (ulong % 1000000) * 1000;
