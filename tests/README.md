@@ -2,6 +2,11 @@
 
 These tests are done for Ubuntu and Debian distros. Please use latest stable Debian or Ubuntu to run the tests.
 
+The commands in this guide require CMake/CTest 3.20 or newer, including
+`ctest --test-dir`. The standalone kernel-module installation script requires
+CMake 3.15 or newer for `cmake --install`. These command requirements are
+separate from the project's minimum CMake version of 3.10.
+
 ## Focused unit tests
 
 The standalone unit tests compile production callbacks with small test fixtures

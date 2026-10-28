@@ -57,11 +57,25 @@ Building and installing
 
 Use an out-of-tree build directory:
 
+The commands below require CMake 3.15 or newer: -S/-B were added in 3.13,
+and --install was added in 3.15. The project itself still supports CMake 3.10.
+
     cmake -S . -B build \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX=/usr/local
     cmake --build build
     sudo cmake --install build
+
+For CMake 3.10 through 3.14, use the build-directory form and the generated
+install target instead:
+
+    mkdir -p build
+    cd build
+    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local ..
+    cmake --build .
+    sudo cmake --build . --target install
+
+Run the remaining examples from the repository root.
 
 Useful build options:
 
