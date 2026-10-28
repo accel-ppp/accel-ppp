@@ -65,12 +65,13 @@ The `shaper` module can be configured to listen for specific RADIUS attributes t
 
 *   **Filter-Id** (11)
     *   Used to specify upload/download limits.
-    *   **Simple Format:** `speed` (bits/sec) or `speed/burst`. 
-        *   Example: `10000` (10 Mbps)
-    *   **Cisco Format:** `rate-limit output access-group 1 8000000 1500000 3000000` (downstream) / `rate-limit input ...` (upstream).
+    *   **Simple Format:** `speed` or `downstream/upstream`, in Kbit/s with the default `rate-multiplier=1`.
+        *   Example: `10000` sets both directions to 10 Mbps; `10000/2000` sets downstream to 10 Mbps and upstream to 2 Mbps.
+        *   The slash separates rates. Configure bursts with `[shaper] down-burst-factor` and `up-burst-factor`.
+    *   **Cisco Format:** Set `vendor=Cisco` and `attr=Cisco-AVPair` in `[shaper]`. Values such as `lcp:interface-config#1=rate-limit output 8000000 1500000 3000000 conform-action transmit exceed-action drop` control downstream; `rate-limit input ...` controls upstream. Cisco rates are in bits/sec and bursts are in bytes. See the [README shaper examples](../README.md#built-in-shaper) for time ranges and complete examples.
     
 *   **Mikrotik-Rate-Limit** (Vendor: Mikrotik, ID: 8)
-    *   Supported if the attribute is present.
+    *   Set `vendor=Mikrotik` and `attr=Mikrotik-Rate-Limit` in `[shaper]` to select this attribute. Its first rate is upstream and its second rate is downstream, the reverse of the simple Filter-Id order.
     
 Note: The attribute ID and Vendor ID for the shaper are configurable in the `[shaper]` section of `accel-ppp.conf`.
 
