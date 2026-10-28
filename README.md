@@ -49,7 +49,9 @@ development libraries:
 
 * Net-SNMP for NETSNMP=TRUE
 * PostgreSQL client libraries for LOG_PGSQL_DEPRECATED=TRUE
-* Lua for LUA=TRUE or a specific Lua version such as LUA=5.3
+* Lua 5.1 development files for LUA=TRUE. A numeric value such as LUA=5.3
+  requests at least that Lua version through CMake's FindLua module; it does
+  not enforce an exact version.
 
 
 Building and installing

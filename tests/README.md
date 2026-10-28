@@ -74,7 +74,8 @@ sudo apt install iproute2 ppp pppoe isc-dhcp-client
 ```
 
 Install the build dependencies described in the project README, including
-kernel headers and Lua development files for the options below. Run these
+kernel headers and Lua 5.1 development files (`liblua5.1-0-dev` on Debian and
+Ubuntu) for `LUA=TRUE` below. Run these
 commands from the repository root.
 
 Install accel-pppd (make install or use distro package). Do not run accel-pppd using systemd or other supervisors
