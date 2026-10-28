@@ -90,6 +90,8 @@
   VLAN monitoring packet-handler registration on Linux 6.6 and newer.
 - Build / install: install kernel modules from their actual build
   directories, honor `DESTDIR`, and propagate installation failures.
+- Packaging: include the optional PPPoSEQ kernel module in Debian and RPM
+  installation rules, including standalone driver packages.
 
 ### Docs
 - Refreshed the README and synchronized the sample configuration and man

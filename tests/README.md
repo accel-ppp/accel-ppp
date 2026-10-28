@@ -38,6 +38,9 @@ The kernel module installation regression test is rootless and does not need
 kernel headers. It uses a fake kernel build tree to verify that `ipoe`,
 `vlan_mon`, and `ppposeq` are installed from their actual build directories,
 honor `DESTDIR`, and make installation fail when `modules_install` fails.
+It also verifies that Debian and CentOS packaging configurations include
+`ppposeq.ko` with the standalone driver package name, and omit it when the
+build flag is disabled.
 
 Run it through CTest after configuring the project:
 
