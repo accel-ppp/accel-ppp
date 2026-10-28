@@ -17,6 +17,8 @@
 
 #include "memdebug.h"
 
+#define BUF_SIZE (LOG_MAX_SIZE + 64)
+
 struct tcp_target_t
 {
 	struct log_target_t target;
@@ -54,15 +56,10 @@ static void disconnect(struct tcp_target_t *t)
 
 static void unpack_msg(struct tcp_target_t *t, struct log_msg_t *msg)
 {
-	struct log_chunk_t *chunk;
 	int pos = strlen(msg->hdr->msg);
 
 	strcpy(t->buf, msg->hdr->msg);
-
-	list_for_each_entry(chunk, msg->chunks, entry) {
-		memcpy(t->buf + pos, chunk->msg, chunk->len);
-		pos += chunk->len;
-	}
+	pos += log_unpack_msg(msg, t->buf + pos, BUF_SIZE - pos);
 
 	t->buf_size = pos;
 	t->buf_pos = 0;
@@ -266,7 +263,7 @@ static int start_log(const char *_opt)
 	t = _malloc(sizeof(*t));
 	memset(t, 0, sizeof(*t));
 
-	t->buf = _malloc(LOG_MAX_SIZE + 64);
+	t->buf = _malloc(BUF_SIZE);
 
 	t->conn_timer.expire_tv.tv_sec = conf_connect_interval;
 	t->conn_timer.expire = connect_timer;

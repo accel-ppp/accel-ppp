@@ -33,21 +33,16 @@ static int prio_map[] = {LOG_INFO, LOG_ERR, LOG_WARNING, LOG_INFO, LOG_INFO, LOG
 
 static void unpack_msg(struct log_msg_t *msg)
 {
-	struct log_chunk_t *chunk;
 	int pos;
 
 	strcpy(log_buf, msg->hdr->msg);
 	pos = strlen(log_buf);
+	pos += log_unpack_msg(msg, log_buf + pos, LOG_MAX_SIZE - pos);
 
-	list_for_each_entry(chunk, msg->chunks, entry) {
-		memcpy(log_buf + pos, chunk->msg, chunk->len);
-		pos += chunk->len;
-	}
-
-	if (pos > 1)
-		log_buf[pos - 1] = 0;
-	else
-		log_buf[0] = 0;
+	/* a line cut to fit the buffer has lost its newline */
+	if (pos && log_buf[pos - 1] == '\n')
+		pos--;
+	log_buf[pos] = 0;
 }
 
 static void set_hdr(struct log_msg_t *msg, struct ap_session *ses)
