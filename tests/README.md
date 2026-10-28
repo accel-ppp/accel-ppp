@@ -36,36 +36,54 @@ sh tests/kernel-module-install/test.sh cmake
 
 ## Preparations
 
-Install pytest
+Install pytest and its plugins from the distribution packages:
 
-Using apt: `sudo apt install python3-pytest python3-pytest-dependency python3-pytest-order` or using pip: `sudo pip3 install pytest pytest-dependency pytest-order`.
+```bash
+sudo apt install python3-pytest python3-pytest-dependency python3-pytest-order
+```
 
 pytest-dependency version must be >= 0.5 (with 'scope' support)
 
----
-Note: tests will be run under sudo. If you prefer install python modules using pip, then do it under sudo as described above.
-
----
+The network/session tests run under sudo, so the plugins must be available to
+the system Python interpreter used by `sudo python3`.
 
 Install additional tools required for tests:
 ```bash
 sudo apt install iproute2 ppp pppoe isc-dhcp-client
 ```
 
-Then build accel-ppp in 'build' directory (as usual)
+Install the build dependencies described in the project README, including
+kernel headers and Lua development files for the options below. Run these
+commands from the repository root.
 
 Install accel-pppd (make install or use distro package). Do not run accel-pppd using systemd or other supervisors
 ```bash
-mkdir build && cd build
-cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr  -DKDIR=/usr/src/linux-headers-`uname -r`  -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE -DCPACK_TYPE=Ubuntu20 ..
-make
-sudo make install # or 
-# cpack -G DEB && dpkg -i accel-ppp.deb
+cmake -S . -B build \
+  -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE \
+  -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_SYSCONFDIR=/etc \
+  -DCMAKE_INSTALL_LOCALSTATEDIR=/var \
+  -DKDIR="/usr/src/linux-headers-$(uname -r)" \
+  -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE
+cmake --build build
+sudo cmake --install build
 ```
 
-If you prefer make install, then it is required to insert kernel modules:
+For a package-based installation on Ubuntu 24.04, configure the matching
+package dependencies before building the DEB:
+
 ```bash
-# form root dir
+cmake -S . -B build -DCPACK_TYPE=Ubuntu24
+cpack --config build/CPackConfig.cmake -G DEB -B build
+sudo dpkg -i build/accel-ppp.deb
+```
+
+Use `Ubuntu22`, `Debian12`, or `Debian13` when building for those releases.
+Do not use `Ubuntu20` for a newer distribution: it declares dependencies on
+older libraries, including `libssl1.1`.
+
+Load the kernel modules from the repository root after either installation method:
+
+```bash
 sudo insmod build/drivers/vlan_mon/driver/vlan_mon.ko
 sudo insmod build/drivers/ipoe/driver/ipoe.ko
 ```
@@ -95,18 +113,17 @@ Using apt:
 sudo apt install gcovr
 ```
 
-Using pip
-```bash
-sudo pip3 install gcovr
-```
-
 ```bash
 # from root dir
-rm -rf build && mkdir build && cd build
-cmake -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE -DCMAKE_INSTALL_PREFIX=/usr  -DKDIR=/usr/src/linux-headers-`uname -r`  -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE -DCPACK_TYPE=Ubuntu20 -DCMAKE_C_FLAGS="--coverage -O0" ..
-make
-sudo make install # or 
-# cpack -G DEB && dpkg -i accel-ppp.deb
+cmake -S . -B build \
+  -DBUILD_IPOE_DRIVER=TRUE -DBUILD_VLAN_MON_DRIVER=TRUE \
+  -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_SYSCONFDIR=/etc \
+  -DCMAKE_INSTALL_LOCALSTATEDIR=/var \
+  -DKDIR="/usr/src/linux-headers-$(uname -r)" \
+  -DLUA=TRUE -DSHAPER=TRUE -DRADIUS=TRUE \
+  -DCMAKE_C_FLAGS="--coverage -O0"
+cmake --build build
+sudo cmake --install build
 ```
 
 Then insert kernel modules (ipoe.ko and vlan-mon.ko)
