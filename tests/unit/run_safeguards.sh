@@ -2,11 +2,13 @@
 # Run from any directory, passing a configured CMake build directory.
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-build=${1:?usage: run_safeguards.sh /path/to/cmake-build}
+build=${1:?usage: run_safeguards.sh /path/to/cmake-build [test-name ...]}
+shift
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT HUP INT TERM
 cd "$root"
-for name in dhcpv6 radius vrf lcp mempool; do
+names=${*:-"dhcpv6 radius vrf lcp mempool log_line"}
+for name in $names; do
 	extra=
 	# LCP's global layer table retains the whole daemon under ASan; its test
 	# checks wire lengths with UBSan. The packet/VRF tests also use ASan.

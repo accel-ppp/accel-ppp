@@ -2,6 +2,19 @@
 
 These tests are done for Ubuntu and Debian distros. Please use latest stable Debian or Ubuntu to run the tests.
 
+## Focused unit tests
+
+The standalone unit tests compile production callbacks with small test fixtures
+and run them with AddressSanitizer and UndefinedBehaviorSanitizer. Pass a configured
+CMake build directory and optional test names:
+
+```bash
+sh tests/unit/run_safeguards.sh build log_line
+```
+
+These tests do not require installed kernel modules or root privileges. The
+sanitizer runtime needs an environment that permits its process inspection.
+
 ## Kernel module installation test
 
 The kernel module installation regression test is rootless and does not need

@@ -53,17 +53,12 @@ static int need_close;
 
 static void unpack_msg(struct log_msg_t *msg)
 {
-	struct log_chunk_t *chunk;
-	int pos = 0;
+	int pos = log_unpack_msg(msg, log_buf, LOG_MAX_SIZE);
 
-	list_for_each_entry(chunk, msg->chunks, entry) {
-		memcpy(log_buf + pos, chunk->msg, chunk->len);
-		pos += chunk->len;
-	}
-	if (pos > 1)
-		log_buf[pos - 1] = 0;
-	else
-		log_buf[0] = 0;
+	/* a line cut to fit the buffer has lost its newline */
+	if (pos && log_buf[pos - 1] == '\n')
+		pos--;
+	log_buf[pos] = 0;
 }
 
 static void set_hdr(struct log_msg_t *msg, struct ap_session *ses)

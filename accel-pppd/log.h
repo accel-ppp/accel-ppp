@@ -38,6 +38,7 @@ struct log_target_t
 };
 
 void log_free_msg(struct log_msg_t *msg);
+int log_unpack_msg(struct log_msg_t *msg, char *buf, int size);
 
 void log_emerg(const char *fmt, ...) __attribute__((format(gnu_printf, 1, 2)));
 

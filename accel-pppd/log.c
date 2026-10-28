@@ -40,6 +40,7 @@ struct _log_msg_t
 	struct timeval timestamp;
 	struct list_head chunks;
 	unsigned int refs;
+	int len;
 };
 
 static int log_level;
@@ -59,7 +60,7 @@ static FILE *debug_file;
 
 static void _log_free_msg(struct _log_msg_t *msg);
 static struct log_msg_t *clone_msg(struct _log_msg_t *msg);
-static int add_msg(struct _log_msg_t *msg, const char *buf);
+static int add_msg(struct _log_msg_t *msg, const char *buf, int len);
 //static struct log_pd_t *find_pd(struct ap_session *ses);
 static void write_msg(FILE *f, struct _log_msg_t *msg, struct ap_session *ses);
 
@@ -72,13 +73,27 @@ static void do_log(int level, const char *fmt, va_list ap, struct ap_session *se
 {
 	struct log_target_t *t;
 	struct log_msg_t *m;
+	int n, len, eol, room;
 
 	if (!stat_buf) {
 		stat_buf = _malloc(LOG_MAX_SIZE + 1);
 		pthread_setspecific(stat_buf_key, stat_buf);
 	}
 
-	vsnprintf(stat_buf, LOG_MAX_SIZE, fmt, ap);
+	n = vsnprintf(stat_buf, LOG_MAX_SIZE, fmt, ap);
+	if (n <= 0)
+		return;
+
+	len = strlen(stat_buf);
+	if (!len)
+		return;
+
+	/* output cut short by vsnprintf lost its newline, restore it so
+	 * the line still ends here instead of swallowing the next one */
+	if (n >= LOG_MAX_SIZE && fmt[strlen(fmt) - 1] == '\n')
+		stat_buf[len - 1] = '\n';
+
+	eol = stat_buf[len - 1] == '\n';
 
 	if (!cur_msg) {
 		cur_msg = mempool_alloc(_msg_pool);
@@ -87,13 +102,27 @@ static void do_log(int level, const char *fmt, va_list ap, struct ap_session *se
 		INIT_LIST_HEAD(&cur_msg->chunks);
 		cur_msg->refs = 1;
 		cur_msg->level = level;
+		cur_msg->len = 0;
 		gettimeofday(&cur_msg->timestamp, NULL);
 	}
 
-	if (add_msg(cur_msg, stat_buf))
-		goto out;
+	/* a line may be assembled from any number of calls, some of them
+	 * printing peer supplied data; cap it at LOG_MAX_SIZE, keeping the
+	 * newline, so targets can unpack it into a fixed size buffer */
+	room = LOG_MAX_SIZE - 1 - cur_msg->len;
+	if (len - eol > room) {
+		len = room;
+		if (eol)
+			stat_buf[len++] = '\n';
+	}
 
-	if (stat_buf[strlen(stat_buf) - 1] != '\n')
+	if (len) {
+		if (add_msg(cur_msg, stat_buf, len))
+			goto out;
+		cur_msg->len += len;
+	}
+
+	if (!eol)
 		return;
 
 	if (debug_file)
@@ -261,6 +290,24 @@ void __export log_free_msg(struct log_msg_t *m)
 }
 
 
+/* concatenate the chunks of msg into buf, writing at most size bytes;
+ * returns the number of bytes written */
+int __export log_unpack_msg(struct log_msg_t *msg, char *buf, int size)
+{
+	struct log_chunk_t *chunk;
+	int pos = 0, len;
+
+	list_for_each_entry(chunk, msg->chunks, entry) {
+		if (pos >= size)
+			break;
+		len = min(chunk->len, size - pos);
+		memcpy(buf + pos, chunk->msg, len);
+		pos += len;
+	}
+
+	return pos;
+}
+
 static void _log_free_msg(struct _log_msg_t *msg)
 {
 	struct log_chunk_t *chunk;
@@ -304,10 +351,10 @@ static struct log_msg_t *clone_msg(struct _log_msg_t *msg)
 	return m;
 }
 
-static int add_msg(struct _log_msg_t *msg, const char *buf)
+static int add_msg(struct _log_msg_t *msg, const char *buf, int len)
 {
 	struct log_chunk_t *chunk;
-	int i, chunk_cnt, len = strlen(buf);
+	int i, chunk_cnt;
 
 	if (!list_empty(&msg->chunks)) {
 		chunk = list_entry(msg->chunks.prev, typeof(*chunk), entry);
