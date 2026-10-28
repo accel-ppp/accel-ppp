@@ -1023,6 +1023,14 @@ HDLC framing is done in userspace.
 - use seqpacket if the module is available, otherwise async.
 .br
 Default is auto.
+.br
+The transport is selected at daemon startup. For auto or seqpacket, accel-ppp
+tries to load the ppposeq kernel module if it is not already available.
+Build and install that module with BUILD_PPPOSEQ_DRIVER=TRUE to enable it.
+The seqpacket mode requires the module; only auto falls back to async when
+it is unavailable. Changing ppp-mode, or making ppposeq available after auto
+has selected async, requires a daemon restart; configuration reload does not
+reselect the transport.
 .TP
 .BI "accept=" ssl,proxy
 Specifies incoming connection acceptance mode.
