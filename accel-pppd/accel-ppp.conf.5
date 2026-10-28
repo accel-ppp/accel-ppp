@@ -1023,6 +1023,14 @@ HDLC framing is done in userspace.
 - use seqpacket if the module is available, otherwise async.
 .br
 Default is auto.
+.br
+The transport is selected at daemon startup. For auto or seqpacket, accel-ppp
+tries to load the ppposeq kernel module if it is not already available.
+Build and install that module with BUILD_PPPOSEQ_DRIVER=TRUE to enable it.
+The seqpacket mode requires the module; only auto falls back to async when
+it is unavailable. Changing ppp-mode, or making ppposeq available after auto
+has selected async, requires a daemon restart; configuration reload does not
+reselect the transport.
 .TP
 .BI "accept=" ssl,proxy
 Specifies incoming connection acceptance mode.
@@ -1449,16 +1457,36 @@ avoid breaking existing configuration files.
 .BI "tunnel=" range
 Specifies range of remote address of ppp interfaces if form:
 .br
-.B x.x.x.x/mask[,name=pool_name][,next=next_pool_name]
+.B x.x.x.x/mask
 .br
-.B x.x.x.x-y[,name=pool_name][,next=next_pool_name]
+.B x.x.x.x-y
+.br
+Both forms accept the modifiers [,name=pool_name], [,allocator=p2p|net30],
+and [,next=next_pool_name].
 .TP
-.BI "x.x.x.x/mask[,name=pool_name][,next=next_pool_name] or x.x.x.x-y[,name=pool_name][,next=next_pool_name]"
+.BI "x.x.x.x/mask or x.x.x.x-y"
 Also specifies range of remote address of ppp interfaces.
+The same name, allocator, and next modifiers as for tunnel= are accepted.
 .br
 You may also omit the "name=" key and use a shorthand pool name after the comma, e.g.
 .br
 .B 10.0.0.0/24,pool1
+.PP
+The allocator modifier selects how a range is divided. The default
+.B p2p
+allocator supplies one client address per allocation. The
+.B net30
+allocator divides the range into four-address blocks and supplies the
+address at offset 2 in each block; any incomplete trailing block is ignored.
+The local PPP address still comes from
+.BR gw-ip-address .
+For example:
+.br
+.B 192.0.2.0/24,name=pool1,allocator=net30
+.PP
+Each range is limited to 16777216 (2^24) allocation units: one address for
+p2p or one four-address block for net30. Larger ranges are skipped and an
+error is logged. Check existing ranges against this limit when upgrading.
 .TP
 .BI "attr=" attribute
 Specifies which Radius attribute contains pool name.
@@ -1644,7 +1672,8 @@ permits, which is every peer when that option is unset. And the traffic
 counters are the ones last sampled by accounting rather than a fresh
 read of the interface, so they are only as current as the
 .B radius
-.B interim-interval
+.B acct-interim-interval
+(or the RADIUS Acct-Interim-Interval attribute)
 or the session
 .B idle-timeout
 makes them.

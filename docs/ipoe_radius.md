@@ -1,98 +1,91 @@
 # Supplying DHCP Options via RADIUS for IPoE Sessions
 
-accel-ppp supports dynamically providing various DHCP options to IPoE clients by configuring corresponding RADIUS attributes. This allows for flexible and centralized management of DHCP parameters delivered to clients.
+The `ipoe` module can copy DHCP options from RADIUS Access-Accept attributes
+into DHCP Offer and ACK packets. Load both `ipoe` and `radius` in `[modules]`.
+No additional option mapping is needed for the DHCP vendor described below.
 
-## Mechanism
+## Attribute encoding
 
-The `ipoe` module processes RADIUS Access-Accept packets to extract DHCP options that need to be delivered to the client. This is achieved by mapping specific RADIUS Vendor-Specific Attributes (VSAs) to DHCP options. Whether you're sending a standard DHCP option (like DNS servers) or the DHCP-specific "Vendor-Specific Information" option (Option 43), the mechanism uses this common VSA structure:
+* Vendor ID: **54**, named `DHCP` in the shipped dictionary.
+* Vendor format: **2,1** (a two-byte attribute type and a one-byte length).
+* Attribute IDs below 256 identify DHCP option codes, such as 6 for DNS
+  servers and 43 for Vendor-Specific Information.
+* The attribute value is the DHCP option payload. accel-ppp adds the DHCP
+  option code and length itself.
 
-*   **RADIUS Vendor ID:** `54`
-    *   This ID is internally designated by accel-ppp (and commonly in FreeRADIUS dictionaries) as the "DHCP" vendor.
-*   **RADIUS Attribute ID:** This directly corresponds to the **DHCP Option Code** you wish to send (e.g., `6` for DNS Servers, `43` for Vendor-Specific Information).
-*   **RADIUS Attribute Value:** This is the raw binary payload (octets) of the DHCP option. accel-ppp will encapsulate this value into the DHCP option's data field.
+Both the RADIUS server and accel-ppp must have matching dictionary definitions.
+The shipped definitions are in
+[`accel-pppd/radius/dict/dictionary.dhcp`](../accel-pppd/radius/dict/dictionary.dhcp),
+which the default RADIUS dictionary includes. A vendor declaration without
+`format=2,1` uses a different wire encoding and will not match this dictionary.
 
-When accel-ppp receives an Access-Accept packet containing attributes structured in this way, it extracts the DHCP Option Code and its value, then constructs the appropriate DHCP option and includes it in the DHCP Offer or DHCP ACK packet sent back to the IPoE client.
+Use named attributes from the dictionary in RADIUS policies. Numeric attribute
+names alone do not supply accel-ppp with a dictionary definition: unknown
+attributes are skipped.
 
-## Configuration
+## Dictionary definitions
 
-### accel-ppp Side
+Reuse existing definitions where available. This fragment shows the vendor
+format, scope, and types used by the examples; do not duplicate definitions
+already loaded by the RADIUS server:
 
-The functionality is inherent to the `ipoe` module; no special configuration options are required in `accel-ppp.conf` to enable this mapping. Ensure the `ipoe` module is loaded.
+```text
+VENDOR DHCP 54 format=2,1
+BEGIN-VENDOR DHCP
+ATTRIBUTE DHCP-Domain-Name-Server 6 ipaddr array
+ATTRIBUTE DHCP-Domain-Name 15 string
+ATTRIBUTE DHCP-Interface-MTU-Size 26 short
+ATTRIBUTE DHCP-Vendor 43 octets
+ATTRIBUTE DHCP-Classless-Static-Route 121 octets
+END-VENDOR DHCP
+```
 
-### RADIUS Server Side
+For a private-use option such as 224, add a definition on **both** sides.
+For example, insert this inside the DHCP vendor block in each local dictionary:
 
-To leverage this feature, your RADIUS server must be configured to send attributes using the Vendor ID `54` (DHCP) and the desired DHCP Option Code as the Attribute ID.
+```text
+ATTRIBUTE DHCP-Private-224 224 octets
+```
 
-**FreeRADIUS Example:**
+## FreeRADIUS 3 example
 
-1. **Ensure Dictionary Definitions:**
-    Your FreeRADIUS installation should have dictionary files that define Vendor 54 as "DHCP" and the relevant DHCP Option Codes as attributes within that vendor space. The `accel-ppp` project often provides a `dictionary.dhcp` file (e.g., in `accel-pppd/radius/dict/`) with these definitions:
+Add reply attributes to the user's entry in the `files` module's users file.
+For example, for a test account:
 
-    ```text
-    VENDOR      DHCP        54
-    ATTRIBUTE   DHCP-Vendor 43  octets
-    # ... other DHCP option definitions
-    ```
+```text
+test_user Cleartext-Password := "test_password"
+	DHCP-Domain-Name-Server := 8.8.8.8,
+	DHCP-Domain-Name-Server += 8.8.4.4,
+	DHCP-Domain-Name := "example.com",
+	DHCP-Interface-MTU-Size := 1450,
+	DHCP-Vendor := 0x0103414243,
+	DHCP-Classless-Static-Route := 0x080ac0a80101,
+	DHCP-Private-224 := 0x48656c6c6f
+```
 
-2. **Configure Reply Attributes in `users` file (or equivalent policy):**
-    The format for specifying these attributes is generally `Attr-<Vendor-ID>-<Attribute-ID> = <value>`.
+The named `ipaddr`, `string`, and `short` attributes let FreeRADIUS encode
+their payloads from readable values. The `octets` attributes use hexadecimal
+payloads:
 
-    *   **Generic DHCP Option (e.g., Option 224, private use, with string "Hello"):**
-        ```text
-        User-Name == "test_user"
-            Attr-54-224 = "Hello"
-        ```
+| DHCP option | Payload in this example |
+| --- | --- |
+| 6, DNS servers | `8.8.8.8` and `8.8.4.4`; repeated array values are combined into one DHCP option. |
+| 15, domain name | The string `example.com`. |
+| 26, interface MTU | `1450`, encoded as the two bytes `05aa`. |
+| 43, vendor information | Sub-option 1, length 3, value `ABC`: `01 03 41 42 43`. |
+| 121, classless route | `10.0.0.0/8` via `192.168.1.1`: width `08`, destination `0a`, router `c0a80101`. |
+| 224, private use | The string `Hello`, encoded as `48 65 6c 6c 6f`; requires the custom definition above. |
 
-    *   **Option 6 (DNS Servers):**
-        To send a list of DNS server IP addresses (e.g., `8.8.8.8` and `8.8.4.4`). The value is the concatenation of the 4-byte IP addresses in hexadecimal.
-        ```text
-        User-Name == "test_user"
-            Attr-54-6 = 0x0808080808080404
-        ```
-
-    *   **Option 15 (Domain Name):**
-        To send a domain name string (e.g., `example.com`).
-        ```text
-        User-Name == "test_user"
-            Attr-54-15 = "example.com"
-        ```
-
-    *   **Option 26 (Interface MTU):**
-        To send a specific MTU size (e.g., `1450`). The value is a 16-bit integer (2 bytes) in hexadecimal.
-        ```text
-        User-Name == "test_user"
-            Attr-54-26 = 0x05AA # 1450 in hex is 0x05AA
-        ```
-
-    *   **Option 43 (Vendor-Specific Information):**
-        This option typically contains sub-options encoded in a TLV (Type-Length-Value) format. The entire TLV structure for Option 43 needs to be provided as the attribute's hexadecimal value.
-
-        *Example: Sending sub-option `1` with value `"ABC"`*
-        *   Sub-option Type: `1` (0x01)
-        *   Sub-option Length: `3` (0x03)
-        *   Sub-option Value: `"ABC"` (0x414243)
-        *   Combined Hex Value: `0103414243`
-
-        ```text
-        User-Name == "test_user"
-            Attr-54-43 = 0x0103414243
-        ```
-
-    *   **Option 121 (Classless Static Route):**
-        To send static routes. The format for the value is a sequence of `(Mask Width, Significant Octets of Destination, Router IP)`.
-
-        *Example: Route `10.0.0.0/8` via `192.168.1.1`*
-        *   Mask Width: `8` (0x08)
-        *   Significant Octets of Destination: `10` (0x0a) - only 1 byte for a /8 network
-        *   Router IP: `192.168.1.1` (0xc0a80101)
-        *   Combined Hex Value: `080ac0a80101`
-
-        ```text
-        User-Name == "test_user"
-            Attr-54-121 = 0x080ac0a80101
-        ```
+See the [FreeRADIUS users-file reference](https://www.freeradius.org/radiusd/man/users.html)
+for entry matching and reply-list syntax. Integrate these reply attributes with
+the authentication policy used by your deployment.
 
 ## Notes
 
-*   The RADIUS attribute value must strictly be the raw payload of the DHCP option. accel-ppp automatically handles inserting the DHCP Option Code and Length fields into the final DHCP packet.
-*   For complex DHCP options like Option 43 (Vendor-Specific Information) and Option 121 (Classless Static Route), you must manually construct the internal structure (e.g., TLVs for Option 43) as part of the RADIUS attribute value.
+* Preserve `format=2,1` when defining the DHCP vendor on the RADIUS server.
+* Construct the internal payload of complex options, such as 43 and 121,
+  before supplying the hexadecimal value. Do not include the outer DHCP
+  option code and length.
+* The DHCP vendor also defines IDs above 255 for packet header fields, such
+  as `DHCP-Your-IP-Address`. These are handled separately and are not copied
+  as DHCP options.

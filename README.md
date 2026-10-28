@@ -43,7 +43,7 @@ Building the daemon requires:
 * OpenSSL development files
 * PCRE2 development files
 
-Kernel headers are also required when building the optional PPTP, IPoE, or VLAN
+Kernel headers are also required when building the optional PPPoSEQ, IPoE, or VLAN
 monitoring kernel modules. Optional features require their corresponding
 development libraries:
 
@@ -86,6 +86,12 @@ kernel:
       -DBUILD_VLAN_MON_DRIVER=TRUE \
       -DKDIR="/usr/src/linux-headers-$(uname -r)"
     cmake --build build
+
+For SSTP's optional PPPoSEQ transport, also set BUILD_PPPOSEQ_DRIVER=TRUE
+and install the ppposeq kernel module. SSTP tries to load it at startup;
+ppp-mode=auto uses it if available and otherwise selects async PPP.
+Changing [sstp] ppp-mode or switching from async to PPPoSEQ requires a daemon
+restart. See "man 5 accel-ppp.conf" for the transport options.
 
 
 Configuration
