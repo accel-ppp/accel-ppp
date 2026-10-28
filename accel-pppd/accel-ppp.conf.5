@@ -1672,7 +1672,8 @@ permits, which is every peer when that option is unset. And the traffic
 counters are the ones last sampled by accounting rather than a fresh
 read of the interface, so they are only as current as the
 .B radius
-.B interim-interval
+.B acct-interim-interval
+(or the RADIUS Acct-Interim-Interval attribute)
 or the session
 .B idle-timeout
 makes them.
