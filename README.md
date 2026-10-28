@@ -276,3 +276,13 @@ More information
 * Additional RADIUS notes: docs/
 * Email: contact@accel-ppp.org
 * Jabber: dima@accel-ppp.org
+
+
+Community resources
+===================
+
+These Telegram groups are unofficial community resources:
+
+* [English](https://t.me/accel_ppp_en)
+* [Brazilian Portuguese](https://t.me/accel_ppp_br)
+* [Russian](https://t.me/accel_ppp)
