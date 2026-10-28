@@ -95,7 +95,8 @@ fixes and this integration are by **Denys Fedoryshchenko**.
 
 ## Validation
 
-Run from the repository root:
+The following commands and results record validation when these safeguards
+were integrated. Run the commands from the repository root at that revision:
 
 ```sh
 cmake -S . -B /tmp/accel-ppp-ng40-build -DCMAKE_BUILD_TYPE=Debug \
@@ -104,6 +105,12 @@ cmake --build /tmp/accel-ppp-ng40-build -j 8
 sh tests/unit/run_safeguards.sh /tmp/accel-ppp-ng40-build
 git diff --check
 ```
+
+For current checkouts, see the [focused unit test instructions](../tests/README.md#focused-unit-tests).
+The later IPv6 DNS storage refactor removed `conf_dns_count`, which the
+DHCPv6 fixture still references, and the runner needs to link `ipv6_dns.c`.
+The full command above therefore does not currently compile on master. The
+historical results below do not establish that the current full suite passes.
 
 Build, the existing IPv6 DNS selection test, and five standalone suites passed. Tests compile production code with
 small external-service stubs. DHCPv6, RADIUS, VRF, and pool tests use ASan,
