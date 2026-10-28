@@ -21,18 +21,14 @@ These tests do not require installed kernel modules or root privileges. The
 sanitizer runtime needs an environment that permits its process inspection.
 
 The runner has six suites: `dhcpv6`, `radius`, `vrf`, `lcp`, `mempool`, and
-`log_line`. With no names it attempts all six. The DHCPv6 fixture currently
-refers to the removed `conf_dns_count` variable, and the runner does not link
-the `ipv6_dns.c` implementation now used by the reply builder. That fixture
-and its build command must be updated before a full run can pass.
-
-The other five suites can be run explicitly while that regression is being fixed:
+`log_line`. With no names it runs all six:
 
 ```bash
-sh tests/unit/run_safeguards.sh build radius vrf lcp mempool log_line
+sh tests/unit/run_safeguards.sh build
 ```
 
-A successful subset run does not validate the DHCPv6 safeguards. The
+The DHCPv6 suite checks bounded DNS replies and failure propagation when
+non-truncatable options exhaust reply space. The
 [integration validation record](../docs/ng40-safeguards-review.md#validation)
 describes results from the revision at which those safeguards were introduced.
 

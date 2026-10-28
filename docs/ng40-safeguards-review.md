@@ -107,10 +107,10 @@ git diff --check
 ```
 
 For current checkouts, see the [focused unit test instructions](../tests/README.md#focused-unit-tests).
-The later IPv6 DNS storage refactor removed `conf_dns_count`, which the
-DHCPv6 fixture still references, and the runner needs to link `ipv6_dns.c`.
-The full command above therefore does not currently compile on master. The
-historical results below do not establish that the current full suite passes.
+The DHCPv6 fixture now uses the shared IPv6 DNS storage and its production
+implementation. It checks safe truncation of oversized DNS replies and
+failure propagation when domain-list options exhaust reply space. The
+sanitizer workflow also runs the complete standalone safeguard suite.
 
 Build, the existing IPv6 DNS selection test, and five standalone suites passed. Tests compile production code with
 small external-service stubs. DHCPv6, RADIUS, VRF, and pool tests use ASan,

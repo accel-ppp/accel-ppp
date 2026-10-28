@@ -97,13 +97,13 @@
 - Added contribution guidelines and a safeguard integration review.
 - Corrected RADIUS option examples, shaper units and directions, kernel
   module requirements, metrics freshness guidance, and the accel-cmd
-  timeout synopsis. Updated test setup instructions and documented the
-  current DHCPv6 safeguard fixture limitation.
+  timeout synopsis. Updated test setup instructions.
 
 ### Tests / CI
 - Added focused suites for DHCPv6, RADIUS, VRF, LCP, memory pools, logging,
-  L2TP, IPv6 DNS, and bitmap allocation. See `tests/README.md` for the
-  current standalone safeguard runner limitation.
+  L2TP, IPv6 DNS, and bitmap allocation. Updated the DHCPv6 safeguard fixture
+  for shared DNS storage and bounded replies, and run all six standalone
+  safeguard suites in sanitizer CI.
 - Added metrics, IPoE stale-interface cleanup and link deletion, PPPoE
   negotiation, and kernel-module installation regression coverage.
 - Added Ubuntu 26.04 coverage and removed Debian 11 jobs. Continue testing
