@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.15.0 - 2026-10-29
 
 ### Deprecations
 - `log_pgsql` is deprecated and scheduled for removal. The `LOG_PGSQL` build

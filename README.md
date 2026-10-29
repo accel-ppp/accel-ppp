@@ -28,6 +28,7 @@ Features
 * TBF/HTB shaping and clsact policing
 * Telnet and TCP command-line interfaces
 * Optional SNMP support as a master agent or AgentX subagent
+* Optional HTTP metrics in Prometheus or JSON format
 
 EAP authentication and PPP compression are not supported.
 
