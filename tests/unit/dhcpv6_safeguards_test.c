@@ -14,6 +14,7 @@ static size_t response_len;
 void log_warn(const char *fmt, ...) {}
 void log_emerg(const char *fmt, ...) {}
 void log_ppp_error(const char *fmt, ...) {}
+void log_ppp_warn(const char *fmt, ...) {}
 void log_ppp_info2(const char *fmt, ...) {}
 int ip6addr_add_peer(int i, struct in6_addr *a, struct in6_addr *p) { return 0; }
 int ip6route_add(int i, const struct in6_addr *a, int p, const struct in6_addr *g, int m, uint32_t prio, const char *v) { return 0; }
@@ -60,10 +61,36 @@ static size_t relay(unsigned char *buf, size_t len)
 	return len + hdrlen + 4;
 }
 
+static void check_dns_reply(unsigned int requested)
+{
+	struct dhcpv6_packet *pkt;
+	struct dhcpv6_option *opt;
+	unsigned int count = 0;
+	size_t offset, len;
+
+	assert(sent == 1);
+	assert(response_len <= sizeof(response));
+	pkt = dhcpv6_packet_parse(response, response_len);
+	assert(pkt);
+	list_for_each_entry(opt, &pkt->opt_list, entry) {
+		if (ntohs(opt->hdr->code) != D6_OPTION_DNS_SERVERS)
+			continue;
+		len = ntohs(opt->hdr->len);
+		assert(len && len % sizeof(struct in6_addr) == 0);
+		for (offset = 0; offset < len; offset += sizeof(struct in6_addr))
+			assert(!memcmp(opt->hdr->data + offset, &in6addr_loopback,
+				       sizeof(in6addr_loopback)));
+		count += len / sizeof(struct in6_addr);
+	}
+	assert(count > 0 && count < requested);
+	dhcpv6_packet_free(pkt);
+}
+
 int main(void)
 {
 	unsigned char buf[16000], oro[4000], name[256];
 	const unsigned char valid_name[] = {2, 'g', 'w', 0};
+	unsigned char domain[] = {1, 'x', 0};
 	struct dhcpv6_packet *pkt, *reply;
 	struct dhcpv6_option *opt;
 	struct ap_session ses = {0};
@@ -132,10 +159,48 @@ int main(void)
 	}
 	assert(!dhcpv6_packet_parse(buf, len));
 
-	/* An ORO can amplify a small request into more than 4096 response bytes. */
-	conf_dns_count = 1;
+	/* A large DNS list is truncated to the reply buffer capacity. */
+	assert(ipv6_dns_reserve(&conf_dns, 300) == 0);
+	for (i = 0; i < 300; i++)
+		conf_dns.addr[i] = in6addr_loopback;
+	conf_dns.count = 300;
+	u_write_be16(oro, D6_OPTION_DNS_SERVERS);
+	len = request(buf);
+	len += option(buf + len, D6_OPTION_ORO, oro, 2);
+	pkt = dhcpv6_packet_parse(buf, len);
+	assert(pkt);
+	pkt->ses = &ses;
+	sent = 0;
+	dhcpv6_send_reply(pkt, &pd, D6_REPLY);
+	check_dns_reply(conf_dns.count);
+	sent = 0;
+	dhcpv6_send_reply2(pkt, &pd, D6_REPLY);
+	check_dns_reply(conf_dns.count);
+	dhcpv6_packet_free(pkt);
+
+	/* Repeated ORO entries leave no room for the final Preference option. */
+	conf_dns.count = 1;
 	for (i = 0; i < sizeof(oro); i += 2)
 		u_write_be16(oro + i, D6_OPTION_DNS_SERVERS);
+	len = request(buf);
+	len += option(buf + len, D6_OPTION_ORO, oro, sizeof(oro));
+	pkt = dhcpv6_packet_parse(buf, len);
+	assert(pkt);
+	pkt->ses = &ses;
+	sent = 0;
+	dhcpv6_send_reply(pkt, &pd, D6_REPLY);
+	assert(!sent);
+	dhcpv6_send_reply2(pkt, &pd, D6_REPLY);
+	assert(!sent);
+	dhcpv6_packet_free(pkt);
+	free(conf_dns.addr);
+	memset(&conf_dns, 0, sizeof(conf_dns));
+
+	/* Domain-list options cannot be shortened; exhaustion drops the reply. */
+	conf_dnssl = domain;
+	conf_dnssl_size = sizeof(domain);
+	for (i = 0; i < sizeof(oro); i += 2)
+		u_write_be16(oro + i, D6_OPTION_DOMAIN_LIST);
 	len = request(buf);
 	len += option(buf + len, D6_OPTION_ORO, oro, sizeof(oro));
 	pkt = dhcpv6_packet_parse(buf, len);

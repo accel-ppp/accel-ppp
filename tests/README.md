@@ -2,6 +2,11 @@
 
 These tests are done for Ubuntu and Debian distros. Please use latest stable Debian or Ubuntu to run the tests.
 
+The commands in this guide require CMake/CTest 3.20 or newer, including
+`ctest --test-dir`. The standalone kernel-module installation script requires
+CMake 3.15 or newer for `cmake --install`. These command requirements are
+separate from the project's minimum CMake version of 3.10.
+
 ## Focused unit tests
 
 The standalone unit tests compile production callbacks with small test fixtures
@@ -16,18 +21,14 @@ These tests do not require installed kernel modules or root privileges. The
 sanitizer runtime needs an environment that permits its process inspection.
 
 The runner has six suites: `dhcpv6`, `radius`, `vrf`, `lcp`, `mempool`, and
-`log_line`. With no names it attempts all six. The DHCPv6 fixture currently
-refers to the removed `conf_dns_count` variable, and the runner does not link
-the `ipv6_dns.c` implementation now used by the reply builder. That fixture
-and its build command must be updated before a full run can pass.
-
-The other five suites can be run explicitly while that regression is being fixed:
+`log_line`. With no names it runs all six:
 
 ```bash
-sh tests/unit/run_safeguards.sh build radius vrf lcp mempool log_line
+sh tests/unit/run_safeguards.sh build
 ```
 
-A successful subset run does not validate the DHCPv6 safeguards. The
+The DHCPv6 suite checks bounded DNS replies and failure propagation when
+non-truncatable options exhaust reply space. The
 [integration validation record](../docs/ng40-safeguards-review.md#validation)
 describes results from the revision at which those safeguards were introduced.
 
@@ -37,6 +38,9 @@ The kernel module installation regression test is rootless and does not need
 kernel headers. It uses a fake kernel build tree to verify that `ipoe`,
 `vlan_mon`, and `ppposeq` are installed from their actual build directories,
 honor `DESTDIR`, and make installation fail when `modules_install` fails.
+It also verifies that Debian and CentOS packaging configurations include
+`ppposeq.ko` with the standalone driver package name, and omit it when the
+build flag is disabled.
 
 Run it through CTest after configuring the project:
 
@@ -69,7 +73,8 @@ sudo apt install iproute2 ppp pppoe isc-dhcp-client
 ```
 
 Install the build dependencies described in the project README, including
-kernel headers and Lua development files for the options below. Run these
+kernel headers and Lua 5.1 development files (`liblua5.1-0-dev` on Debian and
+Ubuntu) for `LUA=TRUE` below. Run these
 commands from the repository root.
 
 Install accel-pppd (make install or use distro package). Do not run accel-pppd using systemd or other supervisors

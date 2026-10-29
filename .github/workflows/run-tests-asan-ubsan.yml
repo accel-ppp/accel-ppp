@@ -64,6 +64,7 @@ jobs:
         env:
           ${{ matrix.env_name }}: ${{ matrix.env_value }}
         run: |
+          ctest --test-dir build --output-on-failure
           gcc -O1 -g -Wall -fno-strict-aliasing -D_GNU_SOURCE \
               -DOPENSSL_API_COMPAT=0x10100000L \
               -fsanitize=${{ matrix.sanitizer }} -fno-sanitize-recover=all \
@@ -80,6 +81,7 @@ jobs:
           /tmp/ipv6_dns_test
           gcc -O2 -Wall -o /tmp/bitpool_test accel-pppd/extra/bitpool_test.c
           /tmp/bitpool_test
+          sh tests/unit/run_safeguards.sh build
 
       - name: Insert and check kernel modules (ipoe, vlan-mon, ppposeq)
         # if: ${{ false }}

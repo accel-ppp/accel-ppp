@@ -48,6 +48,8 @@
   session interfaces with `ip link del`.
 
 ### Fixes
+- CLI: fix millisecond timeout conversion in accel-cmd so `1500ms` means
+  1.5 seconds, as documented, instead of 1.0005 seconds.
 - RADIUS: verify response authenticators against the request and secret
   actually sent before delivering replies or updating server health.
   Fix outbound Message-Authenticator calculation on retransmission and
@@ -88,6 +90,8 @@
   VLAN monitoring packet-handler registration on Linux 6.6 and newer.
 - Build / install: install kernel modules from their actual build
   directories, honor `DESTDIR`, and propagate installation failures.
+- Packaging: include the optional PPPoSEQ kernel module in Debian and RPM
+  installation rules, including standalone driver packages.
 
 ### Docs
 - Refreshed the README and synchronized the sample configuration and man
@@ -95,13 +99,13 @@
 - Added contribution guidelines and a safeguard integration review.
 - Corrected RADIUS option examples, shaper units and directions, kernel
   module requirements, metrics freshness guidance, and the accel-cmd
-  timeout synopsis. Updated test setup instructions and documented the
-  current DHCPv6 safeguard fixture limitation.
+  timeout synopsis. Updated test setup instructions.
 
 ### Tests / CI
 - Added focused suites for DHCPv6, RADIUS, VRF, LCP, memory pools, logging,
-  L2TP, IPv6 DNS, and bitmap allocation. See `tests/README.md` for the
-  current standalone safeguard runner limitation.
+  L2TP, IPv6 DNS, and bitmap allocation. Updated the DHCPv6 safeguard fixture
+  for shared DNS storage and bounded replies, and run all six standalone
+  safeguard suites in sanitizer CI.
 - Added metrics, IPoE stale-interface cleanup and link deletion, PPPoE
   negotiation, and kernel-module installation regression coverage.
 - Added Ubuntu 26.04 coverage and removed Debian 11 jobs. Continue testing

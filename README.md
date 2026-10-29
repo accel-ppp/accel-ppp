@@ -49,7 +49,9 @@ development libraries:
 
 * Net-SNMP for NETSNMP=TRUE
 * PostgreSQL client libraries for LOG_PGSQL_DEPRECATED=TRUE
-* Lua for LUA=TRUE or a specific Lua version such as LUA=5.3
+* Lua 5.1 development files for LUA=TRUE. A numeric value such as LUA=5.3
+  requests at least that Lua version through CMake's FindLua module; it does
+  not enforce an exact version.
 
 
 Building and installing
@@ -57,11 +59,25 @@ Building and installing
 
 Use an out-of-tree build directory:
 
+The commands below require CMake 3.15 or newer: -S/-B were added in 3.13,
+and --install was added in 3.15. The project itself still supports CMake 3.10.
+
     cmake -S . -B build \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX=/usr/local
     cmake --build build
     sudo cmake --install build
+
+For CMake 3.10 through 3.14, use the build-directory form and the generated
+install target instead:
+
+    mkdir -p build
+    cd build
+    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local ..
+    cmake --build .
+    sudo cmake --build . --target install
+
+Run the remaining examples from the repository root.
 
 Useful build options:
 
@@ -259,5 +275,14 @@ More information
 * Source and issue tracker: https://github.com/accel-ppp/accel-ppp
 * Additional RADIUS notes: docs/
 * Email: contact@accel-ppp.org
-* ICQ: 337258064
 * Jabber: dima@accel-ppp.org
+
+
+Community resources
+===================
+
+These Telegram groups are unofficial community resources:
+
+* [English](https://t.me/accel_ppp_en)
+* [Brazilian Portuguese](https://t.me/accel_ppp_br)
+* [Russian](https://t.me/accel_ppp)
