@@ -15,6 +15,7 @@ Features
 * Modular architecture and a multi-threaded I/O core
 * PPTP, PPPoE (including TR-101), L2TPv2, SSTP, and IPoE. ACCEL-PPP does not
   provide integrated IPsec for L2TPv2; deploy IPsec separately when required.
+* L2TP switching: relay selected incoming L2TPv2 calls to a downstream LNS
 * RADIUS authentication and accounting, including Disconnect Messages and
   Change of Authorization (DM/CoA)
 * PAP, CHAP-MD5, MS-CHAPv1, and MS-CHAPv2 authentication
@@ -126,6 +127,14 @@ consulted in module registration order.
 
 For DM/CoA deployments, configure dae-allowed in the [radius] section to
 restrict permitted source addresses.
+
+
+L2TP switching
+==============
+
+Selected incoming L2TPv2 calls can be relayed to a downstream LNS instead of
+being terminated locally. Configure it in the
+[l2tp-switch] section, see docs/l2tp_switching.md and accel-ppp.conf(5).
 
 
 Built-in shaper

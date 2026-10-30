@@ -111,12 +111,13 @@ jobs:
       - name: Install build tools (on target OS)
         run: >
           ssh -i ssh-key -p2222 user@localhost "sudo apt -y install
-          git build-essential cmake gcc linux-headers-\`uname -r\` 
-          libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
-          libxml2-dev libxslt1-dev zlib1g-dev 
-          iproute2 ppp pppoe isc-dhcp-client timelimit && 
-          (sudo apt -y install python3-pytest python3-pytest-dependency python3-pytest-order || 
-          sudo pip3 install pytest pytest-dependency pytest-order || 
+          git build-essential cmake gcc linux-headers-\`uname -r\`
+          libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip
+          libxml2-dev libxslt1-dev zlib1g-dev
+          iproute2 ppp pppoe isc-dhcp-client tcpdump timelimit &&
+          (sudo apt -y install linux-modules-extra-\`uname -r\` || true) &&
+          (sudo apt -y install python3-pytest python3-pytest-dependency python3-pytest-order ||
+          sudo pip3 install pytest pytest-dependency pytest-order ||
           sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order)"
       - name: Copy source code to target OS
         run: |
@@ -137,7 +138,7 @@ jobs:
         timeout-minutes: 5
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp/tests && 
-          sudo python3 -m pytest -Wall --order-dependencies -v -m \"not ipoe_driver and not vlan_mon_driver\""
+          sudo python3 -m pytest -Wall --order-dependencies -v -m \"not ipoe_driver and not vlan_mon_driver and not l2tp_switch\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >
@@ -156,7 +157,7 @@ jobs:
         if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp/tests && 
-          sudo python3 -m pytest -Wall --order-dependencies -v -m \"not vlan_mon_driver\""
+          sudo python3 -m pytest -Wall --order-dependencies -v -m \"not vlan_mon_driver and not l2tp_switch\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >
@@ -174,14 +175,14 @@ jobs:
         if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp &&
-          sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko &&
+          (sudo modprobe l2tp_ppp || echo ::error::l2tp_ppp_module_unavailable_the_l2tp_switch_tests_will_fail_since_L2TP_SWITCH_REQUIRE_PPPOL2TP_is_set) && sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko &&
           lsmod | grep ppposeq"
 
       - name: Run tests (all)
-        timeout-minutes: 5
+        timeout-minutes: 30
         run: >
           ssh -i ssh-key -p2222 user@localhost "cd accel-ppp/tests &&
-          sudo python3 -m pytest -Wall --order-dependencies -v"
+          sudo env L2TP_SWITCH_REQUIRE_PPPOL2TP=1 python3 -m pytest -Wall --order-dependencies -v"
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >
@@ -263,8 +264,8 @@ jobs:
           ssh -i ssh-key -p2222 alpine@localhost "doas cat /etc/passwd"
       - name: Install build tools (on target OS)
         run: >
-          ssh -i ssh-key -p2222 alpine@localhost "doas apk add --no-cache git cmake make g++ pcre2-dev libressl-dev linux-headers libucontext-dev lua5.1-dev linux-lts-dev py3-pip 
-          ppp ppp-pppoe && 
+          ssh -i ssh-key -p2222 alpine@localhost "doas apk add --no-cache git cmake make g++ pcre2-dev libressl-dev linux-headers libucontext-dev lua5.1-dev linux-lts-dev py3-pip
+          ppp ppp-pppoe tcpdump &&
           (doas pip3 install pytest pytest-dependency pytest-order || doas pip3 install --break-system-packages pytest pytest-dependency pytest-order)"
       - name: Copy source code to target OS
         run: |
@@ -285,7 +286,7 @@ jobs:
         timeout-minutes: 5
         run: >
           ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp/tests && 
-          doas python3 -m pytest -Wall --order-dependencies -v -m \"not ipoe_driver and not vlan_mon_driver and not chap_secrets\""
+          doas python3 -m pytest -Wall --order-dependencies -v -m \"not ipoe_driver and not vlan_mon_driver and not chap_secrets and not l2tp_switch\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >
@@ -304,7 +305,7 @@ jobs:
         if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp/tests && 
-          doas python3 -m pytest -Wall --order-dependencies -v -m \"not vlan_mon_driver and not chap_secrets\""
+          doas python3 -m pytest -Wall --order-dependencies -v -m \"not vlan_mon_driver and not chap_secrets and not l2tp_switch\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >
@@ -322,14 +323,14 @@ jobs:
         if: ${{ always() }}
         run: >
           ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp &&
-          doas modprobe pppox && doas insmod build/drivers/ppposeq/driver/ppposeq.ko &&
+          (doas modprobe l2tp_ppp || echo ::error::l2tp_ppp_module_unavailable_the_l2tp_switch_tests_will_fail_since_L2TP_SWITCH_REQUIRE_PPPOL2TP_is_set) && doas modprobe pppox && doas insmod build/drivers/ppposeq/driver/ppposeq.ko &&
           lsmod | grep ppposeq"
 
       - name: Run tests (all)
-        timeout-minutes: 5
+        timeout-minutes: 30
         run: >
           ssh -i ssh-key -p2222 alpine@localhost "cd accel-ppp/tests &&
-          doas python3 -m pytest -Wall --order-dependencies -v -m \"not chap_secrets\""
+          doas env L2TP_SWITCH_REQUIRE_PPPOL2TP=1 python3 -m pytest -Wall --order-dependencies -v -m \"not chap_secrets\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: >
@@ -357,15 +358,16 @@ jobs:
     steps:
       - name: Install build tools (using apt)
         run: >
-          sudo apt update && 
+          sudo apt update &&
           NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
           git build-essential cmake gcc linux-headers-`uname -r`
-          libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
-          iproute2 ppp pppoe isc-dhcp-client
+          libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip
+          iproute2 ppp pppoe isc-dhcp-client tcpdump &&
+          (sudo apt -y install linux-modules-extra-`uname -r` || true)
 
       - name: Install testing tools (using pip)
         run: >
-          sudo apt -y install python3-pytest python3-pytest-dependency python3-pytest-order || 
+          sudo apt -y install python3-pytest python3-pytest-dependency python3-pytest-order ||
           sudo pip3 install pytest pytest-dependency pytest-order || 
           sudo pip3 install --break-system-packages pytest pytest-dependency pytest-order
 
@@ -398,15 +400,15 @@ jobs:
         run: |
           sudo insmod build/drivers/vlan_mon/driver/vlan_mon.ko
           sudo insmod build/drivers/ipoe/driver/ipoe.ko
-          sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko
+          (sudo modprobe l2tp_ppp || echo ::error::l2tp_ppp_module_unavailable_the_l2tp_switch_tests_will_fail_since_L2TP_SWITCH_REQUIRE_PPPOL2TP_is_set) && sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko
           lsmod | grep ipoe
           lsmod | grep vlan_mon
           lsmod | grep ppposeq
 
       - name: Run tests
-        timeout-minutes: 5
+        timeout-minutes: 30
         working-directory: ./tests
-        run: sudo python3 -m pytest -Wall --order-dependencies -v
+        run: sudo env L2TP_SWITCH_REQUIRE_PPPOL2TP=1 python3 -m pytest -Wall --order-dependencies -v
 
       - name: Check dmesg for kernel issues
         if: ${{ always() }}
@@ -431,8 +433,9 @@ jobs:
           sudo apt update && 
           NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true sudo -E apt -y install
           git build-essential cmake gcc linux-headers-`uname -r`
-          libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip 
-          iproute2 ppp pppoe isc-dhcp-client
+          libpcre2-dev libssl-dev liblua5.1-0-dev kmod python3-pip
+          iproute2 ppp pppoe isc-dhcp-client tcpdump &&
+          (sudo apt -y install linux-modules-extra-`uname -r` || true)
 
       - name: Install testing tools
         run: >
@@ -466,15 +469,15 @@ jobs:
         run: |
           sudo insmod build/drivers/vlan_mon/driver/vlan_mon.ko
           sudo insmod build/drivers/ipoe/driver/ipoe.ko
-          sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko
+          (sudo modprobe l2tp_ppp || echo ::error::l2tp_ppp_module_unavailable_the_l2tp_switch_tests_will_fail_since_L2TP_SWITCH_REQUIRE_PPPOL2TP_is_set) && sudo modprobe pppox && sudo insmod build/drivers/ppposeq/driver/ppposeq.ko
           lsmod | grep ipoe
           lsmod | grep vlan_mon
           lsmod | grep ppposeq
 
       - name: Run tests (for coverage report) (fail is ok)
-        timeout-minutes: 5
+        timeout-minutes: 30
         working-directory: ./tests
-        run: sudo python3 -m pytest -Wall --order-dependencies -v || exit 0
+        run: sudo env L2TP_SWITCH_REQUIRE_PPPOL2TP=1 python3 -m pytest -Wall --order-dependencies -v || exit 0
 
       - name: Check dmesg for kernel issues
         if: ${{ always() }}
