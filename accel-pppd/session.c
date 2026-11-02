@@ -431,6 +431,8 @@ static void generate_sessionid(struct ap_session *ses)
 int __export ap_session_read_stats(struct ap_session *ses, struct rtnl_link_stats64 *stats)
 {
 	struct rtnl_link_stats64 lstats;
+	struct ap_net *saved_net = net;
+	int r;
 
 	if (ses->ifindex == -1)
 		return -1;
@@ -438,7 +440,16 @@ int __export ap_session_read_stats(struct ap_session *ses, struct rtnl_link_stat
 	if (!stats)
 		stats = &lstats;
 
-	if (iplink_get_stats(ses->ifindex, stats)) {
+	/* ses->ifindex is only valid inside the session's own network
+	 * namespace, so query it through ses->net rather than the thread-local
+	 * net. Within the session's context the two are the same, but callers
+	 * such as the CLI run on an arbitrary triton thread where net may be
+	 * NULL (never set) or still point at another session's namespace. */
+	net = ses->net;
+	r = iplink_get_stats(ses->ifindex, stats);
+	net = saved_net;
+
+	if (r) {
 		log_ppp_warn("failed to get interface statistics\n");
 		return -1;
 	}
