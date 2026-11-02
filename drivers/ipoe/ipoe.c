@@ -1135,7 +1135,7 @@ static int ipoe_ctrl_attached(void)
 /* Sessions are created through IPOE_CMD_CREATE, which also sets up the
  * private state.  A device made by rtnetlink would have none of it, so
  * refuse 'ip link add ... type ipoe' explicitly. */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,13,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,15,0)
 static int ipoe_newlink(struct net_device *dev,
 			struct rtnl_newlink_params *params,
 			struct netlink_ext_ack *extack)
