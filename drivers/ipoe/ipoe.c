@@ -1215,9 +1215,11 @@ static void ipoe_netdev_setup(struct net_device *dev)
 	dev->iflink = 0;
 #endif
 	dev->addr_len = ETH_ALEN;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,15,0)
+	/* HAVE_NETNS_* come from the Makefile header probe; the version
+	 * checks are only a fallback when the probe could not run. */
+#if defined(HAVE_NETNS_IMMUTABLE) || LINUX_VERSION_CODE >= KERNEL_VERSION(6,15,0)
 	dev->netns_immutable = true;
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6,12,0)
+#elif defined(HAVE_NETNS_LOCAL) || LINUX_VERSION_CODE >= KERNEL_VERSION(6,12,0)
 	dev->netns_local = true;
 #else
 	dev->features  |= NETIF_F_NETNS_LOCAL;
