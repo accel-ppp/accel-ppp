@@ -124,7 +124,7 @@ jobs:
       - name: Install build tools (on target OS)
         run: >
           ssh -i ssh-key -p2222 root@localhost "setup-apkrepos -o && apk add --no-cache git cmake make g++ pcre2-dev openssl-dev linux-headers libucontext-dev lua5.1-dev linux-lts-dev py3-pip 
-          ppp ppp-pppoe iproute2 dhclient && 
+          ppp ppp-pppoe iproute2 dhclient tcpdump &&
           (pip3 install pytest pytest-dependency pytest-order || pip3 install --break-system-packages pytest pytest-dependency pytest-order)"
       - name: Copy source code to target OS
         run: |
@@ -144,7 +144,7 @@ jobs:
         timeout-minutes: 5
         run: >
           ssh -i ssh-key -p2222 root@localhost "cd accel-ppp/tests && 
-          python3 -m pytest -Wall --order-dependencies -v -m \"not ipoe_driver and not vlan_mon_driver and not chap_secrets\""
+          python3 -m pytest -Wall --order-dependencies -v -m \"not ipoe_driver and not vlan_mon_driver and not chap_secrets and not l2tp_switch\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: ssh -i ssh-key -p2222 -o ConnectTimeout=5  root@localhost "ps aux | grep accel- && dmesg"
@@ -157,7 +157,7 @@ jobs:
         timeout-minutes: 5
         run: >
           ssh -i ssh-key -p2222 root@localhost "cd accel-ppp/tests && 
-          python3 -m pytest -Wall --order-dependencies -v -m \"not vlan_mon_driver and not chap_secrets\""
+          python3 -m pytest -Wall --order-dependencies -v -m \"not vlan_mon_driver and not chap_secrets and not l2tp_switch\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: ssh -i ssh-key -p2222 -o ConnectTimeout=5  root@localhost "ps aux | grep accel- && dmesg"
@@ -169,13 +169,13 @@ jobs:
       - name: Insert ppposeq kernel module
         run: >
           ssh -i ssh-key -p2222 root@localhost "cd accel-ppp &&
-          modprobe pppox && insmod build/drivers/ppposeq/driver/ppposeq.ko &&
+          (modprobe l2tp_ppp || echo ::error::l2tp_ppp_module_unavailable_the_l2tp_switch_tests_will_fail_since_L2TP_SWITCH_REQUIRE_PPPOL2TP_is_set) && modprobe pppox && insmod build/drivers/ppposeq/driver/ppposeq.ko &&
           lsmod | grep ppposeq"
       - name: Run tests (all)
-        timeout-minutes: 5
+        timeout-minutes: 30
         run: >
           ssh -i ssh-key -p2222 root@localhost "cd accel-ppp/tests &&
-          python3 -m pytest -Wall --order-dependencies -v -m \"not chap_secrets\""
+          L2TP_SWITCH_REQUIRE_PPPOL2TP=1 python3 -m pytest -Wall --order-dependencies -v -m \"not chap_secrets\""
       - name: Display processes and dmesg after tests
         if: ${{ always() }}
         run: ssh -i ssh-key -p2222 -o ConnectTimeout=5 root@localhost "ps aux | grep accel- && dmesg"

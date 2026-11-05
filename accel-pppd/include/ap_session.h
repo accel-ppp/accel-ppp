@@ -171,4 +171,20 @@ int ap_session_read_stats(struct ap_session *ses, struct rtnl_link_stats64 *stat
 
 int ap_shutdown_soft(void (*cb)(void), int term);
 
+/* A module that keeps calls without an ap_session (such as L2TP switching)
+ * registers a hook, so that a soft shutdown waits for them and ends them. */
+struct ap_shutdown_hook {
+	struct list_head entry;
+	/* nonzero while the module still has calls */
+	int (*busy)(void);
+	/* ask all calls to end; they are then expected to finish on their
+	 * own and the module to call ap_shutdown_check() after the last one */
+	void (*terminate)(void);
+};
+
+void ap_shutdown_hook_register(struct ap_shutdown_hook *hook);
+void ap_shutdown_hooks_terminate(void);
+/* completes a pending soft shutdown if nothing is left */
+void ap_shutdown_check(void);
+
 #endif

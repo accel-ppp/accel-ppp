@@ -1,0 +1,8 @@
+# LeakSanitizer suppressions for the test suites (LSAN_OPTIONS=suppressions=...).
+#
+# triton's worker threads: create_thread() (triton.c) allocates the thread
+# descriptors in triton_run() and they are still reachable only through
+# threads that are gone at exit. Not a product leak (thread bookkeeping that
+# lives for the whole process); it is reported on every clean daemon exit.
+# Matches this one allocation site only; any other leak is still reported.
+leak:create_thread

@@ -65,6 +65,7 @@ static struct timespec seq_ts;
 static struct ap_session_stat ap_session_stat;
 
 static void (*shutdown_cb)(void);
+static LIST_HEAD(shutdown_hooks);
 
 static void generate_sessionid(struct ap_session *ses);
 static void save_seq(void);
@@ -107,11 +108,48 @@ static void ap_session_stat_move(unsigned int *from, unsigned int *to)
 	ap_session_stat_inc(to);
 }
 
+static int ap_shutdown_hooks_busy(void)
+{
+	struct ap_shutdown_hook *hook;
+
+	list_for_each_entry(hook, &shutdown_hooks, entry)
+		if (hook->busy && hook->busy())
+			return 1;
+
+	return 0;
+}
+
 static int ap_session_stat_idle(void)
 {
 	return !ap_session_stat_starting()
 	    && !ap_session_stat_active()
-	    && !ap_session_stat_finishing();
+	    && !ap_session_stat_finishing()
+	    && !ap_shutdown_hooks_busy();
+}
+
+/* hooks are registered while modules load, before any session exists */
+void __export ap_shutdown_hook_register(struct ap_shutdown_hook *hook)
+{
+	list_add_tail(&hook->entry, &shutdown_hooks);
+}
+
+void __export ap_shutdown_hooks_terminate(void)
+{
+	struct ap_shutdown_hook *hook;
+
+	list_for_each_entry(hook, &shutdown_hooks, entry)
+		if (hook->terminate)
+			hook->terminate();
+}
+
+void __export ap_shutdown_check(void)
+{
+	if (ap_shutdown && ap_session_stat_idle()) {
+		if (shutdown_cb)
+			shutdown_cb();
+		else
+			kill(getpid(), SIGTERM);
+	}
 }
 
 void __export ap_session_init(struct ap_session *ses)
@@ -310,12 +348,7 @@ void __export ap_session_finished(struct ap_session *ses)
 		ses->backup->storage->free(ses->backup);
 #endif
 
-	if (ap_shutdown && ap_session_stat_idle()) {
-		if (shutdown_cb)
-			shutdown_cb();
-		else
-			kill(getpid(), SIGTERM);
-	}
+	ap_shutdown_check();
 }
 
 void __export ap_session_terminate(struct ap_session *ses, int cause, int hard)
@@ -386,6 +419,7 @@ int ap_shutdown_soft(void (*cb)(void), int term)
 	} else if (term) {
 		list_for_each_entry(ses, &ses_list, entry)
 			triton_context_call(ses->ctrl->ctx, (triton_event_func)__terminate_soft_reboot, ses);
+		ap_shutdown_hooks_terminate();
 	}
 
 	pthread_rwlock_unlock(&ses_lock);

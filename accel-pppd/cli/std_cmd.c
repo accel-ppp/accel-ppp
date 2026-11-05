@@ -312,6 +312,7 @@ static void terminate_all_sessions(int hard)
 		else
 			triton_context_call(ses->ctrl->ctx, (triton_event_func)__terminate_soft2, ses);
 	}
+	ap_shutdown_hooks_terminate();
 	pthread_rwlock_unlock(&ses_lock);
 }
 
