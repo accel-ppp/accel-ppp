@@ -356,7 +356,7 @@ static int dhcpv4_parse_packet(struct dhcpv4_packet *pack, int len)
 			pack->msg_type = opt->data[0];
 		else if (opt->type == 82)
 			pack->relay_agent = opt;
-		else if (opt->type == 62)
+		else if (opt->type == 61)
 			pack->client_id = opt;
 		else if (opt->type == 50)
 			memcpy(&pack->request_ip, opt->data, sizeof(pack->request_ip));
@@ -470,6 +470,9 @@ int dhcpv4_packet_insert_opt82(struct dhcpv4_packet *pack, const char *agent_cir
 	int r;
 	struct in_addr link_select = {0};
 
+	if (pack->ptr <= pack->data || pack->ptr[-1] != 255)
+		return -1;
+
 	pack->ptr--;
 
 	opt82_len = len1 + 2;
@@ -506,9 +509,14 @@ int dhcpv4_packet_insert_opt82(struct dhcpv4_packet *pack, const char *agent_cir
 	r = dhcpv4_packet_add_opt(pack, 82, data, opt82_len);
 	_free(data);
 
+	if (r) {
+		*pack->ptr++ = 255;
+		return r;
+	}
+
 	*pack->ptr++ = 255;
 
-	return r;
+	return 0;
 }
 
 static int dhcpv4_read(struct triton_md_handler_t *h)
@@ -725,7 +733,11 @@ int dhcpv4_packet_add_opt(struct dhcpv4_packet *pack, int type, const void *data
 {
 	struct dhcpv4_option *opt;
 
-	if (pack->data + BUF_SIZE - pack->ptr < 2 + len)
+	if (len < 0 || len > 255)
+		return -1;
+
+	/* Keep one byte for the trailing 0xff end option. */
+	if (pack->data + BUF_SIZE - pack->ptr < 2 + len + 1)
 		return -1;
 
 	opt = mempool_alloc(opt_pool);
@@ -1168,15 +1180,14 @@ int dhcpv4_relay_send_release(struct dhcpv4_relay *relay, uint8_t *chaddr, uint3
 
 	if (relay_agent && dhcpv4_packet_add_opt(pack, 82, relay_agent->data, relay_agent->len))
 		goto out_err;
-	else if (!relay_agent && (agent_remote_id || link_selection)) {
-		pack->ptr++;
-		if (dhcpv4_packet_insert_opt82(pack, agent_circuit_id, agent_remote_id,
-                                               link_selection))
-			goto out_err;
-		pack->ptr--;
-	}
 
-	*pack->ptr++ = 255;
+	if (!relay_agent && (agent_remote_id || link_selection)) {
+		*pack->ptr++ = 255;
+		if (dhcpv4_packet_insert_opt82(pack, agent_circuit_id, agent_remote_id,
+					       link_selection))
+			goto out_err;
+	} else
+		*pack->ptr++ = 255;
 
 	len = pack->ptr - pack->data;
 
@@ -1315,6 +1326,8 @@ struct dhcpv4_packet *dhcpv4_clone_radius(struct rad_packet_t *rad)
 
 		while (!list_empty(&opt->list)) {
 			next = list_entry(opt->list.next, typeof(*next), entry);
+			if (opt->len + next->len > 255)
+				goto out;
 			memcpy(ptr, next->data, next->len);
 			opt->len += next->len;
 			ptr += next->len;
