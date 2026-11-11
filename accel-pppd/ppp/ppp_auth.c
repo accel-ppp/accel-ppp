@@ -201,6 +201,10 @@ static void auth_print(void (*print)(const char *fmt,...), struct lcp_option_t *
 	struct auth_data_t *d;
 
 	if (ptr) {
+		if (opt16->hdr.len < sizeof(*opt16)) {
+			print("<auth>");
+			return;
+		}
 		list_for_each_entry(d, &auth_opt->auth_list, entry) {
 			if (d->proto == ntohs(opt16->val) && (!d->h->check || d->h->check((uint8_t *)(opt16 + 1))))
 				goto print_d;

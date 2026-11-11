@@ -378,6 +378,16 @@ static void chap_recv_response(struct chap_auth_data *ad, struct chap_hdr *hdr)
 	if (ad->timeout.tpd)
 		triton_timer_del(&ad->timeout);
 
+	if (ntohs(msg->hdr.len) < sizeof(*msg) - 2) {
+		log_ppp_warn("mschap-v2: short response received\n");
+		chap_send_failure(ad, conf_msg_failure, conf_msg_failure2);
+		if (ad->started)
+			ap_session_terminate(&ad->ppp->ses, TERM_USER_ERROR, 0);
+		else
+			ppp_auth_failed(ad->ppp, NULL);
+		return;
+	}
+
 	if (conf_ppp_verbose) {
 		log_ppp_info2("recv [MSCHAP-v2 Response id=%x <", msg->hdr.id);
 		print_buf(msg->peer_challenge,16);
