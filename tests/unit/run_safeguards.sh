@@ -7,12 +7,22 @@ shift
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT HUP INT TERM
 cd "$root"
-names=${*:-"dhcpv6 radius vrf lcp mempool log_line"}
+names=${*:-"dhcpv6 radius vrf lcp mempool log_line ncp ipv6cp"}
 for name in $names; do
 	extra=
 	# LCP's global layer table retains the whole daemon under ASan; its test
 	# checks wire lengths with UBSan. The packet/VRF tests also use ASan.
 	if [ "$name" = lcp ]; then extra=-fno-sanitize=address; fi
+	case "$name" in
+		ncp|ipv6cp)
+			# Unused protocol tables otherwise retain the entire daemon under
+			# ASan. Keep heap/stack instrumentation while allowing section GC.
+			case "$(${CC:-cc} --version)" in
+				*clang*) extra="-mllvm -asan-globals=0" ;;
+				*) extra="--param=asan-globals=0" ;;
+			esac
+			;;
+	esac
 	set -- "tests/unit/${name}_safeguards_test.c"
 	if [ "$name" = dhcpv6 ]; then
 		set -- "$@" accel-pppd/ipv6_dns.c
