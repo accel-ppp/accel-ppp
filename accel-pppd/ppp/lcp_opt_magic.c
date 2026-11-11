@@ -142,10 +142,12 @@ static void magic_print(void (*print)(const char *fmt, ...), struct lcp_option_t
 	struct magic_option_t *magic_opt = container_of(opt, typeof(*magic_opt), opt);
 	struct lcp_opt32_t *opt32 = (struct lcp_opt32_t *)ptr;
 
-	if (ptr)
+	if (ptr && opt32->hdr.len >= sizeof(*opt32))
 		print("<magic %08x>", ntohl(opt32->val));
-	else
+	else if (!ptr)
 		print("<magic %08x>", magic_opt->magic);
+	else
+		print("<magic>");
 }
 
 static void magic_opt_init()

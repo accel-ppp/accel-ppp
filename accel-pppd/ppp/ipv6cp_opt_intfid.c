@@ -178,6 +178,8 @@ static uint64_t generate_peer_intf_id(struct ppp_t *ppp)
 		uint16_t addr16[4];
 	} u;
 
+	u.intf_id = 0;
+
 	switch (conf_peer_intf_id) {
 		case INTF_ID_FIXED:
 			return conf_peer_intf_id_val;
@@ -287,10 +289,12 @@ static void ipaddr_print(void (*print)(const char *fmt,...), struct ipv6cp_optio
 	struct in6_addr a = {};
 	uint64_t intf_id;
 
-	if (ptr)
+	if (ptr && opt64->hdr.len >= sizeof(*opt64))
 		intf_id = opt64->val;
-	else
+	else if (!ptr && ipaddr_opt->ppp->ses.ipv6)
 		intf_id = ipaddr_opt->ppp->ses.ipv6->intf_id;
+	else
+		intf_id = 0;
 	memcpy(a.s6_addr + 8, &intf_id, sizeof(intf_id));
 
 	print("<addr %x:%x:%x:%x>", ntohs(a.s6_addr16[4]), ntohs(a.s6_addr16[5]), ntohs(a.s6_addr16[6]), ntohs(a.s6_addr16[7]));

@@ -206,6 +206,7 @@ static int pap_recv_req(struct pap_auth_data *p, struct pap_hdr *hdr)
 	char *passwd2;
 	int peer_id_len;
 	int passwd_len;
+	int rem;
 	uint8_t *ptr = (uint8_t*)(hdr + 1);
 
 	if (!p->active) {
@@ -227,8 +228,14 @@ static int pap_recv_req(struct pap_auth_data *p, struct pap_hdr *hdr)
 	if (p->peer_id)
 		return 0;
 
+	rem = ntohs(hdr->len) - HDR_LEN;
+	if (rem < 2) {
+		log_ppp_warn("PAP: short packet received\n");
+		return -1;
+	}
+
 	peer_id_len = *(uint8_t*)ptr; ptr++;
-	if (peer_id_len > ntohs(hdr->len) - sizeof(*hdr) + 2 - 1) {
+	if (peer_id_len > rem - 1) {
 		log_ppp_warn("PAP: short packet received\n");
 		return -1;
 	}
@@ -236,7 +243,7 @@ static int pap_recv_req(struct pap_auth_data *p, struct pap_hdr *hdr)
 	peer_id = (char*)ptr; ptr += peer_id_len;
 
 	passwd_len = *(uint8_t*)ptr; ptr++;
-	if (passwd_len > ntohs(hdr->len) - sizeof(*hdr ) + 2 - 2 - peer_id_len) {
+	if (passwd_len > rem - 2 - peer_id_len) {
 		log_ppp_warn("PAP: short packet received\n");
 		return -1;
 	}

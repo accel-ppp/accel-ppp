@@ -299,6 +299,16 @@ static void chap_recv_response(struct chap_auth_data *ad, struct chap_hdr *hdr)
 	if (ad->timeout.tpd)
 		triton_timer_del(&ad->timeout);
 
+	if (ntohs(msg->hdr.len) < sizeof(*msg) - 2) {
+		log_ppp_warn("chap-md5: short response received\n");
+		chap_send_failure(ad);
+		if (ad->started)
+			ap_session_terminate(&ad->ppp->ses, TERM_USER_ERROR, 0);
+		else
+			ppp_auth_failed(ad->ppp, NULL);
+		return;
+	}
+
 	if (conf_ppp_verbose) {
 		log_ppp_info2("recv [CHAP Response id=%x <", msg->hdr.id);
 		print_buf(msg->val, msg->val_size);

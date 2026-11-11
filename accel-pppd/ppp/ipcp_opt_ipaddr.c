@@ -160,9 +160,9 @@ static void ipaddr_print(void (*print)(const char *fmt,...),struct ipcp_option_t
 	struct ipcp_opt32_t *opt32=(struct ipcp_opt32_t*)ptr;
 	struct in_addr in = { .s_addr = 0, };
 
-	if (ptr)
+	if (ptr && opt32->hdr.len >= sizeof(*opt32))
 		in.s_addr = opt32->val;
-	else if (ipaddr_opt->ppp->ses.ipv4)
+	else if (!ptr && ipaddr_opt->ppp->ses.ipv4)
 		in.s_addr = ipaddr_opt->ppp->ses.ipv4->addr;
 
 	print("<addr %s>",inet_ntoa(in));
