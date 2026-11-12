@@ -856,7 +856,7 @@ static rx_handler_result_t ipoe_recv(struct sk_buff **pskb)
 	struct ipoe_session *ses = NULL;
 	struct iphdr *iph = NULL;
 	struct ipv6hdr *ip6h = NULL;
-	struct ethhdr *eth = eth_hdr(skb);
+	struct ethhdr *eth;
 	int noff;
 	struct net_device_stats *stats;
 	__be32 saddr;
@@ -867,6 +867,11 @@ static rx_handler_result_t ipoe_recv(struct sk_buff **pskb)
 	if (unlikely(skb->pkt_type == PACKET_LOOPBACK))
 		return RX_HANDLER_PASS;
 
+	skb = skb_share_check(skb, GFP_ATOMIC);
+	if (!skb)
+		return RX_HANDLER_CONSUMED;
+	*pskb = skb;
+
 	noff = skb_network_offset(skb);
 
 	if (likely(skb->protocol == htons(ETH_P_IP))) {
@@ -874,6 +879,7 @@ static rx_handler_result_t ipoe_recv(struct sk_buff **pskb)
 			return RX_HANDLER_PASS;
 
 		iph = ip_hdr(skb);
+		eth = eth_hdr(skb);
 		saddr = iph->saddr;
 
 		if (!saddr || saddr == 0xffffffff)
@@ -911,6 +917,7 @@ static rx_handler_result_t ipoe_recv(struct sk_buff **pskb)
 			return RX_HANDLER_PASS;
 
 		ip6h = ipv6_hdr(skb);
+		eth = eth_hdr(skb);
 
 		if (ip6h->saddr.s6_addr16[0] == htons(0xfe80)) {
 			ses = ipoe_lookup_hwaddr(eth->h_source);
