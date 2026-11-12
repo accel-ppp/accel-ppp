@@ -232,48 +232,141 @@ int rad_packet_recv(int fd, struct rad_packet_t **p, struct sockaddr_in *addr)
 			goto out_err;
 		}
 		if (id == 26) {
+			int vsa_left;
+
 			if (len < 4) {
 				log_ppp_warn("radius:packet: vendor attribute too short (%i)\n", len);
 				goto out_err;
 			}
 			vendor_id = u_read_be32(ptr);
 			vendor = rad_dict_find_vendor_id(vendor_id);
-			if (vendor) {
-				if (len < 4 + vendor->tag + vendor->len) {
-					log_ppp_warn("radius:packet: vendor %i attribute too short (%i)\n", vendor_id, len);
+			if (!vendor) {
+				log_ppp_warn("radius:packet: vendor %i not found\n", vendor_id);
+				ptr += len;
+				n -= 2 + len;
+				continue;
+			}
+			if (len < 4 + vendor->tag + vendor->len) {
+				log_ppp_warn("radius:packet: vendor %i attribute too short (%i)\n", vendor_id, len);
+				goto out_err;
+			}
+
+			/* Consume the whole Type-26 attribute, then walk every
+			 * packed sub-TLV inside its Vendor-Specific string. */
+			n -= 2 + len;
+			ptr += 4;
+			vsa_left = len - 4;
+
+			while (vsa_left > 0) {
+				int sub_len;
+
+				if (vsa_left < vendor->tag + vendor->len) {
+					log_ppp_warn("radius:packet: vendor %i attribute too short (%i)\n", vendor_id, vsa_left);
 					goto out_err;
 				}
-				ptr += 4;
 
 				if (vendor->tag == 2)
 					id = u_read_be16(ptr);
 				else
 					id = *ptr;
-
 				ptr += vendor->tag;
 
 				if (vendor->len == 2)
-					len = u_read_be16(ptr);
+					sub_len = u_read_be16(ptr);
 				else
-					len = *ptr;
-
+					sub_len = *ptr;
 				ptr += vendor->len;
 
-				len -= vendor->tag + vendor->len;
-
-				n -= 4 + vendor->tag + vendor->len;
-				if (len < 0) {
+				if (sub_len < vendor->tag + vendor->len) {
 					log_ppp_warn("radius:packet invalid vendor attribute len received\n");
 					goto out_err;
 				}
-				if (2 + len > n) {
-					log_ppp_warn("radius:packet: too long vendor attribute received (%i, %i)\n", id, len);
+				if (sub_len > vsa_left) {
+					log_ppp_warn("radius:packet: too long vendor attribute received (%i, %i)\n", id, sub_len);
 					goto out_err;
 				}
-			} else
-				log_ppp_warn("radius:packet: vendor %i not found\n", id);
-		} else
-			vendor = NULL;
+
+				len = sub_len - vendor->tag - vendor->len;
+
+				da = rad_dict_find_attr_id(vendor, id);
+				if (da) {
+					attr = mempool_alloc(attr_pool);
+					if (!attr) {
+						log_emerg("radius:packet: out of memory\n");
+						goto out_err;
+					}
+					memset(attr, 0, sizeof(*attr));
+					attr->vendor = vendor;
+					attr->attr = da;
+					attr->len = len;
+					attr->raw = ptr;
+
+					if (!da->array) {
+						switch (da->type) {
+							case ATTR_TYPE_STRING:
+								attr->alloc = 1;
+								attr->val.string = _malloc(len + 1);
+								memcpy(attr->val.string, ptr, len);
+								attr->val.string[len] = 0;
+								break;
+							case ATTR_TYPE_OCTETS:
+							case ATTR_TYPE_ETHER:
+							case ATTR_TYPE_TLV:
+								attr->val.octets = ptr;
+								break;
+							case ATTR_TYPE_INTEGER:
+								if (len != da->size) {
+									log_ppp_warn("radius:packet: attribute %s has invalid length %i (must be %i)\n", da->name, len, da->size);
+									break;
+								}
+								if (len == 4)
+									attr->val.integer = u_read_be32(ptr);
+								else if (len == 2)
+									attr->val.integer = u_read_be16(ptr);
+								else if (len == 1)
+									attr->val.integer = *ptr;
+								break;
+							case ATTR_TYPE_DATE:
+								if (len == 4)
+									attr->val.integer = u_read_be32(ptr);
+								else
+									log_ppp_warn("radius:packet: attribute %s has invalid length %i (must be 4)\n", da->name, len);
+								break;
+							case ATTR_TYPE_IPADDR:
+							case ATTR_TYPE_IFID:
+							case ATTR_TYPE_IPV6ADDR:
+								if (len == da->size)
+									memcpy(&attr->val.integer, ptr, len);
+								else
+									log_ppp_warn("radius:packet: attribute %s has invalid length %i (must be %i)\n", da->name, len, da->size);
+								break;
+							case ATTR_TYPE_IPV6PREFIX:
+								if (len < 2 || len > 18) { /* RFC 8044 §3.10 ipv6prefix */
+									log_ppp_warn("radius:packet: attribute %s has invalid length %i (must be from 2 to 18)\n", da->name, len);
+									break;
+								}
+								if (ptr[1] > 128) {
+									log_ppp_warn("radius:packet: attribute %s has invalid prefix length %u (must be from 0 to 128)\n", da->name, ptr[1]);
+									break;
+								}
+								attr->val.ipv6prefix.len = ptr[1];
+								memset(&attr->val.ipv6prefix.prefix, 0, sizeof(attr->val.ipv6prefix.prefix));
+								memcpy(&attr->val.ipv6prefix.prefix, ptr + 2, len - 2);
+								break;
+						}
+					}
+					list_add_tail(&attr->entry, &pack->attrs);
+				} else
+					log_ppp_warn("radius:packet: unknown attribute received (%i,%i)\n", vendor ? vendor->id : 0, id);
+
+				ptr += len;
+				vsa_left -= sub_len;
+			}
+			continue;
+		}
+
+		vendor = NULL;
+
 		da = rad_dict_find_attr_id(vendor, id);
 		if (da) {
 			attr = mempool_alloc(attr_pool);
@@ -344,6 +437,7 @@ int rad_packet_recv(int fd, struct rad_packet_t **p, struct sockaddr_in *addr)
 			list_add_tail(&attr->entry, &pack->attrs);
 		} else
 			log_ppp_warn("radius:packet: unknown attribute received (%i,%i)\n", vendor ? vendor->id : 0, id);
+
 		ptr += len;
 		n -= 2 + len;
 	}

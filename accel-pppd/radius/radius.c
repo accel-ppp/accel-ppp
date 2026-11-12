@@ -1090,10 +1090,15 @@ struct radius_pd_t *rad_find_session(const char *sessionid, const char *username
 			continue;
 		if (port_id && strcmp(port_id, rpd->ses->ifname))
 			continue;
-		if (ipaddr && rpd->ses->ipv4 && ipaddr != rpd->ses->ipv4->peer_addr)
-			continue;
-		if (csid && rpd->ses->ctrl->calling_station_id && strcmp(csid, rpd->ses->ctrl->calling_station_id))
-			continue;
+		if (ipaddr) {
+			if (!rpd->ses->ipv4 || ipaddr != rpd->ses->ipv4->peer_addr)
+				continue;
+		}
+		if (csid) {
+			if (!rpd->ses->ctrl->calling_station_id ||
+			    strcmp(csid, rpd->ses->ctrl->calling_station_id))
+				continue;
+		}
 		pthread_mutex_lock(&rpd->lock);
 		pthread_rwlock_unlock(&sessions_lock);
 		return rpd;
