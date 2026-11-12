@@ -63,6 +63,15 @@
 #define RHEL_MAJOR 0
 #endif
 
+#ifndef RCU_INIT_POINTER
+#define RCU_INIT_POINTER(p, v) do { (p) = (v); } while (0)
+#endif
+
+#ifndef skb_mac_header_was_set
+#define skb_mac_header_was_set(skb) \
+	((skb)->mac_header != (typeof((skb)->mac_header))~0U)
+#endif
+
 /* ipv6.disable=1 leaves the IPv6 FIB uninitialized, so ip6_route_output()
  * oopses; ipv6_mod_enabled() detects that (and CONFIG_IPV6=n) since 4.8 */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,8,0)
@@ -186,10 +195,14 @@ static struct ipoe_session *ipoe_lookup(__be32 addr);
 static int ipoe_do_nat(struct sk_buff *skb, __be32 new_addr, int to_peer);
 static int ipoe_queue_u(struct sk_buff *skb, __be32 addr);
 static int ipoe_lookup1_u(__be32 addr, unsigned long *ts);
+static void ipoe_update_link_headroom(struct net_device *dev,
+				      struct net_device *link_dev);
+static void ipoe_link_dev_clear(struct ipoe_session *ses);
 
 static struct net *pick_net(struct sk_buff *skb);
 
 static const struct net_device_ops ipoe_netdev_ops;
+static struct notifier_block ipoe_netdev_notifier;
 
 static struct genl_family ipoe_nl_family;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,13,0) && RHEL_MAJOR < 7
@@ -455,12 +468,47 @@ static struct net *pick_net(struct sk_buff *skb)
 	return 0;
 }*/
 
+/* Keep enough headroom for an Ethernet header plus QinQ tags when the
+ * session is later bound to a VLAN link device. */
+static void ipoe_update_link_headroom(struct net_device *dev,
+				      struct net_device *link_dev)
+{
+	unsigned int hlen = ETH_HLEN + 2 * VLAN_HLEN;
+
+	if (link_dev) {
+		unsigned int link_hlen = link_dev->hard_header_len +
+			link_dev->needed_headroom;
+
+		if (link_hlen > hlen)
+			hlen = link_hlen;
+	}
+
+	dev->hard_header_len = ETH_HLEN;
+	dev->needed_headroom = hlen > ETH_HLEN ? hlen - ETH_HLEN : 0;
+}
+
+/* Clear and drop the cached link device after readers leave RCU sections.
+ * Caller must serialize writers (ipoe_wlock / rtnl teardown). */
+static void ipoe_link_dev_clear(struct ipoe_session *ses)
+{
+	struct net_device *link_dev = ses->link_dev;
+
+	if (!link_dev)
+		return;
+
+	rcu_assign_pointer(ses->link_dev, NULL);
+	synchronize_rcu();
+	dev_put(link_dev);
+}
+
 static netdev_tx_t ipoe_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct ipoe_session *ses = netdev_priv(dev);
 	struct net_device_stats *stats = &dev->stats;
+	struct net_device *link_dev;
 	struct iphdr  *iph;
 	struct sk_buff *skb1;
+	struct ethhdr *eth;
 	//struct dst_entry *dst;
 	/*struct arphdr *arp;
 	unsigned char *arp_ptr;
@@ -525,16 +573,27 @@ static netdev_tx_t ipoe_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	ipoe_update_stats(skb, this_cpu_ptr(ses->tx_stats), ETH_HLEN);
 
-	if (ses->link_dev) {
-		struct ethhdr *eth = (struct ethhdr *)skb->data;
+	rcu_read_lock();
+	link_dev = rcu_dereference(ses->link_dev);
+	if (link_dev) {
+		if (!pskb_may_pull(skb, ETH_HLEN) || skb_cow_head(skb, 0)) {
+			rcu_read_unlock();
+			goto drop;
+		}
+
+		eth = (struct ethhdr *)skb->data;
 		memcpy(eth->h_dest, ses->u.hwaddr, ETH_ALEN);
-		memcpy(eth->h_source, ses->link_dev->dev_addr, ETH_ALEN);
+		memcpy(eth->h_source, link_dev->dev_addr, ETH_ALEN);
 
-		skb->dev = ses->link_dev;
+		dev_hold(link_dev);
+		skb->dev = link_dev;
+		rcu_read_unlock();
+
 		dev_queue_xmit(skb);
-
+		dev_put(link_dev);
 		return NETDEV_TX_OK;
 	}
+	rcu_read_unlock();
 
 drop:
 	stats->tx_dropped++;
@@ -591,6 +650,12 @@ static int ipoe_queue_u(struct sk_buff *skb, __u32 addr)
 
 	//pr_info("queue %08x\n", addr);
 
+	/* Softirq RCU no longer protects skb->dev once we leave receive.
+	 * Keep the ifindex and drop the dangling pointer before queueing. */
+	if (!skb->skb_iif && skb->dev)
+		skb->skb_iif = skb->dev->ifindex;
+	skb->dev = NULL;
+
 	skb_queue_tail(&ipoe_queue, skb);
 	schedule_work(&ipoe_queue_work);
 
@@ -633,6 +698,10 @@ static void ipoe_process_queue(struct work_struct *w)
 
 			if (!e) {
 				e = kmalloc(sizeof(*e), GFP_KERNEL);
+				if (!e) {
+					kfree_skb(skb);
+					continue;
+				}
 				e->addr = saddr;
 				e->tstamp = jiffies;
 
@@ -665,10 +734,12 @@ static void ipoe_process_queue(struct work_struct *w)
 				if (!ns)
 					goto nl_err;
 
-				if (nla_put_u32(report_skb, IPOE_ATTR_IFINDEX, skb->dev ? skb->dev->ifindex : skb->skb_iif))
+				if (nla_put_u32(report_skb, IPOE_ATTR_IFINDEX, skb->skb_iif))
 					goto nl_err;
 
 				if (likely(skb->protocol == htons(ETH_P_IP))) {
+					if (!skb_mac_header_was_set(skb))
+						goto nl_err;
 					eth = eth_hdr(skb);
 					if (nla_put(report_skb, IPOE_ATTR_ETH_HDR, sizeof(*eth), eth))
 						goto nl_err;
@@ -942,8 +1013,13 @@ static rx_handler_result_t ipoe_recv(struct sk_buff **pskb)
 	else if (memcmp(eth->h_source, ses->u.hwaddr, ETH_ALEN))
 		goto drop;
 
-	if (skb->protocol == htons(ETH_P_IP) && ses->addr > 1 && check_nat_required(skb, ses->link_dev) && ipoe_do_nat(skb, ses->addr, 0))
-		goto drop;
+	if (skb->protocol == htons(ETH_P_IP) && ses->addr > 1) {
+		struct net_device *link_dev = rcu_dereference(ses->link_dev);
+
+		if (check_nat_required(skb, link_dev) &&
+		    ipoe_do_nat(skb, ses->addr, 0))
+			goto drop;
+	}
 
 	skb->dev = ses->dev;
 	skb->skb_iif = ses->dev->ifindex;
@@ -1085,7 +1161,9 @@ static void ipoe_free_netdev(struct net_device *dev)
 	free_netdev(dev);
 }
 #else
-static void ipoe_netdev_uninit(struct net_device *dev)
+/* Free per-CPU stats only after synchronize_net() in unregister; ndo_uninit
+ * runs too early for in-flight xmit/recv/stats64 readers. */
+static void ipoe_free_netdev(struct net_device *dev)
 {
 	struct ipoe_session *ses = netdev_priv(dev);
 
@@ -1093,7 +1171,10 @@ static void ipoe_netdev_uninit(struct net_device *dev)
 		free_percpu(ses->rx_stats);
 	if (ses->tx_stats)
 		free_percpu(ses->tx_stats);
+}
 
+static void ipoe_netdev_uninit(struct net_device *dev)
+{
 	dev_put(dev);
 }
 #endif
@@ -1103,12 +1184,18 @@ static int ipoe_hard_header(struct sk_buff *skb, struct net_device *dev,
 			       const void *saddr, unsigned len)
 {
 	const struct ipoe_session *ses = netdev_priv(dev);
+	struct net_device *link_dev;
+	int ret;
 
-	if (ses->link_dev)
-		return dev_hard_header(skb, ses->link_dev, type, daddr,
-			       saddr, len);
+	rcu_read_lock();
+	link_dev = rcu_dereference(ses->link_dev);
+	if (link_dev)
+		ret = dev_hard_header(skb, link_dev, type, daddr, saddr, len);
 	else
-		return eth_header(skb, dev, type, daddr, saddr, len);
+		ret = eth_header(skb, dev, type, daddr, saddr, len);
+	rcu_read_unlock();
+
+	return ret;
 }
 
 static const struct header_ops ipoe_hard_header_ops = {
@@ -1190,10 +1277,7 @@ static void ipoe_dellink(struct net_device *dev, struct list_head *head)
 	while (atomic_read(&ses->refs))
 		schedule_timeout_uninterruptible(1);
 
-	if (ses->link_dev) {
-		dev_put(ses->link_dev);
-		ses->link_dev = NULL;
-	}
+	ipoe_link_dev_clear(ses);
 
 	unregister_netdevice_queue(dev, head);
 }
@@ -1205,10 +1289,12 @@ static void ipoe_netdev_setup(struct net_device *dev)
 	dev->destructor = ipoe_free_netdev;
 #else
 	dev->needs_free_netdev = true;
+	dev->priv_destructor = ipoe_free_netdev;
 #endif
 
 	dev->type = ARPHRD_ETHER;
-	dev->hard_header_len = 0;
+	dev->hard_header_len = ETH_HLEN;
+	dev->needed_headroom = 2 * VLAN_HLEN;
 	dev->mtu = ETH_DATA_LEN;
 	dev->flags = IFF_MULTICAST | IFF_POINTOPOINT;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,0)
@@ -1250,6 +1336,10 @@ static int ipoe_create(__be32 peer_addr, __be32 addr, __be32 gw, int ifindex, co
 		link_dev = dev_get_by_index(&init_net, ifindex);
 		if (!link_dev)
 			return -EINVAL;
+		if (link_dev->type != ARPHRD_ETHER) {
+			dev_put(link_dev);
+			return -EINVAL;
+		}
 	}
 
 	sprintf(name, "ipoe%%d");
@@ -1279,7 +1369,7 @@ static int ipoe_create(__be32 peer_addr, __be32 addr, __be32 gw, int ifindex, co
 	ses->addr = addr;
 	ses->peer_addr = peer_addr;
 	ses->gw = gw;
-	ses->link_dev = link_dev;
+	RCU_INIT_POINTER(ses->link_dev, link_dev);
 	memcpy(ses->u.hwaddr, hwaddr, ETH_ALEN);
 	ses->rx_stats = alloc_percpu(struct ipoe_stats);
 	ses->tx_stats = alloc_percpu(struct ipoe_stats);
@@ -1297,6 +1387,7 @@ static int ipoe_create(__be32 peer_addr, __be32 addr, __be32 gw, int ifindex, co
 #endif
 		memcpy(dev->broadcast, link_dev->broadcast, ETH_ALEN);
 	}
+	ipoe_update_link_headroom(dev, link_dev);
 
 	if (addr)
 		dev->flags |= IFF_NOARP;
@@ -1509,8 +1600,7 @@ static int ipoe_nl_cmd_delete(struct sk_buff *skb, struct genl_info *info)
 	while (atomic_read(&ses->refs))
 		schedule_timeout_uninterruptible(1);
 
-	if (ses->link_dev)
-		dev_put(ses->link_dev);
+	ipoe_link_dev_clear(ses);
 
 	unregister_netdev(ses->dev);
 
@@ -1552,10 +1642,7 @@ static int ipoe_nl_cmd_flush(struct sk_buff *skb, struct genl_info *info)
 		while (atomic_read(&ses->refs))
 			schedule_timeout_uninterruptible(1);
 
-		if (ses->link_dev) {
-			dev_put(ses->link_dev);
-			ses->link_dev = NULL;
-		}
+		ipoe_link_dev_clear(ses);
 	}
 
 	rtnl_lock();
@@ -1576,10 +1663,17 @@ static int ipoe_nl_cmd_modify(struct sk_buff *skb, struct genl_info *info)
 	struct in_device *in_dev;
 	struct ipoe_session *ses, *ses1;
 	int ifindex;
+	int need_rtnl = 0;
 	__be32 peer_addr;
 
 	if (!info->attrs[IPOE_ATTR_IFINDEX])
 		return -EINVAL;
+
+	/* IPV4_DEVCONF updates need rtnl; take it before ipoe_wlock. */
+	if (info->attrs[IPOE_ATTR_ADDR]) {
+		rtnl_lock();
+		need_rtnl = 1;
+	}
 
 	down(&ipoe_wlock);
 
@@ -1630,17 +1724,22 @@ static int ipoe_nl_cmd_modify(struct sk_buff *skb, struct genl_info *info)
 
 			if (!link_dev)
 				goto out_unlock;
+			if (link_dev->type != ARPHRD_ETHER) {
+				dev_put(link_dev);
+				ret = -EINVAL;
+				goto out_unlock;
+			}
 		} else
 			link_dev = NULL;
 
 		old_dev = ses->link_dev;
-		ses->link_dev = link_dev;
+		rcu_assign_pointer(ses->link_dev, link_dev);
 
 		if (old_dev) {
-			dev_put(old_dev);
 			list_del_rcu(&ses->entry3);
 			ses->u.hwaddr_u = 0;
 			synchronize_rcu();
+			dev_put(old_dev);
 		}
 
 		if (link_dev) {
@@ -1652,6 +1751,7 @@ static int ipoe_nl_cmd_modify(struct sk_buff *skb, struct genl_info *info)
 #endif
 			memcpy(dev->broadcast, link_dev->broadcast, ETH_ALEN);
 		}
+		ipoe_update_link_headroom(dev, link_dev);
 	}
 
 	if (info->attrs[IPOE_ATTR_ADDR]) {
@@ -1685,6 +1785,8 @@ static int ipoe_nl_cmd_modify(struct sk_buff *skb, struct genl_info *info)
 
 out_unlock:
 	up(&ipoe_wlock);
+	if (need_rtnl)
+		rtnl_unlock();
 	return ret;
 }
 
@@ -1835,6 +1937,11 @@ static int ipoe_nl_cmd_add_interface(struct sk_buff *skb, struct genl_info *info
 	if (!dev) {
 		rtnl_unlock();
 		return -ENODEV;
+	}
+
+	if (dev->type != ARPHRD_ETHER) {
+		rtnl_unlock();
+		return -EINVAL;
 	}
 
 	i = kmalloc(sizeof(*i), GFP_KERNEL);
@@ -2096,6 +2203,61 @@ static const struct net_device_ops ipoe_netdev_ops = {
 #endif
 };
 
+/* Release held link_dev refs and rx_handlers so parent unregister can finish. */
+static int ipoe_netdev_event(struct notifier_block *this,
+			     unsigned long event, void *ptr)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
+	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
+#else
+	struct net_device *dev = ptr;
+#endif
+	struct ipoe_session *ses;
+	struct ipoe_iface *i, *tmp;
+
+	if (event != NETDEV_UNREGISTER)
+		return NOTIFY_DONE;
+
+	if (!net_eq(dev_net(dev), &init_net))
+		return NOTIFY_DONE;
+
+	list_for_each_entry_safe(i, tmp, &ipoe_interfaces, entry) {
+		if (i->ifindex != dev->ifindex)
+			continue;
+
+		if (rcu_dereference(dev->rx_handler) == ipoe_recv)
+			netdev_rx_handler_unregister(dev);
+
+		list_del(&i->entry);
+		kfree_rcu(i, rcu_head);
+		break;
+	}
+
+	down(&ipoe_wlock);
+	list_for_each_entry(ses, &ipoe_list2, entry2) {
+		if (ses->link_dev != dev)
+			continue;
+
+		if (ses->u.hwaddr_u) {
+			list_del_rcu(&ses->entry3);
+			ses->u.hwaddr_u = 0;
+		}
+		rcu_assign_pointer(ses->link_dev, NULL);
+		/* Drop the ref that kept unregister waiting; no further
+		 * synchronize here - notifier already runs under rtnl before
+		 * netdev_wait_allrefs(). */
+		dev_put(dev);
+		ipoe_update_link_headroom(ses->dev, NULL);
+	}
+	up(&ipoe_wlock);
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block ipoe_netdev_notifier = {
+	.notifier_call = ipoe_netdev_event,
+};
+
 /*static struct pernet_operations ipoe_net_ops = {
 	.init = ipoe_init_net,
 	.exit = ipoe_exit_net,
@@ -2123,9 +2285,16 @@ static int __init ipoe_init(void)
 	skb_queue_head_init(&ipoe_queue);
 	INIT_WORK(&ipoe_queue_work, ipoe_process_queue);
 
+	err = register_netdevice_notifier(&ipoe_netdev_notifier);
+	if (err < 0) {
+		printk(KERN_INFO "ipoe: can't register netdevice notifier\n");
+		return err;
+	}
+
 	err = rtnl_link_register(&ipoe_link_ops);
 	if (err < 0) {
 		printk(KERN_INFO "ipoe: can't register link operations\n");
+		unregister_netdevice_notifier(&ipoe_netdev_notifier);
 		return err;
 	}
 
@@ -2139,6 +2308,7 @@ static int __init ipoe_init(void)
 	if (err < 0) {
 		printk(KERN_INFO "ipoe: can't register netlink interface\n");
 		rtnl_link_unregister(&ipoe_link_ops);
+		unregister_netdevice_notifier(&ipoe_netdev_notifier);
 		return err;
 	}
 
@@ -2148,6 +2318,7 @@ static int __init ipoe_init(void)
 		printk(KERN_INFO "ipoe: can't register netlink multicast group\n");
 		genl_unregister_family(&ipoe_nl_family);
 		rtnl_link_unregister(&ipoe_link_ops);
+		unregister_netdevice_notifier(&ipoe_netdev_notifier);
 		return err;
 	}
 #endif
@@ -2189,15 +2360,24 @@ static void __exit ipoe_fini(void)
 	}
 	rtnl_unlock();
 
+	unregister_netdevice_notifier(&ipoe_netdev_notifier);
+
 	synchronize_net();
 
-	flush_work(&ipoe_queue_work);
-	skb_queue_purge(&ipoe_queue);
+	/* Stop the timer first so it cannot re-queue work onto unmapped text
+	 * after the work item has been flushed. */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0)
-	del_timer(&ipoe_timer_u);
+	del_timer_sync(&ipoe_timer_u);
 #else
-	timer_delete(&ipoe_timer_u);
+	timer_delete_sync(&ipoe_timer_u);
 #endif
+	cancel_work_sync(&ipoe_queue_work);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0)
+	del_timer_sync(&ipoe_timer_u);
+#else
+	timer_delete_sync(&ipoe_timer_u);
+#endif
+	skb_queue_purge(&ipoe_queue);
 
 	for (i = 0; i <= IPOE_HASH_BITS; i++)
 		rcu_assign_pointer(ipoe_list[i].next, &ipoe_list[i]);
@@ -2208,8 +2388,7 @@ static void __exit ipoe_fini(void)
 		ses = list_entry(ipoe_list2.next, typeof(*ses), entry2);
 		list_del(&ses->entry2);
 
-		if (ses->link_dev)
-			dev_put(ses->link_dev);
+		ipoe_link_dev_clear(ses);
 
 		unregister_netdev(ses->dev);
 	}
