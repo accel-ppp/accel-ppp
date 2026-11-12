@@ -252,8 +252,10 @@ static int load_history(struct telnet_client_t *cln)
 	struct buffer_t *b = list_entry(cln->history_pos, typeof(*b), entry);
 	if (b->size < cln->cmdline_len) {
 		memset(temp_buf, '\b', cln->cmdline_len - b->size);
-		memset(temp_buf + cln->cmdline_len - b->size, ' ', cln->cmdline_len - b->size);
-		if (telnet_send(cln, temp_buf, (cln->cmdline_len - b->size) * 2))
+		if (telnet_send(cln, temp_buf, cln->cmdline_len - b->size))
+			return -1;
+		memset(temp_buf, ' ', cln->cmdline_len - b->size);
+		if (telnet_send(cln, temp_buf, cln->cmdline_len - b->size))
 			return -1;
 	}
 	if (telnet_send(cln, "\r", 1))
@@ -286,7 +288,7 @@ static int telnet_input_char(struct telnet_client_t *cln, uint8_t c)
 		}
 
 		if (!cln->auth) {
-			if (strcmp((char *)cln->cmdline, conf_cli_passwd)) {
+			if (conf_cli_passwd && strcmp((char *)cln->cmdline, conf_cli_passwd)) {
 				if (telnet_send(cln, MSG_AUTH_FAILED, sizeof(MSG_AUTH_FAILED)))
 					return -1;
 				cln->disconnect = 1;
@@ -323,7 +325,7 @@ static int telnet_input_char(struct telnet_client_t *cln, uint8_t c)
 	if (cln->telcmd) {
 		if (cln->cmdline_pos2 == RECV_BUF_SIZE - 1) {
 			log_error("cli: buffer overflow, dropping connection ...\n");
-			disconnect(cln);
+			cln->disconnect = 1;
 			return -1;
 		}
 
@@ -353,7 +355,7 @@ static int telnet_input_char(struct telnet_client_t *cln, uint8_t c)
 	} else if (cln->esc) {
 		if (cln->cmdline_pos2 == RECV_BUF_SIZE - 1) {
 			log_error("cli: buffer overflow, dropping connection ...\n");
-			disconnect(cln);
+			cln->disconnect = 1;
 			return -1;
 		}
 
@@ -598,9 +600,11 @@ static int serv_read(struct triton_md_handler_t *h)
 
 		pthread_mutex_lock(&history_lock);
 		list_for_each_entry(b, &history, entry) {
-			b2 = _malloc(sizeof(*b));
-			b2->p_buf = b;
+			/* Keep a private snapshot when global history is evicted. */
+			b2 = _malloc(sizeof(*b) + b->size + 1);
+			b2->p_buf = b2;
 			b2->size = b->size;
+			memcpy(b2->buf, b->buf, b->size);
 			list_add(&b2->entry, conn->history.next);
 		}
 		pthread_mutex_unlock(&history_lock);
