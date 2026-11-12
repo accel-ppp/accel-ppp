@@ -79,7 +79,7 @@ int __export vlan_mon_add(int ifindex, uint16_t proto, long *mask, int len)
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_VLAN_MASK, mask, len);
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_PROTO, &proto, 2);
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 ) {
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0 ) {
 		log_error("vlan_mon: nl_add_vlan_mon: error talking to kernel\n");
 		r = -1;
 	}
@@ -120,7 +120,7 @@ int __export vlan_mon_add_vid(int ifindex, uint16_t proto, uint16_t vid)
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_VID, &vid, 2);
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_PROTO, &proto, 2);
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 ) {
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0 ) {
 		log_error("vlan_mon: nl_add_vlan_mon_vid: error talking to kernel\n");
 		r = -1;
 	}
@@ -161,7 +161,7 @@ int __export vlan_mon_del_vid(int ifindex, uint16_t proto, uint16_t vid)
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_VID, &vid, 2);
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_PROTO, &proto, 2);
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 ) {
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0 ) {
 		log_error("vlan_mon: nl_add_vlan_mon_vid: error talking to kernel\n");
 		r = -1;
 	}
@@ -201,7 +201,7 @@ int __export vlan_mon_del(int ifindex, uint16_t proto)
 	addattr32(nlh, 1024, VLAN_MON_ATTR_IFINDEX, ifindex);
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_PROTO, &proto, 2);
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 ) {
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0 ) {
 		log_error("vlan_mon: nl_del_vlan_mon: error talking to kernel\n");
 		r = -1;
 	}
@@ -232,7 +232,7 @@ void vlan_mon_clean()
 	ghdr = NLMSG_DATA(&req.n);
 	ghdr->cmd = VLAN_MON_CMD_DEL;
 
-	rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0);
+	rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0);
 
 	rtnl_close(&rth);
 }
@@ -267,7 +267,7 @@ int __export vlan_mon_check_busy(int ifindex, uint16_t vid)
 	addattr32(nlh, 1024, VLAN_MON_ATTR_IFINDEX, ifindex);
 	addattr_l(nlh, 1024, VLAN_MON_ATTR_VID, &vid, 2);
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 1) < 0 ) {
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 1) < 0 ) {
 		if (errno == EBUSY)
 			r = -1;
 	}
@@ -303,8 +303,9 @@ static void vlan_mon_handler(const struct sockaddr_nl *addr, struct nlmsghdr *h)
 
 		parse_rtattr_nested(tb2, VLAN_MON_ATTR_MAX, tb[i]);
 
-		//if (!tb2[VLAN_MON_ATTR_IFINDEX] || !tb2[VLAN_MON_ATTR_VID] || !t)
-		//	continue;
+		if (!tb2[VLAN_MON_ATTR_IFINDEX] || !tb2[VLAN_MON_ATTR_VID] ||
+		    !tb2[VLAN_MON_ATTR_PROTO])
+			continue;
 
 		ifindex = *(uint32_t *)(RTA_DATA(tb2[VLAN_MON_ATTR_IFINDEX]));
 		vid = *(uint16_t *)(RTA_DATA(tb2[VLAN_MON_ATTR_VID]));
@@ -372,16 +373,22 @@ static int vlan_mon_mc_read(struct triton_md_handler_t *h)
 			return 0;
 		}
 
-		for (hdr = (struct nlmsghdr*)buf; status >= sizeof(*hdr); ) {
+		for (hdr = (struct nlmsghdr*)buf; status >= (int)sizeof(*hdr); ) {
 			int len = hdr->nlmsg_len;
-			int l = len - sizeof(*h);
+			int l = len - (int)sizeof(*hdr);
 
-			if (l<0 || len>status) {
-				if (msg.msg_flags & MSG_TRUNC) {
+			if (l < 0 || len > status) {
+				if (msg.msg_flags & MSG_TRUNC)
 					log_warn("vlan_mon: truncated netlink message\n");
-					continue;
-				}
-				log_error("vlan_mon: malformed netlink message\n");
+				else
+					log_error("vlan_mon: malformed netlink message\n");
+				/* Do not continue without advancing: that spins forever. */
+				break;
+			}
+
+			if (nladdr.nl_pid) {
+				status -= NLMSG_ALIGN(len);
+				hdr = (struct nlmsghdr*)((char*)hdr + NLMSG_ALIGN(len));
 				continue;
 			}
 
@@ -532,8 +539,16 @@ static void init(void)
 		return;
 	}
 
-	if (rtnl_open_byproto(&rth, 1 << (mcg_id - 1), NETLINK_GENERIC)) {
+	if (rtnl_open_byproto(&rth, 0, NETLINK_GENERIC)) {
 		log_error("vlan_mon: cannot open generic netlink socket\n");
+		vlan_mon_genl_id = -1;
+		return;
+	}
+
+	if (setsockopt(rth.fd, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP,
+		       &mcg_id, sizeof(mcg_id)) < 0) {
+		log_error("vlan_mon: failed to join multicast group: %s\n", strerror(errno));
+		rtnl_close(&rth);
 		vlan_mon_genl_id = -1;
 		return;
 	}
