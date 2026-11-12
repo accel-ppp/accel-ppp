@@ -208,7 +208,7 @@ static int def_move_link(struct ap_net *new_net, int ifindex)
 
 	addattr_l(&req.n, 4096, IFLA_NET_NS_FD, &n->ns_fd, sizeof(n->ns_fd));
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 	net->rtnl_put(rth);
@@ -268,7 +268,7 @@ static int def_set_vrf(int ifindex, int vrf_ifindex)
 
 	addattr_l(&req.n, sizeof(req), IFLA_MASTER, &vrf_ifindex, sizeof(vrf_ifindex));
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0) {
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0) {
 		log_ppp_error("def_set_vrf rtnl_talk failed\n");
 		r = -1;
 	}
