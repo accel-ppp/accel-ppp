@@ -390,6 +390,10 @@ static struct ipoe_session *ipoe_session_lookup(struct ipoe_serv *serv, struct d
 		return res;
 
 	list_for_each_entry(ses, &serv->sessions, entry) {
+		/* First loop left opt82_match at 0 for the MAC hit; reset so the
+		 * Option 82 comparisons below are not dead code. */
+		opt82_match = 1;
+
 		if (agent_circuit_id && !ses->agent_circuit_id)
 			continue;
 
@@ -1852,7 +1856,11 @@ static int check_notify(struct ipoe_serv *serv, struct dhcpv4_packet *pack)
 
 	list_for_each_entry(ses, &serv->sessions, entry) {
 		if (ses->xid == pack->hdr->xid && memcmp(pack->hdr->chaddr, ses->hwaddr, ETH_ALEN) == 0) {
-			if (w < ses->weight || ses->weight == 0 || (w == ses->weight && memcmp(serv->hwaddr, opt->data + 8, ETH_ALEN) < 0)) {
+			/* weight 0 means clustering is unused; never terminate on notify */
+			if (ses->weight &&
+			    (w < ses->weight ||
+			     (w == ses->weight &&
+			      memcmp(serv->hwaddr, opt->data + 8, ETH_ALEN) < 0))) {
 				log_debug("ipoe: terminate %s by weight %u (%u)\n", ses->ses.ifname, w, ses->weight);
 				triton_context_call(&ses->ctx, (triton_event_func)__terminate, &ses->ses);
 			}
