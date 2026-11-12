@@ -407,6 +407,9 @@ int main(int _argc, char **_argv)
 	sa.sa_handler = config_reload;
 	sa.sa_mask = set;
 	sigaction(SIGUSR1, &sa, NULL);
+	/* Same deferred reload path as SIGUSR1 so log targets reopen outside
+	 * signal context (replaces the old log.c SIGHUP handler). */
+	sigaction(SIGHUP, &sa, NULL);
 
 	if (!no_sigsegv) {
 		sa.sa_handler = sigsegv;

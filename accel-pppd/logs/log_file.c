@@ -452,33 +452,65 @@ static void ev_ses_authorized2(struct ap_session *ses)
 	mempool_free(fpd);
 }
 
+/* Reject empty names and anything that would escape per-user-dir. */
+static int log_path_component_ok(const char *s)
+{
+	if (!s || !*s)
+		return 0;
+	if (strchr(s, '/'))
+		return 0;
+	if (!strcmp(s, ".") || !strcmp(s, ".."))
+		return 0;
+	return 1;
+}
+
 static void ev_ses_authorized1(struct ap_session *ses)
 {
 	struct log_file_pd_t *lpd;
 	char *fname;
+	int n;
 
 	lpd = find_lpd(ses, &pd_key1);
 	if (!lpd)
 		return;
 
-	fname = _malloc(PATH_MAX);
-	if (!fname) {
-		log_emerg("log_file: out of memory\n");
+	if (!log_path_component_ok(ses->username)) {
+		log_emerg("log_file: invalid username for per-user log\n");
+		free_lpd(lpd);
 		return;
 	}
 
-	strcpy(fname, conf_per_user_dir);
-	strcat(fname, "/");
-	strcat(fname, ses->username);
+	fname = _malloc(PATH_MAX);
+	if (!fname) {
+		log_emerg("log_file: out of memory\n");
+		free_lpd(lpd);
+		return;
+	}
+
 	if (conf_per_session) {
+		if (!log_path_component_ok(ses->sessionid)) {
+			log_emerg("log_file: invalid session id for per-user log\n");
+			goto out_err;
+		}
+
+		n = snprintf(fname, PATH_MAX, "%s/%s", conf_per_user_dir, ses->username);
+		if (n < 0 || n >= PATH_MAX)
+			goto out_err_len;
+
 		if (mkdir(fname, S_IRWXU) && errno != EEXIST) {
 			log_emerg("log_file: mkdir '%s': %s'\n", fname, strerror(errno));
 			goto out_err;
 		}
-		strcat(fname, "/");
-		strcat(fname, ses->sessionid);
+
+		n = snprintf(fname, PATH_MAX, "%s/%s/%s.log",
+			     conf_per_user_dir, ses->username, ses->sessionid);
+	} else {
+		n = snprintf(fname, PATH_MAX, "%s/%s.log",
+			     conf_per_user_dir, ses->username);
 	}
-	strcat(fname, ".log");
+
+	if (n < 0 || n >= PATH_MAX)
+		goto out_err_len;
 
 	if (log_file_open(&lpd->lf, fname))
 		goto out_err;
@@ -492,6 +524,8 @@ static void ev_ses_authorized1(struct ap_session *ses)
 
 	return;
 
+out_err_len:
+	log_emerg("log_file: per-user log path too long\n");
 out_err:
 	_free(fname);
 	free_lpd(lpd);

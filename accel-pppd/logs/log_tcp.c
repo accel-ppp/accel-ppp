@@ -200,7 +200,7 @@ static void start_connect(struct tcp_target_t *t)
 	t->hnd.write = log_tcp_connect;
 	t->hnd.fd = socket(PF_INET, SOCK_STREAM, 0);
 
-	if (!t->hnd.fd) {
+	if (t->hnd.fd < 0) {
 		log_emerg("log-tcp: socket: %s\n", strerror(errno));
 		return;
 	}

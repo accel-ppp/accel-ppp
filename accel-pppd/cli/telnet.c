@@ -710,7 +710,7 @@ static void save_history_file(void)
 	struct buffer_t *b;
 
 	fd = open(conf_history_file, O_WRONLY | O_TRUNC | O_CREAT, S_IREAD | S_IWRITE);
-	if (!fd)
+	if (fd < 0)
 		return;
 
 	list_for_each_entry(b, &history, entry) {

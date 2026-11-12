@@ -320,7 +320,20 @@ static struct ap_net *alloc_net(const char *name)
 
 	if (name) {
 		char fname[PATH_MAX];
-		sprintf(fname, "%s/%s", conf_netns_run_dir, name);
+		int n;
+
+		if (!*name || strchr(name, '/') ||
+		    !strcmp(name, ".") || !strcmp(name, "..")) {
+			log_ppp_error("invalid netns name '%s'\n", name);
+			return NULL;
+		}
+
+		n = snprintf(fname, sizeof(fname), "%s/%s", conf_netns_run_dir, name);
+		if (n < 0 || n >= (int)sizeof(fname)) {
+			log_ppp_error("netns path too long\n");
+			return NULL;
+		}
+
 		ns_fd = open(fname, O_RDONLY);
 		if (ns_fd == -1) {
 			log_ppp_error("open %s: %s\n", fname, strerror(errno));
