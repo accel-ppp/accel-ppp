@@ -64,7 +64,12 @@ static void* sigchld_thread(void *arg)
 		}
 		pthread_mutex_unlock(&handlers_lock);
 		if (h0) {
-			h0->handler(h0, WEXITSTATUS(status));
+			if (WIFEXITED(status))
+				h0->handler(h0, WEXITSTATUS(status));
+			else if (WIFSIGNALED(status))
+				h0->handler(h0, 128 + WTERMSIG(status));
+			else
+				h0->handler(h0, -1);
 			h0->pid = 0;
 			pthread_mutex_unlock(&h0->lock);
 		}
