@@ -38,7 +38,7 @@ static void devconf(struct ap_session *ses, const char *attr, const char *val)
 
 	sprintf(fname, "/proc/sys/net/ipv6/conf/%s/%s", ses->ifname, attr);
 	fd = open(fname, O_WRONLY);
-	if (!fd) {
+	if (fd < 0) {
 		log_ppp_error("failed to open '%s': %s\n", fname, strerror(errno));
 		return;
 	}
@@ -257,8 +257,18 @@ int __export ap_session_rename(struct ap_session *ses, const char *ifname, int l
 
 	for (i = 0; i < len; i++) {
 		if (ifname[i] == '/') {
+			if (i == 0 || i >= (int)sizeof(ns_name)) {
+				log_ppp_error("invalid namespace name\n");
+				return -1;
+			}
+
 			memcpy(ns_name, ifname, i);
 			ns_name[i] = 0;
+
+			if (!strcmp(ns_name, ".") || !strcmp(ns_name, "..")) {
+				log_ppp_error("invalid namespace name\n");
+				return -1;
+			}
 
 			ns = ap_net_open_ns(ns_name);
 			if (!ns)
@@ -272,7 +282,7 @@ int __export ap_session_rename(struct ap_session *ses, const char *ifname, int l
 
 	if (len >= IFNAMSIZ) {
 		log_ppp_error("cannot rename interface (name is too long)\n");
-		return -1;
+		goto err_ns;
 	}
 
 	if (len) {
@@ -305,12 +315,12 @@ int __export ap_session_rename(struct ap_session *ses, const char *ifname, int l
 				r = net->sock_ioctl(SIOCGIFNAME, &ifr);
 				if (r < 0) {
 					log_ppp_error("failed to get new interface name: %s\n", strerror(errno));
-					return -1;
+					goto err_ns;
 				}
 				len = strnlen(ifr.ifr_name, IFNAMSIZ);
 				if (len >= IFNAMSIZ) {
 					log_ppp_error("cannot rename interface (name is too long)\n");
-					return -1;
+					goto err_ns;
 				}
 				ifr.ifr_name[len] = 0;
 				ifname = ifr.ifr_name;
@@ -329,6 +339,8 @@ int __export ap_session_rename(struct ap_session *ses, const char *ifname, int l
 			ns->release(ns);
 			return -1;
 		}
+		if (ses->net && ses->net != ns)
+			ses->net->release(ses->net);
 		ses->net = ns;
 		net = ns;
 
@@ -344,6 +356,11 @@ int __export ap_session_rename(struct ap_session *ses, const char *ifname, int l
 	}
 
 	return 0;
+
+err_ns:
+	if (ns)
+		ns->release(ns);
+	return -1;
 }
 
 #ifdef HAVE_VRF

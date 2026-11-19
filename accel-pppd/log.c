@@ -523,7 +523,7 @@ void __export log_register_target(struct log_target_t *t)
 	list_add_tail(&t->entry, &targets);
 }
 
-static void sighup(int n)
+static void reopen_targets(void)
 {
 	struct log_target_t *t;
 
@@ -565,14 +565,14 @@ static void load_config(void)
 		fclose(debug_file);
 		debug_file = NULL;
 	}
+
+	/* Reopen targets from the reload path instead of a SIGHUP handler,
+	 * so locks are not taken in signal context. */
+	reopen_targets();
 }
 
 static void log_init(void)
 {
-	struct sigaction sa = {
-		.sa_handler = sighup,
-	};
-
 	pthread_key_create(&stat_buf_key, stat_buf_free);
 
 	msg_pool = mempool_create(sizeof(struct log_msg_t));
@@ -582,8 +582,6 @@ static void log_init(void)
 	load_config();
 
 	triton_event_register_handler(EV_CONFIG_RELOAD, (triton_event_func)load_config);
-
-	sigaction(SIGHUP, &sa, NULL);
 }
 
 DEFINE_INIT(0, log_init);
