@@ -117,10 +117,12 @@ static void wins1_print(void (*print)(const char *fmt, ...), struct ipcp_option_
 	struct ipcp_opt32_t *opt32 = (struct ipcp_opt32_t *)ptr;
 	struct in_addr in;
 
-	if (ptr)
+	if (ptr && opt32->hdr.len >= sizeof(*opt32))
 		in.s_addr = opt32->val;
-	else
+	else if (!ptr)
 		in.s_addr = wins_opt->addr;
+	else
+		in.s_addr = 0;
 
 	print("<wins1 %s>", inet_ntoa(in));
 }
@@ -131,10 +133,12 @@ static void wins2_print(void (*print)(const char *fmt, ...), struct ipcp_option_
 	struct ipcp_opt32_t *opt32 = (struct ipcp_opt32_t *)ptr;
 	struct in_addr in;
 
-	if (ptr)
+	if (ptr && opt32->hdr.len >= sizeof(*opt32))
 		in.s_addr = opt32->val;
-	else
+	else if (!ptr)
 		in.s_addr = wins_opt->addr;
+	else
+		in.s_addr = 0;
 
 	print("<wins2 %s>", inet_ntoa(in));
 }

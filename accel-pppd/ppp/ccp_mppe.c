@@ -270,13 +270,12 @@ static void mppe_print(void (*print)(const char *fmt,...),struct ccp_option_t *o
 	struct ccp_opt32_t *opt32 = (struct ccp_opt32_t *)ptr;
 	uint32_t bits;
 
-	if (ptr)
+	if (ptr && opt32->hdr.len >= sizeof(*opt32))
 		bits = ntohl(opt32->val);
+	else if (!ptr && mppe_opt->mppe)
+		bits = MPPE_S | MPPE_H;
 	else
-		if (mppe_opt->mppe)
-			bits = MPPE_S | MPPE_H;
-		else
-			bits = 0;
+		bits = 0;
 
 	print("<mppe %sH %sM %sS %sL %sD %sC>",
 		(bits & MPPE_H) ? "+" : "-",

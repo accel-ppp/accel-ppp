@@ -153,10 +153,12 @@ static void mru_print(void (*print)(const char *fmt, ...), struct lcp_option_t *
 	struct mru_option_t *mru_opt = container_of(opt, typeof(*mru_opt), opt);
 	struct lcp_opt16_t *opt16 = (struct lcp_opt16_t*)ptr;
 
-	if (ptr)
+	if (ptr && opt16->hdr.len >= sizeof(*opt16))
 		print("<mru %i>", ntohs(opt16->val));
-	else
+	else if (!ptr)
 		print("<mru %i>", mru_opt->mru);
+	else
+		print("<mru>");
 }
 
 static void load_config(void)
