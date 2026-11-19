@@ -314,9 +314,16 @@ static void send_conf_ack(struct ppp_fsm_t *fsm)
 static void send_conf_nak(struct ppp_fsm_t *fsm)
 {
 	struct ppp_ipcp_t *ipcp = container_of(fsm, typeof(*ipcp), fsm);
-	uint8_t *buf = _malloc(ipcp->conf_req_len), *ptr = buf, *ptr1;
+	/* The peer may request the same option more than once. */
+	uint8_t *buf = _malloc(ipcp->ropt_len + sizeof(struct ipcp_hdr_t)), *ptr = buf, *ptr1;
 	struct ipcp_hdr_t *ipcp_hdr = (struct ipcp_hdr_t*)ptr;
 	struct recv_opt_t *ropt;
+
+	if (!buf) {
+		log_ppp_error("IPCP: no memory for ConfNak\n");
+		ap_session_terminate(&ipcp->ppp->ses, TERM_NAS_ERROR, 0);
+		return;
+	}
 
 	if (conf_ppp_verbose)
 		log_ppp_info2("send [IPCP ConfNak id=%x", ipcp->fsm.recv_id);
@@ -409,6 +416,14 @@ static int ipcp_recv_conf_req(struct ppp_ipcp_t *ipcp, uint8_t *data, int size)
 			log_ppp_warn("IPCP: ConfReq: invalid length %i of option %i (%i bytes left)\n",
 				     hdr->len, hdr->id, size);
 			return IPCP_OPT_FAIL;
+		}
+
+		list_for_each_entry(ropt, &ipcp->ropt_list, entry) {
+			if (ropt->hdr->id == hdr->id) {
+				log_ppp_warn("IPCP: ConfReq: option %i appears more than once\n",
+					     hdr->id);
+				return IPCP_OPT_FAIL;
+			}
 		}
 
 		ropt = _malloc(sizeof(*ropt));

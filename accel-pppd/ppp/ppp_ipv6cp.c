@@ -318,9 +318,16 @@ static void send_conf_ack(struct ppp_fsm_t *fsm)
 static void send_conf_nak(struct ppp_fsm_t *fsm)
 {
 	struct ppp_ipv6cp_t *ipv6cp = container_of(fsm, typeof(*ipv6cp), fsm);
-	uint8_t *buf = _malloc(ipv6cp->conf_req_len), *ptr = buf, *ptr1;
+	/* The peer may request the same option more than once. */
+	uint8_t *buf = _malloc(ipv6cp->ropt_len + sizeof(struct ipv6cp_hdr_t)), *ptr = buf, *ptr1;
 	struct ipv6cp_hdr_t *ipv6cp_hdr = (struct ipv6cp_hdr_t*)ptr;
 	struct recv_opt_t *ropt;
+
+	if (!buf) {
+		log_ppp_error("IPV6CP: no memory for ConfNak\n");
+		ap_session_terminate(&ipv6cp->ppp->ses, TERM_NAS_ERROR, 0);
+		return;
+	}
 
 	if (conf_ppp_verbose)
 		log_ppp_info2("send [IPV6CP ConfNak id=%x", ipv6cp->fsm.recv_id);
@@ -413,6 +420,14 @@ static int ipv6cp_recv_conf_req(struct ppp_ipv6cp_t *ipv6cp, uint8_t *data, int 
 			log_ppp_warn("IPV6CP: ConfReq: invalid length %i of option %i (%i bytes left)\n",
 				     hdr->len, hdr->id, size);
 			return IPV6CP_OPT_FAIL;
+		}
+
+		list_for_each_entry(ropt, &ipv6cp->ropt_list, entry) {
+			if (ropt->hdr->id == hdr->id) {
+				log_ppp_warn("IPV6CP: ConfReq: option %i appears more than once\n",
+					     hdr->id);
+				return IPV6CP_OPT_FAIL;
+			}
 		}
 
 		ropt = _malloc(sizeof(*ropt));
