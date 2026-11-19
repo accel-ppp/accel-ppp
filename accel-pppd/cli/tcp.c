@@ -170,7 +170,7 @@ static int cln_read(struct triton_md_handler_t *h)
 			*d = 0;
 
 			if (!cln->auth) {
-				if (strcmp((char *)cln->cmdline, conf_cli_passwd))
+				if (conf_cli_passwd && strcmp((char *)cln->cmdline, conf_cli_passwd))
 					goto disconn_hard;
 				cln->auth = 1;
 			} else {
@@ -187,6 +187,7 @@ static int cln_read(struct triton_md_handler_t *h)
 
 			cln->recv_pos -= (uint8_t *)d + 1 - cln->cmdline;
 			memmove(cln->cmdline, d + 1, cln->recv_pos);
+			cln->cmdline[cln->recv_pos] = '\0';
 		}
 	}
 
