@@ -200,11 +200,12 @@ static int terminate_exec2(int key, char * const *f, int f_cnt, void *cli)
 					continue;
 				break;
 			case 1:
-				if (ses->ipv4 && ses->ipv4->peer_addr != ipaddr)
+				if (!ses->ipv4 || ses->ipv4->peer_addr != ipaddr)
 					continue;
 				break;
 			case 2:
-				if (strcmp(ses->ctrl->calling_station_id, f[2]))
+				if (!ses->ctrl->calling_station_id ||
+				    strcmp(ses->ctrl->calling_station_id, f[2]))
 					continue;
 				break;
 			case 3:
