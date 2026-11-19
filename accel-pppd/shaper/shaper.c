@@ -109,7 +109,7 @@ static LIST_HEAD(time_range_list);
 static int time_range_id = 0;
 
 #define MAX_IDX 65536
-static long *idx_map;
+static unsigned long *idx_map;
 
 static void shaper_ctx_close(struct triton_context_t *);
 static struct triton_context_t shaper_ctx = {
@@ -121,22 +121,22 @@ static int alloc_idx(int init)
 {
 	int i, p = 0;
 
-	init %= MAX_IDX;
+	init = (unsigned int)init % MAX_IDX;
 
 	pthread_rwlock_wrlock(&shaper_lock);
-	if (idx_map[init / __BITS_PER_LONG] & (1 << (init % __BITS_PER_LONG))) {
+	if (idx_map[init / __BITS_PER_LONG] & (1UL << (init % __BITS_PER_LONG))) {
 		i = init / __BITS_PER_LONG;
 		p = (init % __BITS_PER_LONG) + 1;
 	} else {
 		for (i = init / __BITS_PER_LONG; i < MAX_IDX / __BITS_PER_LONG; i++) {
-			p = ffs(idx_map[i]);
+			p = ffsl(idx_map[i]);
 			if (p)
 				break;
 		}
 
 		if (!p) {
 			for (i = 0; i < init / __BITS_PER_LONG; i++) {
-				p = ffs(idx_map[i]);
+				p = ffsl(idx_map[i]);
 				if (p)
 					break;
 			}
@@ -144,7 +144,7 @@ static int alloc_idx(int init)
 	}
 
 	if (p)
-		idx_map[i] &= ~(1 << (p - 1));
+		idx_map[i] &= ~(1UL << (p - 1));
 
 	pthread_rwlock_unlock(&shaper_lock);
 
@@ -156,7 +156,7 @@ static int alloc_idx(int init)
 
 static void free_idx(int idx)
 {
-	idx_map[idx / __BITS_PER_LONG] |= 1 << (idx % __BITS_PER_LONG);
+	idx_map[idx / __BITS_PER_LONG] |= 1UL << (idx % __BITS_PER_LONG);
 }
 
 static struct shaper_pd_t *find_pd(struct ap_session *ses, int create)
@@ -1199,7 +1199,7 @@ static void init(void)
 
 	idx_map = mmap(NULL, MAX_IDX/8, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	memset(idx_map, 0xff, MAX_IDX/8);
-	idx_map[0] &= ~3;
+	idx_map[0] &= ~3UL;
 
 	opt = conf_get_opt("shaper", "ifb");
 	if (opt && init_ifb(opt))
