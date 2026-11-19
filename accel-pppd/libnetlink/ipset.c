@@ -62,7 +62,7 @@ static int __ipset_cmd(const char *name, in_addr_t addr, int cmd, int flags)
 
 	addattr_nest_end(&req.n, tail1);
 
-	if (rtnl_talk(&rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(&rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		goto out_err;
 
 	rtnl_close(&rth);
@@ -113,7 +113,7 @@ int __export ipset_flush(const char *name)
 	addattr_l(&req.n, 4096, IPSET_ATTR_PROTOCOL, &protocol, 1);
 	addattr_l(&req.n, 4096, IPSET_ATTR_SETNAME, name, strlen(name) + 1);
 
-	if (rtnl_talk(&rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(&rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		goto out_err;
 
 	rtnl_close(&rth);

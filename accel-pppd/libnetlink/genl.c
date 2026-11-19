@@ -50,7 +50,7 @@ int __export genl_resolve_mcg(const char *family, const char *name, int *fam_id)
 
 	addattr_l(nlh, 128, CTRL_ATTR_FAMILY_NAME, family, strlen(family) + 1);
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 ) {
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0 ) {
 		log_error("genl: error talking to kernel\n");
 		goto out;
 	}

@@ -140,7 +140,7 @@ int tc_qdisc_modify(struct rtnl_handle *rth, int ifindex, int cmd, unsigned flag
 	if (opt->qdisc)
 		opt->qdisc(opt, &req.n);
 
- 	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, cmd == RTM_DELQDISC) < 0)
+ 	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, cmd == RTM_DELQDISC) < 0)
 		return -1;
 
 	return 0;
@@ -210,7 +210,7 @@ static int install_police_clsact(struct rtnl_handle *rth, int ifindex, int rate,
 
 	tail->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)tail;
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		return -1;
 
 	return 0;
@@ -360,7 +360,7 @@ static int install_police(struct rtnl_handle *rth, int ifindex, int rate, int bu
 	addattr_l(&req.n, MAX_MSG, TCA_U32_SEL, &sel, sizeof(sel));
 	tail->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)tail;
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		return -1;
 
 	return 0;
@@ -473,7 +473,7 @@ static int install_htb_ifb(struct rtnl_handle *rth, int ifindex, __u32 priority,
 	addattr_l(&req.n, MAX_MSG, TCA_U32_SEL, &sel, sizeof(sel));
 	tail->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)tail;
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		return -1;
 
 	return 0;
@@ -505,7 +505,7 @@ static int install_fwmark(struct rtnl_handle *rth, int ifindex, int parent)
 	addattr_l(&req.n, TCA_BUF_MAX, TCA_OPTIONS, NULL, 0);
 	addattr32(&req.n, TCA_BUF_MAX, TCA_FW_CLASSID, TC_H_MAKE(1 << 16, 0));
 	tail->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)tail;
-	return rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0);
+	return rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0);
 }
 
 static int remove_root(struct rtnl_handle *rth, int ifindex)
@@ -689,7 +689,7 @@ int init_ifb(const char *name)
 	addattr32(&req.n, TCA_BUF_MAX, TCA_FLOW_MODE, FLOW_MODE_MAP);
 	tail->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)tail;
 
-	r = rtnl_talk(&rth, &req.n, 0, 0, NULL, NULL, NULL, 0);
+	r = rtnl_talk(&rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0);
 
 out:
 	rtnl_close(&rth);

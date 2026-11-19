@@ -59,7 +59,7 @@ int ipoe_nl_add_exclude(uint32_t addr, int mask)
 
 	addattr32(nlh, 1024, IPOE_ATTR_ADDR, addr);
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 ) {
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0 ) {
 		log_ppp_error("ipoe: nl_add_exclude: %s\n", strerror(errno));
 		ret = -1;
 	}
@@ -96,7 +96,7 @@ void ipoe_nl_del_exclude(uint32_t addr)
 
 	addattr32(nlh, 1024, IPOE_ATTR_ADDR, addr);
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 )
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0 )
 		log_ppp_error("ipoe: nl_del_exclude: %s\n", strerror(errno));
 
 	rtnl_close(&rth);
@@ -131,7 +131,7 @@ int ipoe_nl_add_net(uint32_t addr, int mask)
 	addattr32(nlh, 1024, IPOE_ATTR_ADDR, addr);
 	addattr32(nlh, 1024, IPOE_ATTR_MASK, mask);
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 ) {
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0 ) {
 		log_ppp_error("ipoe: nl_add_net: %s\n", strerror(errno));
 		ret = -1;
 	}
@@ -168,7 +168,7 @@ void ipoe_nl_del_net(uint32_t addr)
 
 	addattr32(nlh, 1024, IPOE_ATTR_ADDR, addr);
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 )
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0 )
 		log_ppp_error("ipoe: nl_del_net: %s\n", strerror(errno));
 
 	rtnl_close(&rth);
@@ -202,7 +202,7 @@ void ipoe_nl_add_interface(int ifindex, uint8_t mode)
 	addattr32(nlh, 1024, IPOE_ATTR_IFINDEX, ifindex);
 	addattr_l(nlh, 1024, IPOE_ATTR_MODE, &mode, 1);
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 )
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0 )
 		log_error("ipoe: nl_add_iface: %s\n", strerror(errno));
 
 	rtnl_close(&rth);
@@ -235,7 +235,7 @@ void ipoe_nl_del_interface(int ifindex)
 
 	addattr32(nlh, 1024, IPOE_ATTR_IFINDEX, ifindex);
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 )
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0 )
 		log_error("ipoe: nl_del_iface: %s\n", strerror(errno));
 
 	rtnl_close(&rth);
@@ -275,7 +275,7 @@ int ipoe_nl_create()
 	ghdr = NLMSG_DATA(&req.n);
 	ghdr->cmd = IPOE_CMD_CREATE;
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 ) {
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0 ) {
 		log_ppp_error("ipoe: nl_create: %s\n", strerror(errno));
 		goto out;
 	}
@@ -350,7 +350,7 @@ int ipoe_nl_modify(int ifindex, uint32_t peer_addr, uint32_t addr, uint32_t gw, 
 	if (hwaddr)
 		addattr_l(nlh, 1024, IPOE_ATTR_HWADDR, hwaddr, 6);
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 ) {
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0 ) {
 		log_ppp_error("ipoe: nl_modify: %s\n", strerror(errno));
 		ret = -1;
 	}
@@ -479,7 +479,7 @@ int ipoe_nl_flush_sessions(void)
 	ghdr->cmd = IPOE_CMD_FLUSH;
 
 	errno = 0;
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0)
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0)
 		ret = errno ? -errno : -EIO;
 
 	rtnl_close(&rth);
@@ -514,7 +514,7 @@ void ipoe_nl_delete(int ifindex)
 
 	addattr32(nlh, 128, IPOE_ATTR_IFINDEX, ifindex);
 
-	if (rtnl_talk(&rth, nlh, 0, 0, nlh, NULL, NULL, 0) < 0 )
+	if (rtnl_talk(&rth, nlh, 0, 0, nlh, sizeof(req), NULL, NULL, 0) < 0 )
 		log_ppp_error("ipoe: nl_delete: %s\n", strerror(errno));
 
 	rtnl_close(&rth);
@@ -649,16 +649,22 @@ static int ipoe_mc_read(struct triton_md_handler_t *h)
 			return 0;
 		}
 
-		for (hdr = (struct nlmsghdr*)buf; status >= sizeof(*hdr); ) {
+		for (hdr = (struct nlmsghdr*)buf; status >= (int)sizeof(*hdr); ) {
 			int len = hdr->nlmsg_len;
-			int l = len - sizeof(*h);
+			int l = len - (int)sizeof(*hdr);
 
-			if (l<0 || len>status) {
-				if (msg.msg_flags & MSG_TRUNC) {
+			if (l < 0 || len > status) {
+				if (msg.msg_flags & MSG_TRUNC)
 					log_warn("ipoe: truncated netlink message\n");
-					continue;
-				}
-				log_error("ipoe: malformed netlink message\n");
+				else
+					log_error("ipoe: malformed netlink message\n");
+				/* Do not continue without advancing: that spins forever. */
+				break;
+			}
+
+			if (nladdr.nl_pid) {
+				status -= NLMSG_ALIGN(len);
+				hdr = (struct nlmsghdr*)((char*)hdr + NLMSG_ALIGN(len));
 				continue;
 			}
 
@@ -736,8 +742,15 @@ static void init(void)
 		return;
 	}
 
-	if (rtnl_open_byproto(&rth, 1 << (mcg_id - 1), NETLINK_GENERIC)) {
+	if (rtnl_open_byproto(&rth, 0, NETLINK_GENERIC)) {
 		log_error("ipoe: cannot open generic netlink socket\n");
+		return;
+	}
+
+	if (setsockopt(rth.fd, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP,
+		       &mcg_id, sizeof(mcg_id)) < 0) {
+		log_error("ipoe: failed to join multicast group: %s\n", strerror(errno));
+		rtnl_close(&rth);
 		return;
 	}
 

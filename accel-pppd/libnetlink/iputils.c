@@ -63,9 +63,11 @@ static int store_nlmsg(const struct sockaddr_nl *who, struct nlmsghdr *n, void *
 
 	if (tb[IFLA_LINKINFO]) {
 		parse_rtattr_nested(tb2, IFLA_MAX, tb[IFLA_LINKINFO]);
-		if (tb2[IFLA_INFO_KIND] && !strcmp(RTA_DATA(tb2[IFLA_INFO_KIND]), "vlan")) {
+		if (tb2[IFLA_INFO_KIND] && tb2[IFLA_INFO_DATA] &&
+		    !strcmp(RTA_DATA(tb2[IFLA_INFO_KIND]), "vlan")) {
 			parse_rtattr_nested(tb2, IFLA_MAX, tb2[IFLA_INFO_DATA]);
-			vid = *(uint16_t *)RTA_DATA(tb2[IFLA_VLAN_ID]);
+			if (tb2[IFLA_VLAN_ID])
+				vid = *(uint16_t *)RTA_DATA(tb2[IFLA_VLAN_ID]);
 		}
 	}
 
@@ -130,7 +132,7 @@ int __export iplink_get_stats(int ifindex, struct rtnl_link_stats64 *stats)
 	req.i.ifi_family = AF_PACKET;
 	req.i.ifi_index = ifindex;
 
-	if (rtnl_talk(rth, &req.n, 0, 0, &req.n, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, &req.n, sizeof(req), NULL, NULL, 0) < 0)
 		goto out;
 
 	if (req.n.nlmsg_type != RTM_NEWLINK)
@@ -179,7 +181,7 @@ int __export iplink_set_mtu(int ifindex, int mtu)
 
 	addattr_l(&req.n, 1024, IFLA_MTU, &mtu, 4);
 
-	r = rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0);
+	r = rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0);
 
 	net->rtnl_put(rth);
 
@@ -222,7 +224,7 @@ int __export iplink_vlan_add(const char *ifname, int ifindex, int vid)
 
 	linkinfo->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)linkinfo;
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 	net->rtnl_put(rth);
@@ -262,7 +264,7 @@ int __export iplink_vlan_del(int ifindex)
 
 	linkinfo->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)linkinfo;
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 	net->rtnl_put(rth);
@@ -294,7 +296,7 @@ int __export iplink_vlan_get_vid(int ifindex, int *iflink)
 	req.i.ifi_family = AF_PACKET;
 	req.i.ifi_index = ifindex;
 
-	if (rtnl_talk(rth, &req.n, 0, 0, &req.n, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, &req.n, sizeof(req), NULL, NULL, 0) < 0)
 		goto out;
 
 	if (req.n.nlmsg_type != RTM_NEWLINK)
@@ -318,10 +320,13 @@ int __export iplink_vlan_get_vid(int ifindex, int *iflink)
 
 	parse_rtattr_nested(tb, IFLA_MAX, tb[IFLA_LINKINFO]);
 
-	if (!tb[IFLA_INFO_KIND] || strcmp(RTA_DATA(tb[IFLA_INFO_KIND]), "vlan"))
+	if (!tb[IFLA_INFO_KIND] || !tb[IFLA_INFO_DATA] ||
+	    strcmp(RTA_DATA(tb[IFLA_INFO_KIND]), "vlan"))
 		goto out;
 
 	parse_rtattr_nested(tb, IFLA_MAX, tb[IFLA_INFO_DATA]);
+	if (!tb[IFLA_VLAN_ID])
+		goto out;
 	r = *(uint16_t *)RTA_DATA(tb[IFLA_VLAN_ID]);
 
 out:
@@ -355,7 +360,7 @@ int __export ipaddr_add(int ifindex, in_addr_t addr, int mask)
 
 	addattr32(&req.n, sizeof(req), IFA_LOCAL, addr);
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 	net->rtnl_put(rth);
@@ -388,7 +393,7 @@ int __export ipaddr_add_peer(int ifindex, in_addr_t addr, in_addr_t peer_addr)
 	addattr32(&req.n, sizeof(req), IFA_LOCAL, addr);
 	addattr32(&req.n, sizeof(req), IFA_ADDRESS, peer_addr);
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 	net->rtnl_put(rth);
@@ -420,7 +425,7 @@ int __export ipaddr_del(int ifindex, in_addr_t addr, int mask)
 
 	addattr32(&req.n, sizeof(req), IFA_LOCAL, addr);
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 	net->rtnl_put(rth);
@@ -453,7 +458,7 @@ int __export ipaddr_del_peer(int ifindex, in_addr_t addr, in_addr_t peer)
 	addattr32(&req.n, sizeof(req), IFA_LOCAL, addr);
 	addattr32(&req.n, sizeof(req), IFA_ADDRESS, peer);
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 	net->rtnl_put(rth);
@@ -496,7 +501,7 @@ static int ipvrf_get_table(uint32_t *tb_id, const char *vrf_name)
 
 	addattr_l(&req.n, 4096, IFLA_IFNAME, vrf_name, strnlen(vrf_name, IFNAMSIZ));
 
-	r = rtnl_talk(rth, &req.n, 0, 0, &req.n, NULL, NULL, 0);
+	r = rtnl_talk(rth, &req.n, 0, 0, &req.n, sizeof(req), NULL, NULL, 0);
 	if (r < 0) {
 		log_ppp_error("BUG: route table \"%s\" not found\n", vrf_name);
 		goto out;
@@ -588,7 +593,7 @@ int __export iproute_add(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw
 		addattr32(&req.n, sizeof(req), RTA_PRIORITY, prio);
 	addattr32(&req.n, sizeof(req), RTA_DST, dst);
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 out:
@@ -642,7 +647,7 @@ int __export iproute_del(int ifindex, in_addr_t src, in_addr_t dst, in_addr_t gw
 		addattr32(&req.n, sizeof(req), RTA_PRIORITY, prio);
 	addattr32(&req.n, sizeof(req), RTA_DST, dst);
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 out:
@@ -694,7 +699,7 @@ int __export ip6route_add(int ifindex, const struct in6_addr *dst, int pref_len,
 	if (prio)
 		addattr32(&req.n, sizeof(req), RTA_PRIORITY, prio);
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 out:
@@ -746,7 +751,7 @@ int __export ip6route_del(int ifindex, const struct in6_addr *dst, int pref_len,
 	if (prio)
 		addattr32(&req.n, sizeof(req), RTA_PRIORITY, prio);
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 out:
@@ -780,7 +785,7 @@ int __export ip6addr_add(int ifindex, struct in6_addr *addr, int prefix_len)
 
 	addattr_l(&req.n, sizeof(req), IFA_ADDRESS, addr, 16);
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 	net->rtnl_put(rth);
@@ -814,7 +819,7 @@ int __export ip6addr_add_peer(int ifindex, struct in6_addr *addr, struct in6_add
 	addattr_l(&req.n, sizeof(req), IFA_LOCAL, addr, 16);
 	addattr_l(&req.n, sizeof(req), IFA_ADDRESS, peer, 16);
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 	net->rtnl_put(rth);
@@ -846,7 +851,7 @@ int __export ip6addr_del(int ifindex, struct in6_addr *addr, int prefix_len)
 
 	addattr_l(&req.n, sizeof(req), IFA_ADDRESS, addr, 16);
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 	net->rtnl_put(rth);
@@ -889,7 +894,7 @@ in_addr_t __export iproute_get(in_addr_t dst, in_addr_t *gw)
 
 	addattr32(&req.n, 4096, RTA_DST, dst);
 
-	if (rtnl_talk(rth, &req.n, 0, 0, &req.n, NULL, NULL, 0) < 0) {
+	if (rtnl_talk(rth, &req.n, 0, 0, &req.n, sizeof(req), NULL, NULL, 0) < 0) {
 		log_error("failed to detect route to server\n");
 		goto out;
 	}
@@ -951,7 +956,7 @@ int __export iprule_add(uint32_t addr, int table)
 	if (table >= 256)
 		addattr32(&req.n, sizeof(req), FRA_TABLE, table);
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 	net->rtnl_put(rth);
@@ -988,7 +993,7 @@ int __export iprule_del(uint32_t addr, int table)
 	if (table >= 256)
 		addattr32(&req.n, sizeof(req), FRA_TABLE, table);
 
-	if (rtnl_talk(rth, &req.n, 0, 0, NULL, NULL, NULL, 0) < 0)
+	if (rtnl_talk(rth, &req.n, 0, 0, NULL, 0, NULL, NULL, 0) < 0)
 		r = -1;
 
 	net->rtnl_put(rth);

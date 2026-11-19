@@ -48,7 +48,7 @@ extern int rtnl_dump_filter(struct rtnl_handle *rth, rtnl_filter_t filter,
 			    void *arg2);
 
 extern int rtnl_talk(struct rtnl_handle *rtnl, struct nlmsghdr *n, pid_t peer,
-		     unsigned groups, struct nlmsghdr *answer,
+		     unsigned groups, struct nlmsghdr *answer, size_t answer_len,
 		     rtnl_filter_t junk,
 		     void *jarg, int ignore_einval);
 extern int rtnl_send(struct rtnl_handle *rth, const char *buf, int);
