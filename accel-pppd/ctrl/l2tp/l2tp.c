@@ -419,6 +419,13 @@ static int l2tp_tunnel_storechall(struct l2tp_conn_t *conn,
 		return 0;
 	}
 
+	if (chall->length == 0) {
+		log_tunnel(log_error, conn,
+			   "impossible to store received Challenge:"
+			   " empty value\n");
+		goto err;
+	}
+
 	if (conn->secret == NULL || conn->secret_len == 0) {
 		log_tunnel(log_error, conn, "authentication required by peer,"
 			   " but no secret has been set for this tunnel\n");
