@@ -928,7 +928,11 @@ Specifies secret to connect to server.
 If this option is given and
 .B n
 is greater than 0, then attributes sent in L2TP packets will be hidden (for
-AVPs that support it).
+AVPs that support it). With
+.B [l2tp-switch]
+targets, set it to 1: the proxied authentication AVPs, including a PAP
+password, are otherwise sent to the downstream LNS in the clear, and a
+warning is logged.
 .TP
 .BI "dataseq=" deny|allow|prefer|require
 Specify data sequencing negotiation algorithm:
@@ -982,6 +986,61 @@ Specifies the name of the IPv6 pool to use for allocating client addresses.
 .TP
 .BI "ipv6-pool-delegate=" pool_name
 Specifies the name of the IPv6 prefix delegation pool to use.
+.SH [l2tp-switch]
+.br
+Configuration of L2TP switching. Selected incoming L2TPv2 calls are relayed to
+a downstream LNS instead of being terminated locally. The whole section,
+including the timing options, is read at startup and is not re-read on reload.
+.TP
+.BI "target=" name,peer-addr,peer-port,secret[,mode]
+Defines a downstream LNS. May be repeated. Fields are separated by commas
+without escaping, so none may be empty and
+.I name
+and
+.I secret
+cannot contain a comma.
+.I name
+may contain letters, digits, '_', '-' and '.'.
+.I peer-addr
+must be a dotted-quad IPv4 address; shorthand such as 127.1 and hexadecimal or
+octal octets are rejected. A malformed line is a fatal configuration error.
+.I mode
+is
+.B on-demand
+(default) or
+.BR persistent .
+An on-demand tunnel is opened when a call needs it and closed after
+.B idle-linger
+seconds without calls. A persistent tunnel is opened at startup and kept up.
+See docs/l2tp_switching.md for details.
+.TP
+.BI "idle-linger=" seconds
+Specifies the time in seconds an on-demand target's tunnel stays open after its last call ends (default 20).
+.TP
+.BI "connect-timeout=" seconds
+Specifies the time in seconds a call waits for an on-demand tunnel to connect before it is refused (default 10).
+.TP
+.BI "reconnect-interval=" seconds
+Specifies the delay in seconds between connection attempts to a target whose tunnel is down (default 5).
+.TP
+.BI "match=" attr-name,mode,value,target-name
+Sends calls to a target based on the value of an L2TP AVP. May be repeated.
+.I attr-name
+is the AVP name and must be one of Calling-Number, Called-Number,
+Sub-Address or Proxy-Authen-Name, the only matchable AVPs in an ICRQ or ICCN.
+.I mode
+is
+.B exact
+or
+.BR prefix .
+Matching is case-sensitive. Calling-Number and Called-Number are matched when
+the ICRQ is received, Proxy-Authen-Name when the ICCN is received. Rules on
+the same AVP must not overlap, that is, no value may be matched by two rules.
+Two exact rules overlap only if their values are equal.
+.PP
+Rules can be listed and changed at runtime with
+.B l2tp switch show|add|del
+in accel-cmd.
 .SH [sstp]
 .br
 Configuration of SSTP module.

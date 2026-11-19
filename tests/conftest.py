@@ -30,6 +30,10 @@ def pytest_configure(config):
         "markers",
         "chap_secrets: marks tests as related to chap-secrets module (deselect with '-m \"not chap_secrets\"')",
     )
+    config.addinivalue_line(
+        "markers",
+        "l2tp_switch: marks tests as related to L2TP switching (deselect with '-m \"not l2tp_switch\"')",
+    )
 
 
 # accel-pppd executable file name
