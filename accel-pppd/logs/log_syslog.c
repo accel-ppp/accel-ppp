@@ -29,6 +29,7 @@ static spinlock_t queue_lock;
 static char *log_buf;
 static int need_close;
 static char *ident;
+static char *ident_prev;
 static int prio_map[] = {LOG_INFO, LOG_ERR, LOG_WARNING, LOG_INFO, LOG_INFO, LOG_DEBUG};
 
 static void unpack_msg(struct log_msg_t *msg)
@@ -160,19 +161,23 @@ static void load_config()
 {
 	const char *opt;
 	int facility = LOG_DAEMON;
-
-	if (ident) {
-		closelog();
-		_free(ident);
-	}
+	char *new_ident;
 
 	opt = conf_get_opt("log", "syslog");
 	if (opt)
-		parse_opt(opt, &ident, &facility);
+		parse_opt(opt, &new_ident, &facility);
 	else
-		ident = _strdup("accel-pppd");
+		new_ident = _strdup("accel-pppd");
 
-	openlog(ident, 0, facility);
+	closelog();
+	openlog(new_ident, 0, facility);
+
+	/* Keep the previous ident one reload longer so a concurrent
+	 * syslog() that still holds the old openlog pointer stays valid. */
+	if (ident_prev)
+		_free(ident_prev);
+	ident_prev = ident;
+	ident = new_ident;
 }
 
 static void init(void)

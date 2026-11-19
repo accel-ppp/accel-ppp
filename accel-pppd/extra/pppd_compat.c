@@ -475,6 +475,9 @@ static void ev_radius_coa(struct ev_radius_t *ev)
 
 			triton_context_schedule();
 
+			pthread_mutex_lock(&pd->hnd.lock);
+			pthread_mutex_unlock(&pd->hnd.lock);
+
 			if (!ev->res)
 				ev->res = pd->res;
 		} else if (pid == 0) {

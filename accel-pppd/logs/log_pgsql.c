@@ -101,8 +101,10 @@ static void write_next_msg(void)
 		spin_unlock(&queue_lock);
 		if (need_close) {
 			triton_md_unregister_handler(&pgsql_hnd, 0);
-			PQfinish(conn);
-			conn = NULL;
+			if (conn) {
+				PQfinish(conn);
+				conn = NULL;
+			}
 			triton_context_unregister(&pgsql_ctx);
 		}
 		return;
@@ -143,11 +145,13 @@ static int pgsql_check_ready(struct triton_md_handler_t *h)
 		log_emerg("log_pgsql: %s\n", PQerrorMessage(conn));
 		if (PQstatus(conn) == CONNECTION_BAD) {
 			PQfinish(conn);
+			conn = NULL;
 			start_connect();
+			return 0;
 		}
 	}
 
-	if (PQisBusy(conn))
+	if (!conn || PQisBusy(conn))
 		return 0;
 
 	while (1) {
@@ -233,6 +237,7 @@ static int wait_connect(struct triton_md_handler_t *h)
 			log_emerg("log_pgsql: %s\n", err_msg);
 			triton_md_disable_handler(h, MD_MODE_READ | MD_MODE_WRITE);
 			PQfinish(conn);
+			conn = NULL;
 			h->read = NULL;
 			h->write = NULL;
 			if (!connect_timer.tpd)
@@ -282,8 +287,10 @@ static void pgsql_close(struct triton_context_t *ctx)
 	spin_lock(&queue_lock);
 	if (sleeping) {
 		triton_md_unregister_handler(&pgsql_hnd, 0);
-		PQfinish(conn);
-		conn = NULL;
+		if (conn) {
+			PQfinish(conn);
+			conn = NULL;
+		}
 		triton_context_unregister(&pgsql_ctx);
 	} else
 		need_close = 1;

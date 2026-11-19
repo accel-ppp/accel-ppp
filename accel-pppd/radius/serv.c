@@ -188,6 +188,7 @@ int rad_server_req_cancel(struct rad_req_t *req, int full)
 	pthread_mutex_unlock(&req->serv->lock);
 
 	triton_cancel_call(req->rpd ? req->rpd->ses->ctrl->ctx : NULL, (triton_event_func)req_wakeup);
+	triton_cancel_call(req->rpd ? req->rpd->ses->ctrl->ctx : NULL, (triton_event_func)req_wakeup_failed);
 
 	if (!full)
 		return r;

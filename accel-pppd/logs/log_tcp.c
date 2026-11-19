@@ -101,6 +101,12 @@ static int send_log(struct tcp_target_t *t)
 	}
 }
 
+static void send_log_ctx(struct tcp_target_t *t)
+{
+	if (send_log(t))
+		triton_md_enable_handler(&t->hnd, MD_MODE_WRITE);
+}
+
 static void queue_log(struct tcp_target_t *t, struct log_msg_t *msg)
 {
 	int r;
@@ -120,10 +126,8 @@ static void queue_log(struct tcp_target_t *t, struct log_msg_t *msg)
 		r = 1;
 	spin_unlock(&t->lock);
 
-	if (!r) {
-		if (send_log(t))
-			triton_md_enable_handler(&t->hnd, MD_MODE_WRITE);
-	}
+	if (!r)
+		triton_context_call(&tcp_ctx, (triton_event_func)send_log_ctx, t);
 }
 
 static void set_hdr(struct log_msg_t *msg, struct ap_session *ses)

@@ -694,7 +694,9 @@ void __export triton_context_wakeup(struct triton_context_t *ud)
 		 * and will avoid putting 'ctx' in sleep mode.
 		 */
 		ctx->wakeup = 1;
-		if (ctx->asleep) {
+		/* entry2.next is non-NULL while ctx is already on wakeup_list or
+		 * ctx_queue; a second wakeup must not list_add_tail again. */
+		if (ctx->asleep && !ctx->entry2.next) {
 			list_add_tail(&ctx->entry2, &ctx->thread->wakeup_list[ctx->priority]);
 			r = ctx->thread->ctx == NULL;
 		}
